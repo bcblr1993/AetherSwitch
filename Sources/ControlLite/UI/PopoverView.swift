@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 下拉完整毛玻璃面板
+/// 下拉完整毛玻璃面板（支持概览与 CPU/GPU/内存/磁盘深度视图）
 public struct PopoverView: View {
     @ObservedObject var appState: AppState
 
@@ -9,14 +9,14 @@ public struct PopoverView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 14) {
-            // MARK: - 顶部 Header
+        VStack(spacing: 12) {
+            // MARK: - 顶部 Header & 分段导航
             HStack {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "slider.horizontal.2.square.on.square")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    Text("ControlLite")
+                    Text("AetherSwitch")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(.primary)
                 }
@@ -33,99 +33,53 @@ public struct PopoverView: View {
                 .buttonStyle(.plain)
                 .help("刷新硬件状态")
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 2)
 
-            // MARK: - 硬件监控指标（四宫格 + 网络全宽）
-            VStack(spacing: 8) {
-                // 四宫格（CPU / GPU / RAM / SSD）
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                    MetricGridCard(
-                        title: "CPU 负载",
-                        icon: "cpu",
-                        percent: appState.metrics.cpuUsage,
-                        detailText: "\(String(format: "%.1f", appState.metrics.cpuUsage))% 利用率"
-                    )
+            // MARK: - 原生分段选择器 [ 概览 | CPU | GPU | 内存 | 磁盘 ]
+            Picker("", selection: $appState.selectedTab) {
+                Text("概览").tag("overview")
+                Text("CPU").tag("cpu")
+                Text("GPU").tag("gpu")
+                Text("内存").tag("ram")
+                Text("磁盘").tag("disk")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
 
-                    MetricGridCard(
-                        title: "GPU 负载",
-                        icon: "sparkles.tv",
-                        percent: appState.metrics.gpuUsage,
-                        detailText: "Apple Silicon",
-                        accentColor: .indigo
-                    )
+            // MARK: - 动态内容区（根据选中标签页展开对应深度视图）
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 10) {
+                    switch appState.selectedTab {
+                    case "cpu":
+                        CPUDetailView(appState: appState)
+                    case "gpu":
+                        GPUDetailView(appState: appState)
+                    case "ram":
+                        RAMDetailView(appState: appState)
+                    case "disk":
+                        DiskDetailView(appState: appState)
+                    default:
+                        // 概览模式
+                        overviewSection
+                    }
 
-                    MetricGridCard(
-                        title: "RAM 内存",
-                        icon: "memorychip",
-                        percent: Double(appState.metrics.ramPercent),
-                        detailText: "\(String(format: "%.1f", appState.metrics.ramUsedGB))G / \(String(format: "%.0f", appState.metrics.ramTotalGB))G"
-                    )
+                    // MARK: - 4 大核心快捷开关（常亮、隐藏桌面、显示隐藏文件、黑暗模式）
+                    Divider()
+                        .opacity(0.3)
+                        .padding(.top, 4)
 
-                    MetricGridCard(
-                        title: "SSD 存储",
-                        icon: "internaldrive",
-                        percent: Double(appState.metrics.diskPercent),
-                        detailText: "\(String(format: "%.0f", appState.metrics.diskUsedGB))G / \(String(format: "%.0f", appState.metrics.diskTotalGB))G"
-                    )
+                    togglesSection
                 }
-
-                // 实时上下行网速卡片
-                NetworkMetricCard(
-                    downSpeed: appState.metrics.downloadSpeedFormatted,
-                    upSpeed: appState.metrics.uploadSpeedFormatted
-                )
+                .padding(.horizontal, 2)
             }
-
-            // MARK: - 4 大核心快捷开关
-            VStack(spacing: 8) {
-                // 1. 保持常亮
-                SwitchCard(
-                    title: "保持常亮",
-                    subtitle: appState.switches.isKeepAwakeActive ? "屏幕永不熄灭休眠" : "遵循系统电源休眠策略",
-                    icon: "cup.and.saucer.fill",
-                    isActive: appState.switches.isKeepAwakeActive,
-                    activeTint: AppTheme.keepAwakeColor,
-                    onToggle: { appState.toggleKeepAwake() }
-                )
-
-                // 2. 隐藏桌面
-                SwitchCard(
-                    title: "隐藏桌面",
-                    subtitle: appState.switches.isDesktopHidden ? "桌面图标已彻底隐藏" : "桌面图标正常展示",
-                    icon: "menubar.dock.rectangle",
-                    isActive: appState.switches.isDesktopHidden,
-                    activeTint: AppTheme.hideDesktopColor,
-                    onToggle: { appState.toggleHideDesktop() }
-                )
-
-                // 3. 显示隐藏文件
-                SwitchCard(
-                    title: "显示隐藏文件",
-                    subtitle: appState.switches.isHiddenFilesVisible ? "已显示 . 开头隐藏文件" : "系统隐藏文件处于收起状态",
-                    icon: "eye.fill",
-                    isActive: appState.switches.isHiddenFilesVisible,
-                    activeTint: AppTheme.hiddenFilesColor,
-                    onToggle: { appState.toggleHiddenFiles() }
-                )
-
-                // 4. 黑暗模式
-                SwitchCard(
-                    title: "黑暗模式",
-                    subtitle: appState.switches.isDarkModeActive ? "当前处于深色外观" : "当前处于浅色外观",
-                    icon: appState.switches.isDarkModeActive ? "moon.stars.fill" : "sun.max.fill",
-                    isActive: appState.switches.isDarkModeActive,
-                    activeTint: AppTheme.darkModeColor,
-                    onToggle: { appState.toggleDarkMode() }
-                )
-            }
+            .frame(maxHeight: 520)
 
             // MARK: - 底部操作栏
             Divider()
                 .opacity(0.3)
-                .padding(.top, 2)
 
             HStack {
-                Text("ControlLite v1.0 • 极简无侵入")
+                Text("AetherSwitch • 纯原生零开销")
                     .font(.system(size: 10, weight: .regular))
                     .foregroundColor(.secondary)
 
@@ -143,8 +97,7 @@ public struct PopoverView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 4)
-            .padding(.bottom, 2)
+            .padding(.horizontal, 2)
         }
         .padding(14)
         .frame(width: AppTheme.panelWidth)
@@ -152,5 +105,93 @@ public struct PopoverView: View {
             Rectangle()
                 .fill(.ultraThinMaterial)
         )
+    }
+
+    // MARK: - 概览区块
+    @ViewBuilder
+    private var overviewSection: some View {
+        VStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                MetricGridCard(
+                    title: "CPU 负载",
+                    icon: "cpu",
+                    percent: appState.metrics.cpuUsage,
+                    detailText: "\(String(format: "%.1f", appState.metrics.cpuUsage))% 利用率"
+                )
+
+                MetricGridCard(
+                    title: "GPU 负载",
+                    icon: "sparkles.tv",
+                    percent: appState.metrics.gpuUsage,
+                    detailText: "\(appState.metrics.gpuCoreCount) 核心",
+                    accentColor: .indigo
+                )
+
+                MetricGridCard(
+                    title: "RAM 内存",
+                    icon: "memorychip",
+                    percent: Double(appState.metrics.ramPercent),
+                    detailText: "\(String(format: "%.1f", appState.metrics.ramUsedGB))G / \(String(format: "%.0f", appState.metrics.ramTotalGB))G"
+                )
+
+                MetricGridCard(
+                    title: "SSD 存储",
+                    icon: "internaldrive",
+                    percent: Double(appState.metrics.diskPercent),
+                    detailText: "\(String(format: "%.0f", appState.metrics.diskUsedGB))G / \(String(format: "%.0f", appState.metrics.diskTotalGB))G"
+                )
+            }
+
+            NetworkMetricCard(
+                downSpeed: appState.metrics.downloadSpeedFormatted,
+                upSpeed: appState.metrics.uploadSpeedFormatted
+            )
+        }
+    }
+
+    // MARK: - 快捷开关区块
+    @ViewBuilder
+    private var togglesSection: some View {
+        VStack(spacing: 6) {
+            // 1. 保持常亮
+            SwitchCard(
+                title: "保持常亮",
+                subtitle: appState.switches.isKeepAwakeActive ? "屏幕永不熄灭休眠" : "遵循系统电源休眠策略",
+                icon: "cup.and.saucer.fill",
+                isActive: appState.switches.isKeepAwakeActive,
+                activeTint: AppTheme.keepAwakeColor,
+                onToggle: { appState.toggleKeepAwake() }
+            )
+
+            // 2. 隐藏桌面
+            SwitchCard(
+                title: "隐藏桌面",
+                subtitle: appState.switches.isDesktopHidden ? "桌面图标已彻底隐藏" : "桌面图标正常展示",
+                icon: "menubar.dock.rectangle",
+                isActive: appState.switches.isDesktopHidden,
+                activeTint: AppTheme.hideDesktopColor,
+                onToggle: { appState.toggleHideDesktop() }
+            )
+
+            // 3. 显示隐藏文件
+            SwitchCard(
+                title: "显示隐藏文件",
+                subtitle: appState.switches.isHiddenFilesVisible ? "已显示 . 开头隐藏文件" : "系统隐藏文件处于收起状态",
+                icon: "eye.fill",
+                isActive: appState.switches.isHiddenFilesVisible,
+                activeTint: AppTheme.hiddenFilesColor,
+                onToggle: { appState.toggleHiddenFiles() }
+            )
+
+            // 4. 黑暗模式
+            SwitchCard(
+                title: "黑暗模式",
+                subtitle: appState.switches.isDarkModeActive ? "当前处于深色外观" : "当前处于浅色外观",
+                icon: appState.switches.isDarkModeActive ? "moon.stars.fill" : "sun.max.fill",
+                isActive: appState.switches.isDarkModeActive,
+                activeTint: AppTheme.darkModeColor,
+                onToggle: { appState.toggleDarkMode() }
+            )
+        }
     }
 }

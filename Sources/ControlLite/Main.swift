@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
-        popover.contentSize = NSSize(width: AppTheme.panelWidth, height: 440)
+        popover.contentSize = NSSize(width: AppTheme.panelWidth, height: 580)
         popover.behavior = .transient
         popover.animates = true
         popover.contentViewController = NSHostingController(rootView: PopoverView(appState: AppState.shared))

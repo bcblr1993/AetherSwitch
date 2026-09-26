@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import Combine
 
-/// 全局响应式状态机（支持智能能耗调度）
+/// 全局响应式状态机（支持智能能耗调度与多标签页深度监控）
 @MainActor
 public final class AppState: ObservableObject {
     public static let shared = AppState()
@@ -12,13 +12,20 @@ public final class AppState: ObservableObject {
     // 开关状态
     @Published public private(set) var switches = SwitchStates()
     
+    // 当前激活的监控标签页 ("overview", "cpu", "gpu", "ram", "disk")
+    @Published public var selectedTab: String = "overview" {
+        didSet {
+            guard oldValue != selectedTab else { return }
+            refreshFull()
+        }
+    }
+
     // 面板是否展开
     @Published public var isPopoverOpen: Bool = false {
         didSet {
             guard oldValue != isPopoverOpen else { return }
             adjustTimerFrequency()
             if isPopoverOpen {
-                // 打开时立即刷新全量
                 refreshFull()
             }
         }
@@ -29,7 +36,6 @@ public final class AppState: ObservableObject {
     private let switchMgr = SwitchManager.shared
 
     private init() {
-        // 初始化时立即拉取一次当前状态
         self.metrics = monitor.sample(fullMetrics: false)
         self.switches = switchMgr.getCurrentStates()
         startTimer(interval: 1.5)
@@ -40,10 +46,8 @@ public final class AppState: ObservableObject {
     private func adjustTimerFrequency() {
         timer?.invalidate()
         if isPopoverOpen {
-            // 面板展开中：1.0 秒全量高精度采样
             startTimer(interval: 1.0)
         } else {
-            // 面板收起中：1.5 秒极低能耗轻量采样（休眠 CPU/GPU/SSD 耗电模块）
             startTimer(interval: 1.5)
         }
     }
@@ -59,9 +63,10 @@ public final class AppState: ObservableObject {
 
     private func tick() {
         let isFull = isPopoverOpen
+        let tab = selectedTab
         Task {
             let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
-                let m = SystemMonitor.shared.sample(fullMetrics: isFull)
+                let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab)
                 let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
                 return (m, s)
             }.value
@@ -74,9 +79,10 @@ public final class AppState: ObservableObject {
     }
 
     public func refreshFull() {
+        let tab = selectedTab
         Task {
             let (m, s) = await Task.detached(priority: .userInitiated) {
-                let metrics = SystemMonitor.shared.sample(fullMetrics: true)
+                let metrics = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab)
                 let switches = SwitchManager.shared.getCurrentStates()
                 return (metrics, switches)
             }.value
@@ -86,7 +92,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - 快捷开关触发（带触觉反馈与状态即时同步）
+    // MARK: - 快捷开关触发
 
     public func toggleKeepAwake() {
         let active = switchMgr.toggleKeepAwake()
