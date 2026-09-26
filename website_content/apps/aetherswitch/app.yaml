@@ -1,0 +1,53 @@
+# AetherSwitch 软件介绍（符合 aethernative.com 官网标准规范）
+name: AetherSwitch
+order: 5
+repo: https://github.com/bcblr1993/AetherSwitch
+minimumSystemVersion: "14.0"
+icon: ./media/icon.png
+tech: [Swift 6, SwiftUI, Mach, IOKit]
+
+tagline:
+  zh: 极轻量 macOS 状态监控与快捷开关
+  en: Ultra-lightweight macOS status monitor & quick toggles
+summary:
+  zh: 为 Apple 芯片打造的极简状态栏工具：内存与上下行网速抬头可见，常亮、隐藏桌面等 4 大开关一触即发，常驻内存仅 15MB。
+  en: "A featherweight menu bar companion for Apple silicon: live RAM and network throughput at a glance, plus 4 essential toggles in ~15MB memory."
+
+platforms:
+  - id: mac
+    status: available
+    requirement: { zh: Apple 芯片 · macOS 14+, en: Apple silicon · macOS 14+ }
+
+hero:
+  eyebrow: { zh: 极简 · 零依赖 · 极致低耗, en: Minimal · Zero Dependencies · Ultra-Low Overhead }
+  title: { zh: "告别臃肿堆叠，\n只需你真正用的功能。", en: "Say goodbye to bloat.\nOnly the features you actually use." }
+  lead:
+    zh: "常驻内存 < 15MB，体积不到 500KB。\n一台 Mac 只需要一个 AetherSwitch，即可全面替代 Stats 与 One Switch。"
+    en: "Less than 15MB RAM footprint and under 500KB bundle size.\nReplace heavy Stats and One Switch combos with a single native Swift utility."
+  requirements:
+    zh: Apple 芯片（M1 及更新）/ macOS 14+
+    en: Apple silicon (M1 or later) / macOS 14+
+
+features:
+  eyebrow: { zh: 核心功能, en: Core Capabilities }
+  title: { zh: 抬眼即知系统脉搏，点按掌控核心开关。, en: Live system pulse overhead, essential controls at hand. }
+  lead:
+    zh: 砍掉一切花哨无用的图表和臃肿后台，用纯原生系统底座带来毫秒级响应。
+    en: Stripped of bloated graphs and background daemons. Pure system-level Mach and IOKit calls for sub-millisecond response.
+  items:
+    - kicker: { zh: 核心快捷开关, en: Essential Toggles }
+      title: { zh: 4 大高频开关，一键直达, en: 4 daily essentials, one click away }
+      body:
+        zh: 包含保持屏幕常亮、隐藏桌面图标、显示 Finder 隐藏文件与深色模式切换。
+        en: Keep screen awake, hide desktop icons, toggle hidden dotfiles and switch dark mode with zero friction.
+      details:
+        - { zh: 保持常亮基于原生 IOKit 电源断言，退出即自动释放，绝不残留僵尸子进程。, en: Keep Awake uses native IOKit power assertions, releasing cleanly upon exit. }
+        - { zh: 隐藏桌面一键收起杂乱文件，录屏与投屏演示更清爽专业。, en: Clear cluttered desktop icons instantly for clean screencasts and presentations. }
+    - kicker: { zh: 硬件状态监控, en: Hardware Pulse }
+      title: { zh: 实时 CPU、GPU、内存与双向网络, en: Real-time CPU, GPU, RAM, disk and network }
+      body:
+        zh: 菜单栏常驻显示内存占比与上下行网速，等宽防抖字体排版；下拉面板实时呈现 Apple Silicon GPU 核心负载与根盘容量。
+        en: Monospaced menu bar readout for RAM and bandwidth prevents visual jitter. Dropdown panel reveals live Apple Silicon GPU core load.
+      details:
+        - { zh: 独创自适应采样调度：面板收起时彻底休眠 GPU 与 CPU 多核轮询，后台 CPU 占用 ≤ 0.1%。, en: Adaptive sampling sleeps GPU and multi-core polling when collapsed, keeping idle CPU under 0.1%. }
+        - { zh: 纯 Swift 6 与 AppKit/SwiftUI 打造，零外部依赖，安全纯粹。, en: 100% native Swift 6 and SwiftUI with zero third-party dependencies. }

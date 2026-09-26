@@ -1,0 +1,88 @@
+#!/bin/bash
+set -euo pipefail
+
+# ==============================================================================
+# AetherSwitch (ControlLite) 构建与发布门禁脚本
+# 对齐 AetherRoute / ApexTerm 工程标准 SOP
+# ==============================================================================
+
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_DIR"
+
+APP_NAME="AetherSwitch"
+BUNDLE_ID="com.aethernative.aetherswitch"
+VERSION="1.0.0"
+BUILD_NUMBER="$(date +%Y%m%d01)"
+OUTPUT_DIR="$PROJECT_DIR/outputs"
+
+echo "==> [1/5] 执行全量单元测试与质量门禁..."
+swift test
+
+echo "==> [2/5] 编译生产环境 Release 二进制 (Apple Silicon arm64)..."
+swift build -c release --arch arm64
+
+echo "==> [3/5] 组装 macOS App Bundle..."
+rm -rf "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS"
+mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources"
+
+cp "$PROJECT_DIR/.build/release/ControlLite" "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+
+# 生成生产级 Info.plist
+cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>${APP_NAME}</string>
+    <key>CFBundleIdentifier</key>
+    <string>${BUNDLE_ID}</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>${APP_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundleVersion</key>
+    <string>${BUILD_NUMBER}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>
+EOF
+
+echo "==> [4/5] 执行代码签名与完整性校验..."
+CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
+if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
+    echo "使用官方证书签名: $CERT_NAME"
+    codesign --force --deep --options runtime --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
+else
+    echo "未发现正式证书，使用本地开发签名 (Ad-Hoc)..."
+    codesign --force --deep --sign - "$OUTPUT_DIR/${APP_NAME}.app"
+fi
+
+codesign --verify --deep --strict --verbose=2 "$OUTPUT_DIR/${APP_NAME}.app"
+
+echo "==> [5/5] 生成发布校验清单 SHA256SUMS.txt..."
+cd "$OUTPUT_DIR"
+tar -czf "${APP_NAME}-${VERSION}-arm64.tar.gz" "${APP_NAME}.app"
+shasum -a 256 "${APP_NAME}-${VERSION}-arm64.tar.gz" > SHA256SUMS.txt
+
+echo "=============================================================================="
+echo "✅ 构建完成！产物路径："
+echo "   App Bundle:  $OUTPUT_DIR/${APP_NAME}.app"
+echo "   Archive:     $OUTPUT_DIR/${APP_NAME}-${VERSION}-arm64.tar.gz"
+echo "   Checksum:    $(cat "$OUTPUT_DIR/SHA256SUMS.txt")"
+echo "   App Size:    $(du -sh "$OUTPUT_DIR/${APP_NAME}.app" | cut -f1)"
+echo "=============================================================================="

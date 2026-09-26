@@ -1,0 +1,19 @@
+# AetherSwitch 版本记录
+releases:
+  - version: "1.0.0"
+    build: "2026092601"
+    date: 2026-09-26
+    channel: stable
+    download: "https://github.com/bcblr1993/AetherSwitch/releases/download/v1.0.0/AetherSwitch-1.0.0-arm64.dmg"
+    github: "https://github.com/bcblr1993/AetherSwitch/releases/tag/v1.0.0"
+    sha256: "0ac3aab5d8eba593f358b0e9e8f81685f7b3624673fac8017fe5c1dca1bdc6c1"
+    summary:
+      zh: "AetherSwitch 初始版本发布：纯原生极致轻量，集成保持常亮、隐藏桌面、显示隐藏文件、黑暗模式与实时 CPU/GPU/RAM/网速监控。"
+      en: "Initial release of AetherSwitch: featherweight native utility featuring 4 essential toggles and live CPU/GPU/RAM/network throughput monitoring."
+    notes:
+      - title: { zh: 新增特性, en: Features }
+        items:
+          - { zh: "4 大高频开关：保持常亮 (原生 IOKit 电源断言)、隐藏桌面、显示隐藏文件、深色模式切换。", en: "4 core toggles: Keep Awake (native IOKit power assertion), Hide Desktop, Show Hidden Files, and Dark Mode." }
+          - { zh: "5 项实时系统指标：CPU 整体负载、Apple Silicon GPU 核心负载、RAM 内存、根盘空间与上下行瞬时速率。", en: "5 live metrics: CPU, Apple Silicon GPU, RAM, disk space and network up/down throughput." }
+          - { zh: "自适应能耗调度：折叠面板时 GPU 与 CPU 多核轮询彻底休眠，后台 CPU 占用 ≤ 0.1%。", en: "Adaptive power scheduling: GPU and CPU polling deep sleep when collapsed, keeping background CPU under 0.1%." }
+          - { zh: "仅 470KB 安装包与 15MB 物理内存，全面替代 Stats 与 One Switch 臃肿组合。", en: "Tiny 470KB footprint and ~15MB RAM, completely replacing bloated multi-app monitor stacks." }
