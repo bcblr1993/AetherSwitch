@@ -3,6 +3,7 @@ import SwiftUI
 /// 下拉完整毛玻璃面板（支持概览与 CPU/GPU/内存/磁盘深度视图）
 public struct PopoverView: View {
     @ObservedObject var appState: AppState
+    @ObservedObject private var updateMgr = UpdateManager.shared
 
     public init(appState: AppState) {
         self.appState = appState
@@ -59,29 +60,100 @@ public struct PopoverView: View {
                     case "disk":
                         DiskDetailView(appState: appState)
                     default:
-                        // 概览模式
+                        // 概览模式：展示硬件四宫格 + 4 大核心快捷开关
                         overviewSection
+
+                        Divider()
+                            .opacity(0.3)
+                            .padding(.top, 4)
+
+                        togglesSection
                     }
-
-                    // MARK: - 4 大核心快捷开关（常亮、隐藏桌面、显示隐藏文件、黑暗模式）
-                    Divider()
-                        .opacity(0.3)
-                        .padding(.top, 4)
-
-                    togglesSection
                 }
                 .padding(.horizontal, 2)
             }
-            .frame(maxHeight: 520)
+            .frame(maxHeight: 540)
+            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: appState.selectedTab)
 
-            // MARK: - 底部操作栏
+            // MARK: - 底部操作栏 (版本与自动更新)
             Divider()
                 .opacity(0.3)
 
-            HStack {
-                Text("AetherSwitch • 纯原生零开销")
-                    .font(.system(size: 10, weight: .regular))
-                    .foregroundColor(.secondary)
+            HStack(spacing: 6) {
+                // 当前版本与自动更新状态
+                HStack(spacing: 5) {
+                    Text("v\(updateMgr.currentVersion)")
+                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.primary)
+
+                    switch updateMgr.status {
+                    case .checking:
+                        HStack(spacing: 3) {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 10, height: 10)
+                            Text("检查中...")
+                                .font(.system(size: 9.5))
+                                .foregroundColor(.secondary)
+                        }
+
+                    case .available(let version, _):
+                        Button {
+                            updateMgr.downloadAndInstall()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Circle().fill(Color.orange).frame(width: 5, height: 5)
+                                Text("发现 v\(version) • 点击升级")
+                                    .font(.system(size: 9.5, weight: .bold))
+                                    .foregroundColor(.orange)
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(Color.orange.opacity(0.18))
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                    case .downloading(let progress):
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .scaleEffect(0.5)
+                                .frame(width: 10, height: 10)
+                            Text("下载中 \(Int(progress * 100))%")
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundColor(.blue)
+                        }
+
+                    case .readyToRestart:
+                        Text("即将重启安装...")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundColor(.green)
+
+                    case .upToDate:
+                        Text("• 已是最新")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary)
+
+                    default:
+                        Button {
+                            updateMgr.checkForUpdates(manual: true)
+                        } label: {
+                            Text("• 检查更新")
+                                .font(.system(size: 9.5))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .contextMenu {
+                    Button("立即检查更新") {
+                        updateMgr.checkForUpdates(manual: true)
+                    }
+                    Button("模拟新版本更新 (v1.0.1 演示)") {
+                        updateMgr.simulateNewVersionForDemo(version: "1.0.1")
+                    }
+                }
 
                 Spacer()
 

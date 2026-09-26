@@ -39,6 +39,7 @@ public final class AppState: ObservableObject {
         self.metrics = monitor.sample(fullMetrics: false)
         self.switches = switchMgr.getCurrentStates()
         startTimer(interval: 1.5)
+        UpdateManager.shared.checkForUpdates()
     }
 
     // MARK: - 动态频率定时器

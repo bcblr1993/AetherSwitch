@@ -54,6 +54,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+
+        // 4. 注册系统级分布式通知，便于脚本与自动化唤起
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.aethernative.aetherswitch.togglePopover"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.togglePopover()
+            }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.aethernative.aetherswitch.selectTab"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                if let tab = note.userInfo?["tab"] as? String {
+                    AppState.shared.selectedTab = tab
+                }
+                if let self = self, !self.popover.isShown {
+                    self.togglePopover()
+                }
+            }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.aethernative.aetherswitch.simulateUpdate"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                UpdateManager.shared.simulateNewVersionForDemo(version: "1.0.1")
+            }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.aethernative.aetherswitch.checkForUpdates"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                UpdateManager.shared.checkForUpdates(manual: true)
+            }
+        }
+
+        if CommandLine.arguments.contains("--open") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                Task { @MainActor in
+                    self.togglePopover()
+                }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -66,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp {
-            // 右键快捷菜单（退出/刷新）
+            // 右键快捷菜单（退出/刷新/检查更新）
             showContextMenu(sender)
         } else {
             togglePopover()
@@ -88,14 +142,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func showContextMenu(_ sender: NSStatusBarButton) {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "ControlLite v1.0", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "AetherSwitch v\(UpdateManager.shared.currentVersion)", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "检查更新...", action: #selector(checkUpdateAction), keyEquivalent: "u"))
         menu.addItem(NSMenuItem(title: "刷新数据", action: #selector(refreshAction), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出 ControlLite", action: #selector(quitAction), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "退出 AetherSwitch", action: #selector(quitAction), keyEquivalent: "q"))
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil // 恢复点击行为
+    }
+
+    @objc private func checkUpdateAction() {
+        UpdateManager.shared.checkForUpdates(manual: true)
     }
 
     @objc private func refreshAction() {
