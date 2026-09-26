@@ -30,10 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
+        let controller = NSHostingController(rootView: PopoverView(appState: AppState.shared))
+        controller.preferredContentSize = NSSize(width: AppTheme.panelWidth, height: 580)
+        popover.contentViewController = controller
         popover.contentSize = NSSize(width: AppTheme.panelWidth, height: 580)
         popover.behavior = .transient
         popover.animates = true
-        popover.contentViewController = NSHostingController(rootView: PopoverView(appState: AppState.shared))
         popover.delegate = self
         self.popover = popover
 
@@ -195,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             AppState.shared.isPopoverOpen = false
         } else {
             AppState.shared.isPopoverOpen = true
+            AppState.shared.refreshFull()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -280,5 +283,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         AppState.shared.isPopoverOpen = false
+        malloc_zone_pressure_relief(nil, 0)
     }
 }

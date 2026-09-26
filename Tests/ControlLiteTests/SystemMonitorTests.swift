@@ -27,5 +27,15 @@ final class SystemMonitorTests: XCTestCase {
         XCTAssertTrue(metrics.gpuUsage >= 0.0 && metrics.gpuUsage <= 100.0, "GPU 利用率应在合法区间")
         XCTAssertGreaterThan(metrics.diskTotalGB, 0, "系统根目录磁盘总容量应大于 0")
         XCTAssertTrue(metrics.diskPercent > 0 && metrics.diskPercent <= 100, "磁盘使用率应在合法区间")
+
+        // 验证 RAM 深度细分与压力指针
+        XCTAssertGreaterThan(metrics.ramAppGB, 0, "App 占用内存应大于 0")
+        XCTAssertGreaterThan(metrics.ramWiredGB, 0, "联动 (Wired) 内存应大于 0")
+        XCTAssertTrue(["正常", "警告", "严重"].contains(metrics.ramPressureLevel), "内存压力级别必须在预设区间内")
+        XCTAssertTrue(metrics.ramPressurePercent >= 0 && metrics.ramPressurePercent <= 100, "内存压力百分比指针应在合法区间")
+
+        // 验证 GPU 深度属性
+        XCTAssertFalse(metrics.gpuModelName.isEmpty, "GPU 型号名称不应为空")
+        XCTAssertGreaterThan(metrics.gpuCoreCount, 0, "GPU 核心数应大于 0")
     }
 }

@@ -11,14 +11,20 @@ public struct RAMDetailView: View {
                 Spacer()
                 PressureGaugeView(
                     statusText: appState.metrics.ramPressureLevel,
-                    percent: Double(appState.metrics.ramPercent),
+                    percent: appState.metrics.ramPressurePercent,
                     size: 68
                 )
 
-                RingGaugeView(
+                let totalRAM = max(1.0, appState.metrics.ramTotalGB)
+                let appPct = (appState.metrics.ramAppGB / totalRAM) * 100.0
+                let wiredPct = (appState.metrics.ramWiredGB / totalRAM) * 100.0
+                let compPct = (appState.metrics.ramCompressedGB / totalRAM) * 100.0
+
+                SegmentedRingGaugeView(
                     valueString: "\(appState.metrics.ramPercent)%",
-                    percent: Double(appState.metrics.ramPercent),
-                    primaryColor: AppTheme.statusColor(for: Double(appState.metrics.ramPercent)),
+                    appPercent: appPct,
+                    wiredPercent: wiredPct,
+                    compressedPercent: compPct,
                     size: 68
                 )
                 Spacer()
@@ -79,6 +85,18 @@ public struct RAMDetailView: View {
             // MARK: - 高占用进程
             if !appState.metrics.ramTopProcesses.isEmpty {
                 SectionDividerHeader(title: "高占用进程")
+                HStack {
+                    Text("进程")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("用量")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 2)
+
                 VStack(spacing: 2) {
                     ForEach(appState.metrics.ramTopProcesses) { proc in
                         ProcessItemRow(item: proc)

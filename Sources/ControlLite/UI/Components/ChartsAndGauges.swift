@@ -67,13 +67,13 @@ public struct RingGaugeView: View {
     }
 }
 
-/// 2. 内存压力半圆弧仪表盘（绿/黄/红 + 正常/警告指示）
+/// 2. 内存压力半圆弧仪表盘（对齐 Stats 仪表与指针）
 public struct PressureGaugeView: View {
     let statusText: String
     let percent: Double
     let size: CGFloat
 
-    public init(statusText: String, percent: Double, size: CGFloat = 64) {
+    public init(statusText: String, percent: Double, size: CGFloat = 68) {
         self.statusText = statusText
         self.percent = percent
         self.size = size
@@ -81,13 +81,17 @@ public struct PressureGaugeView: View {
 
     public var body: some View {
         VStack(spacing: 2) {
-            ZStack {
-                // 半圆底弧
-                Circle()
-                    .trim(from: 0.5, to: 1.0)
+            ZStack(alignment: .top) {
+                // 绘制背景三色压力半圆弧 (绿 0-50%, 黄 50-80%, 红 80-100%)
+                PressureArcShape()
                     .stroke(
                         AngularGradient(
-                            gradient: Gradient(colors: [.green, .yellow, .red]),
+                            gradient: Gradient(stops: [
+                                .init(color: Color(red: 0.2, green: 0.82, blue: 0.4), location: 0.0),
+                                .init(color: Color(red: 0.2, green: 0.82, blue: 0.4), location: 0.45),
+                                .init(color: Color(red: 1.0, green: 0.78, blue: 0.1), location: 0.75),
+                                .init(color: Color(red: 1.0, green: 0.27, blue: 0.27), location: 1.0)
+                            ]),
                             center: .center,
                             startAngle: .degrees(180),
                             endAngle: .degrees(360)
@@ -96,22 +100,129 @@ public struct PressureGaugeView: View {
                     )
                     .frame(width: size, height: size)
 
-                // 指针位置
-                let angle = 180.0 + (min(100.0, max(0.0, percent)) / 100.0) * 180.0
-                Rectangle()
-                    .fill(Color.primary)
-                    .frame(width: 2, height: size * 0.32)
-                    .offset(y: -size * 0.16)
-                    .rotationEffect(.degrees(angle - 270))
+                // 精准指针 (从半圆圆心指向当前压力刻度)
+                PressureNeedleShape(percent: percent)
+                    .stroke(Color.blue, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                    .frame(width: size, height: size)
 
+                // 圆心轴心点
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 4.5, height: 4.5)
+                    .offset(y: size * 0.5 - 2.25)
+
+                // 底部状态文字（正常 / 警告 / 严重）
                 Text(statusText)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(.primary)
-                    .offset(y: size * 0.24)
+                    .offset(y: size * 0.5 + 4)
             }
-            .frame(width: size, height: size * 0.7)
-            .clipped()
+            .frame(width: size, height: size * 0.76)
         }
+    }
+}
+
+public struct PressureArcShape: Shape {
+    public init() {}
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = (min(rect.width, rect.height) - 8) / 2
+        path.addArc(center: center, radius: radius, startAngle: .degrees(180), endAngle: .degrees(360), clockwise: false)
+        return path
+    }
+}
+
+public struct PressureNeedleShape: Shape {
+    let percent: Double
+    public init(percent: Double) {
+        self.percent = percent
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = (min(rect.width, rect.height) - 8) / 2
+        let needleLength = radius * 0.82
+
+        // percent: 0 -> 180° (左水平), 100 -> 360°/0° (右水平)
+        let clamped = min(100.0, max(0.0, percent))
+        let angleDeg = 180.0 + (clamped / 100.0) * 180.0
+        let angleRad = angleDeg * Double.pi / 180.0
+
+        let endX = center.x + CGFloat(cos(angleRad)) * needleLength
+        let endY = center.y + CGFloat(sin(angleRad)) * needleLength
+
+        path.move(to: center)
+        path.addLine(to: CGPoint(x: endX, y: endY))
+        return path
+    }
+}
+
+/// 多段式内存圆环仪表盘（对齐 Stats 内存蓝/橙/红分段环）
+public struct SegmentedRingGaugeView: View {
+    let valueString: String
+    let appPercent: Double
+    let wiredPercent: Double
+    let compressedPercent: Double
+    let size: CGFloat
+
+    public init(
+        valueString: String,
+        appPercent: Double,
+        wiredPercent: Double,
+        compressedPercent: Double,
+        size: CGFloat = 68
+    ) {
+        self.valueString = valueString
+        self.appPercent = appPercent
+        self.wiredPercent = wiredPercent
+        self.compressedPercent = compressedPercent
+        self.size = size
+    }
+
+    public var body: some View {
+        let lineWidth: CGFloat = 6.0
+        let appFrac = min(1.0, max(0.0, appPercent / 100.0))
+        let wiredFrac = min(max(0.0, 1.0 - appFrac), max(0.0, wiredPercent / 100.0))
+        let compFrac = min(max(0.0, 1.0 - appFrac - wiredFrac), max(0.0, compressedPercent / 100.0))
+
+        return ZStack {
+            // 背景底环 (空闲/可用)
+            Circle()
+                .stroke(Color.secondary.opacity(0.18), lineWidth: lineWidth)
+
+            // 1. App 内存（蓝色段）
+            if appFrac > 0.005 {
+                Circle()
+                    .trim(from: 0, to: CGFloat(appFrac))
+                    .stroke(Color.blue, style: StrokeStyle(lineWidth: lineWidth, lineCap: (wiredFrac > 0.005 || compFrac > 0.005) ? .butt : .round))
+                    .rotationEffect(.degrees(-90))
+            }
+
+            // 2. 联动内存（橙色段）
+            if wiredFrac > 0.005 {
+                Circle()
+                    .trim(from: CGFloat(appFrac), to: CGFloat(appFrac + wiredFrac))
+                    .stroke(Color.orange, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .rotationEffect(.degrees(-90))
+            }
+
+            // 3. 压缩内存（粉红/红色段）
+            if compFrac > 0.005 {
+                Circle()
+                    .trim(from: CGFloat(appFrac + wiredFrac), to: CGFloat(appFrac + wiredFrac + compFrac))
+                    .stroke(Color(red: 1.0, green: 0.22, blue: 0.38), style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .rotationEffect(.degrees(-90))
+            }
+
+            // 中间百分比文字
+            Text(valueString)
+                .font(.system(size: size * 0.27, weight: .bold, design: .rounded))
+                .foregroundColor(.primary)
+                .monospacedDigit()
+        }
+        .frame(width: size, height: size)
     }
 }
 

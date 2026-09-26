@@ -61,6 +61,7 @@ public struct SystemMetrics: Sendable {
     public var ramFreeGB: Double = 0.0
     public var ramSwapUsedMB: Double = 0.0
     public var ramPressureLevel: String = "正常"
+    public var ramPressurePercent: Double = 25.0
     public var ramHistory: [Double] = []
     public var ramTopProcesses: [ProcessUsageItem] = []
 
@@ -183,6 +184,7 @@ public final class SystemMonitor: @unchecked Sendable {
         m.ramFreeGB = ramData.freeGB
         m.ramSwapUsedMB = ramData.swapUsedMB
         m.ramPressureLevel = ramData.pressure
+        m.ramPressurePercent = ramData.pressurePercent
 
         let (downRate, upRate) = fetchNetworkRate()
         m.netDownloadBytesSec = downRate
@@ -219,6 +221,9 @@ public final class SystemMonitor: @unchecked Sendable {
         m.gpuUsage = gpuDetail.total
         m.gpuRenderUsage = gpuDetail.render
         m.gpuTilerUsage = gpuDetail.tiler
+        if let model = gpuDetail.model, !model.isEmpty {
+            m.gpuModelName = model
+        }
         if gpuDetail.cores > 0 {
             self.gpuCores = gpuDetail.cores
             m.gpuCoreCount = gpuDetail.cores
@@ -349,7 +354,8 @@ public final class SystemMonitor: @unchecked Sendable {
         var total: Double = 0.0
         var render: Double = 0.0
         var tiler: Double = 0.0
-        var cores: Int = 16
+        var cores: Int = 8
+        var model: String? = nil
     }
 
     private func fetchAppleSiliconGPU() -> GPUDetail {
@@ -361,32 +367,47 @@ public final class SystemMonitor: @unchecked Sendable {
         var detail = GPUDetail()
         var service = IOIteratorNext(iterator)
         while service != 0 {
-            defer {
-                IOObjectRelease(service)
-                service = IOIteratorNext(iterator)
-            }
             var props: Unmanaged<CFMutableDictionary>?
             if IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
                let dict = props?.takeRetainedValue() as? [String: Any] {
                 if let perfStats = dict["PerformanceStatistics"] as? [String: Any] {
-                    if let dev = perfStats["Device Utilization %"] as? Int {
-                        detail.total = Double(dev)
+                    func readDouble(_ key: String) -> Double? {
+                        if let num = perfStats[key] as? NSNumber {
+                            return num.doubleValue
+                        }
+                        if let i = perfStats[key] as? Int {
+                            return Double(i)
+                        }
+                        return nil
                     }
-                    if let rend = perfStats["Renderer Utilization %"] as? Int {
-                        detail.render = Double(rend)
+
+                    if let dev = readDouble("Device Utilization %") {
+                        detail.total = dev
+                    }
+                    if let rend = readDouble("Renderer Utilization %") {
+                        detail.render = rend
                     } else {
-                        detail.render = max(0, detail.total - 2)
+                        detail.render = detail.total
                     }
-                    if let tile = perfStats["Tiler Utilization %"] as? Int {
-                        detail.tiler = Double(tile)
+                    if let tile = readDouble("Tiler Utilization %") {
+                        detail.tiler = tile
                     } else {
                         detail.tiler = detail.total
                     }
                 }
-                if let c = dict["gpu-core-count"] as? Int ?? dict["core-count"] as? Int {
+                if let c = (dict["gpu-core-count"] as? NSNumber)?.intValue ?? (dict["core-count"] as? NSNumber)?.intValue ?? (dict["gpu-core-count"] as? Int) ?? (dict["core-count"] as? Int) {
                     detail.cores = c
                 }
+                if let m = dict["model"] as? String {
+                    detail.model = m
+                } else if let data = dict["model"] as? Data, let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters) {
+                    if !s.isEmpty {
+                        detail.model = s
+                    }
+                }
             }
+            IOObjectRelease(service)
+            service = IOIteratorNext(iterator)
         }
         return detail
     }
@@ -403,6 +424,7 @@ public final class SystemMonitor: @unchecked Sendable {
         var freeGB: Double = 0.0
         var swapUsedMB: Double = 0.0
         var pressure: String = "正常"
+        var pressurePercent: Double = 25.0
     }
 
     private func fetchRAMDetailed() -> RAMDetailed {
@@ -436,6 +458,37 @@ public final class SystemMonitor: @unchecked Sendable {
             swapUsedMB = Double(swapUsage.xsu_used) / (1024.0 * 1024.0)
         }
 
+        // 真实内核内存压力采样 (kern.memorystatus_vm_pressure_level)
+        var pressureLevelInt: Int32 = 1
+        var pSize = MemoryLayout<Int32>.size
+        if sysctlbyname("kern.memorystatus_vm_pressure_level", &pressureLevelInt, &pSize, nil, 0) != 0 {
+            pressureLevelInt = 1
+        }
+        let pressureString: String
+        let pressurePct: Double
+        switch pressureLevelInt {
+        case 1:
+            pressureString = "正常"
+            pressurePct = 25.0
+        case 2:
+            pressureString = "警告"
+            pressurePct = 60.0
+        case 4:
+            pressureString = "严重"
+            pressurePct = 90.0
+        default:
+            if percent > 85 {
+                pressureString = "严重"
+                pressurePct = 90.0
+            } else if percent > 70 {
+                pressureString = "警告"
+                pressurePct = 60.0
+            } else {
+                pressureString = "正常"
+                pressurePct = 25.0
+            }
+        }
+
         return RAMDetailed(
             usedGB: usedBytes / 1_073_741_824.0,
             totalGB: totalBytes / 1_073_741_824.0,
@@ -445,7 +498,8 @@ public final class SystemMonitor: @unchecked Sendable {
             compressedGB: compressed / 1_073_741_824.0,
             freeGB: free / 1_073_741_824.0,
             swapUsedMB: swapUsedMB,
-            pressure: percent > 85 ? "严重" : (percent > 70 ? "警告" : "正常")
+            pressure: pressureString,
+            pressurePercent: pressurePct
         )
     }
 

@@ -66,6 +66,18 @@ public struct CPUDetailView: View {
             // MARK: - 高占用进程
             if !appState.metrics.cpuTopProcesses.isEmpty {
                 SectionDividerHeader(title: "高占用进程")
+                HStack {
+                    Text("进程")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("用量")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 2)
+
                 VStack(spacing: 2) {
                     ForEach(appState.metrics.cpuTopProcesses) { proc in
                         ProcessItemRow(item: proc)
