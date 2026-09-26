@@ -2,6 +2,24 @@ import Foundation
 import SwiftUI
 import Combine
 
+public enum MenuBarStyle: String, CaseIterable, Codable {
+    case iconAndStats = "iconAndStats"     // 图标 + 内存 + 实时网速（默认全能）
+    case iconOnly = "iconOnly"             // 仅应用图标（极简 OneSwitch 风格）
+    case statsOnly = "statsOnly"           // 仅监控指标（Stats 风格）
+    case iconAndSpeed = "iconAndSpeed"     // 图标 + 实时网速
+    case iconAndRAM = "iconAndRAM"         // 图标 + 内存占用
+
+    public var title: String {
+        switch self {
+        case .iconAndStats: return "图标 + 内存 + 实时网速"
+        case .iconOnly: return "仅应用图标 (极简)"
+        case .statsOnly: return "仅硬件监控数据"
+        case .iconAndSpeed: return "图标 + 实时网速"
+        case .iconAndRAM: return "图标 + 内存占用"
+        }
+    }
+}
+
 /// 全局响应式状态机（支持智能能耗调度与多标签页深度监控）
 @MainActor
 public final class AppState: ObservableObject {
@@ -11,7 +29,17 @@ public final class AppState: ObservableObject {
     @Published public private(set) var metrics = SystemMetrics()
     // 开关状态
     @Published public private(set) var switches = SwitchStates()
-    
+
+    // 菜单栏渲染模式
+    @Published public var menuBarStyle: MenuBarStyle {
+        didSet {
+            UserDefaults.standard.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
+        }
+    }
+
+    // 是否展示“关于”面板
+    @Published public var showAbout: Bool = false
+
     // 当前激活的监控标签页 ("overview", "cpu", "gpu", "ram", "disk")
     @Published public var selectedTab: String = "overview" {
         didSet {
@@ -36,6 +64,8 @@ public final class AppState: ObservableObject {
     private let switchMgr = SwitchManager.shared
 
     private init() {
+        let savedStyle = UserDefaults.standard.string(forKey: "menuBarStyle") ?? MenuBarStyle.iconAndStats.rawValue
+        self.menuBarStyle = MenuBarStyle(rawValue: savedStyle) ?? .iconAndStats
         self.metrics = monitor.sample(fullMetrics: false)
         self.switches = switchMgr.getCurrentStates()
         startTimer(interval: 1.5)

@@ -11,7 +11,7 @@ public struct PopoverView: View {
 
     public var body: some View {
         VStack(spacing: 12) {
-            // MARK: - 顶部 Header & 分段导航
+            // MARK: - 顶部 Header & 操作按钮
             HStack {
                 HStack(spacing: 5) {
                     Image(systemName: "slider.horizontal.2.square.on.square")
@@ -24,56 +24,74 @@ public struct PopoverView: View {
 
                 Spacer()
 
-                Button {
-                    appState.refreshFull()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            appState.showAbout.toggle()
+                        }
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(appState.showAbout ? .blue : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("关于 AetherSwitch 与开源链接")
+
+                    Button {
+                        appState.refreshFull()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("刷新硬件状态")
                 }
-                .buttonStyle(.plain)
-                .help("刷新硬件状态")
             }
             .padding(.horizontal, 2)
 
-            // MARK: - 原生分段选择器 [ 概览 | CPU | GPU | 内存 | 磁盘 ]
-            Picker("", selection: $appState.selectedTab) {
-                Text("概览").tag("overview")
-                Text("CPU").tag("cpu")
-                Text("GPU").tag("gpu")
-                Text("内存").tag("ram")
-                Text("磁盘").tag("disk")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            // MARK: - 动态内容区（根据选中标签页展开对应深度视图）
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 10) {
-                    switch appState.selectedTab {
-                    case "cpu":
-                        CPUDetailView(appState: appState)
-                    case "gpu":
-                        GPUDetailView(appState: appState)
-                    case "ram":
-                        RAMDetailView(appState: appState)
-                    case "disk":
-                        DiskDetailView(appState: appState)
-                    default:
-                        // 概览模式：展示硬件四宫格 + 4 大核心快捷开关
-                        overviewSection
-
-                        Divider()
-                            .opacity(0.3)
-                            .padding(.top, 4)
-
-                        togglesSection
-                    }
+            if appState.showAbout {
+                AboutView(isPresented: $appState.showAbout)
+            } else {
+                // MARK: - 原生分段选择器 [ 概览 | CPU | GPU | 内存 | 磁盘 ]
+                Picker("", selection: $appState.selectedTab) {
+                    Text("概览").tag("overview")
+                    Text("CPU").tag("cpu")
+                    Text("GPU").tag("gpu")
+                    Text("内存").tag("ram")
+                    Text("磁盘").tag("disk")
                 }
-                .padding(.horizontal, 2)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                // MARK: - 动态内容区（根据选中标签页展开对应深度视图）
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 10) {
+                        switch appState.selectedTab {
+                        case "cpu":
+                            CPUDetailView(appState: appState)
+                        case "gpu":
+                            GPUDetailView(appState: appState)
+                        case "ram":
+                            RAMDetailView(appState: appState)
+                        case "disk":
+                            DiskDetailView(appState: appState)
+                        default:
+                            // 概览模式：展示硬件四宫格 + 4 大核心快捷开关
+                            overviewSection
+
+                            Divider()
+                                .opacity(0.3)
+                                .padding(.top, 4)
+
+                            togglesSection
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .frame(maxHeight: 540)
+                .animation(.spring(response: 0.28, dampingFraction: 0.82), value: appState.selectedTab)
             }
-            .frame(maxHeight: 540)
-            .animation(.spring(response: 0.28, dampingFraction: 0.82), value: appState.selectedTab)
 
             // MARK: - 底部操作栏 (版本与自动更新)
             Divider()
@@ -82,9 +100,17 @@ public struct PopoverView: View {
             HStack(spacing: 6) {
                 // 当前版本与自动更新状态
                 HStack(spacing: 5) {
-                    Text("v\(updateMgr.currentVersion)")
-                        .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        .foregroundColor(.primary)
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            appState.showAbout.toggle()
+                        }
+                    } label: {
+                        Text("v\(updateMgr.currentVersion)")
+                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("关于 AetherSwitch")
 
                     switch updateMgr.status {
                     case .checking:
@@ -147,6 +173,21 @@ public struct PopoverView: View {
                     }
                 }
                 .contextMenu {
+                    Button("关于 AetherSwitch...") {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            appState.showAbout = true
+                        }
+                    }
+                    Button("访问官方网站 (aethernative.com) ↗") {
+                        NSWorkspace.shared.open(URL(string: "https://aethernative.com")!)
+                    }
+                    Button("GitHub 开源仓库 ↗") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/bcblr1993/AetherSwitch")!)
+                    }
+                    Button("问题反馈与建议 ↗") {
+                        NSWorkspace.shared.open(URL(string: "https://github.com/bcblr1993/AetherSwitch/issues")!)
+                    }
+                    Divider()
                     Button("立即检查更新") {
                         updateMgr.checkForUpdates(manual: true)
                     }

@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import Combine
 
 /// 穿透鼠标事件的 HostingView，让底层的 NSStatusBarButton 原生处理点击与拖动
 final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
@@ -13,7 +14,8 @@ final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
-    private var eventMonitor: Any?
+    private var hostingView: PassthroughHostingView<MenuBarView>!
+    private var cancellables = Set<AnyCancellable>()
 
     static func main() {
         let app = NSApplication.shared
@@ -42,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let hosting = PassthroughHostingView(rootView: MenuBarView(appState: AppState.shared))
             hosting.translatesAutoresizingMaskIntoConstraints = false
             button.addSubview(hosting)
+            self.hostingView = hosting
 
             NSLayoutConstraint.activate([
                 hosting.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
@@ -54,6 +57,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+
+        // 关键修复：主动测量并同步 statusItem 宽度，杜绝 NSStatusBarButton 默认 16px 导致内容被截断！
+        updateStatusItemWidth()
+
+        // 监听系统指标与样式变更，自适应动态调整状态栏宽度
+        AppState.shared.$metrics
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemWidth()
+            }
+            .store(in: &cancellables)
+
+        AppState.shared.$menuBarStyle
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateStatusItemWidth()
+            }
+            .store(in: &cancellables)
 
         // 4. 注册系统级分布式通知，便于脚本与自动化唤起
         DistributedNotificationCenter.default().addObserver(
@@ -75,8 +96,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 if let tab = note.userInfo?["tab"] as? String {
                     AppState.shared.selectedTab = tab
                 }
+                AppState.shared.showAbout = false
                 if let self = self, !self.popover.isShown {
                     self.togglePopover()
+                }
+            }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.aethernative.aetherswitch.showAbout"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                AppState.shared.showAbout = true
+                if let self = self, !self.popover.isShown {
+                    self.togglePopover()
+                }
+            }
+        }
+
+        DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("com.aethernative.aetherswitch.setMenuBarStyle"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor in
+                if let raw = note.userInfo?["style"] as? String, let style = MenuBarStyle(rawValue: raw) {
+                    AppState.shared.menuBarStyle = style
+                    self?.updateStatusItemWidth()
                 }
             }
         }
@@ -115,12 +163,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         SwitchManager.shared.releaseKeepAwake()
     }
 
+    // MARK: - 动态调整状态栏宽度
+
+    private func updateStatusItemWidth() {
+        guard let hosting = hostingView else { return }
+        let fittingWidth = ceil(hosting.fittingSize.width)
+        guard fittingWidth > 0 else { return }
+        let targetLength = fittingWidth + 8
+        if abs(statusItem.length - targetLength) > 0.5 {
+            statusItem.length = targetLength
+        }
+    }
+
     // MARK: - 交互事件
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp {
-            // 右键快捷菜单（退出/刷新/检查更新）
+            // 右键快捷菜单（关于/官网/样式/更新/退出）
             showContextMenu(sender)
         } else {
             togglePopover()
@@ -142,15 +202,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func showContextMenu(_ sender: NSStatusBarButton) {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "AetherSwitch v\(UpdateManager.shared.currentVersion)", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "AetherSwitch v\(UpdateManager.shared.currentVersion)", action: #selector(showAboutAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+
+        // 菜单栏样式子菜单
+        let styleParent = NSMenuItem(title: "菜单栏显示样式", action: nil, keyEquivalent: "")
+        let styleSubmenu = NSMenu()
+        for style in MenuBarStyle.allCases {
+            let item = NSMenuItem(title: style.title, action: #selector(changeMenuBarStyleAction(_:)), keyEquivalent: "")
+            item.representedObject = style
+            item.state = (AppState.shared.menuBarStyle == style) ? .on : .off
+            styleSubmenu.addItem(item)
+        }
+        styleParent.submenu = styleSubmenu
+        menu.addItem(styleParent)
+
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "关于 AetherSwitch...", action: #selector(showAboutAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "访问官方网站 (aethernative.com) ↗", action: #selector(openWebsiteAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "GitHub 开源仓库 (bcblr1993) ↗", action: #selector(openGitHubAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "问题反馈与建议 ↗", action: #selector(openIssuesAction), keyEquivalent: ""))
+
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "检查更新...", action: #selector(checkUpdateAction), keyEquivalent: "u"))
         menu.addItem(NSMenuItem(title: "刷新数据", action: #selector(refreshAction), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出 AetherSwitch", action: #selector(quitAction), keyEquivalent: "q"))
+
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil // 恢复点击行为
+    }
+
+    @objc private func showAboutAction() {
+        AppState.shared.showAbout = true
+        if !popover.isShown {
+            togglePopover()
+        }
+    }
+
+    @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {
+        if let style = sender.representedObject as? MenuBarStyle {
+            AppState.shared.menuBarStyle = style
+            updateStatusItemWidth()
+        }
+    }
+
+    @objc private func openWebsiteAction() {
+        NSWorkspace.shared.open(URL(string: "https://aethernative.com")!)
+    }
+
+    @objc private func openGitHubAction() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/bcblr1993/AetherSwitch")!)
+    }
+
+    @objc private func openIssuesAction() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/bcblr1993/AetherSwitch/issues")!)
     }
 
     @objc private func checkUpdateAction() {
