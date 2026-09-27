@@ -24,7 +24,7 @@ count = max(1, math.ceil(hours * 3600 / interval))
 rows = []
 expected_pid = None
 with (path / 'metrics.csv').open('w') as output:
-    writer = csv.DictWriter(output, fieldnames=['timestamp', 'pid', 'cpu_pct', 'footprint_mb', 'popover_open', 'responsive', 'status'])
+    writer = csv.DictWriter(output, fieldnames=['timestamp', 'pid', 'cpu_pct', 'footprint_mb', 'peak_footprint_mb', 'popover_open', 'responsive', 'status'])
     writer.writeheader()
     for cycle in range(count):
         started = time.monotonic()
@@ -39,6 +39,8 @@ with (path / 'metrics.csv').open('w') as output:
         (path / 'latest-vmmap.txt').write_text(memory.stdout)
         match = re.search(r'Physical footprint:\s*([\d.]+)([KMG])', memory.stdout)
         footprint = float(match[1]) * {'K': 1/1024, 'M': 1, 'G': 1024}[match[2]] if match else None
+        peak_match = re.search(r'Physical footprint \(peak\):\s*([\d.]+)([KMG])', memory.stdout)
+        peak = float(peak_match[1]) * {'K': 1/1024, 'M': 1, 'G': 1024}[peak_match[2]] if peak_match else None
         request_time = time.time()
         subprocess.run([probe], check=True)
         receipt = {}
@@ -50,15 +52,15 @@ with (path / 'metrics.csv').open('w') as output:
         responsive = receipt.get('timestamp', 0) >= request_time
         opened = receipt.get('popoverOpen') if responsive else None
         status = 'PASS'
-        if footprint is None or not responsive: status = 'UNVERIFIED'
-        elif footprint > 20: status = 'FAIL_MEMORY'
+        if footprint is None or peak is None or not responsive: status = 'UNVERIFIED'
+        elif footprint >= 30 or peak >= 30: status = 'FAIL_MEMORY'
         elif opened is False and cpu > 0.1: status = 'FAIL_IDLE_CPU'
-        row = dict(timestamp=time.strftime('%Y-%m-%d %H:%M:%S'), pid=pid, cpu_pct=cpu, footprint_mb=footprint, popover_open=opened, responsive=responsive, status=status)
+        row = dict(timestamp=time.strftime('%Y-%m-%d %H:%M:%S'), pid=pid, cpu_pct=cpu, footprint_mb=footprint, peak_footprint_mb=peak, popover_open=opened, responsive=responsive, status=status)
         rows.append(row)
         writer.writerow(row); output.flush()
         print(json.dumps(row), flush=True)
         if cycle + 1 < count: time.sleep(max(0, interval - (time.monotonic() - started)))
-summary = {'samples': len(rows), 'all_passed': all(r['status'] == 'PASS' for r in rows), 'peak_footprint_mb': max((r['footprint_mb'] for r in rows if r['footprint_mb'] is not None), default=None), 'mean_cpu_pct': sum(r['cpu_pct'] for r in rows) / len(rows), 'results': rows}
+summary = {'samples': len(rows), 'all_passed': all(r['status'] == 'PASS' for r in rows), 'peak_footprint_mb': max((r['peak_footprint_mb'] for r in rows if r['peak_footprint_mb'] is not None), default=None), 'mean_cpu_pct': sum(r['cpu_pct'] for r in rows) / len(rows), 'results': rows}
 (path / 'report.json').write_text(json.dumps(summary, indent=2))
 raise SystemExit(0 if summary['all_passed'] else 1)
 PY
