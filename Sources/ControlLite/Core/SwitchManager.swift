@@ -17,7 +17,7 @@ public final class SwitchManager: @unchecked Sendable {
     public static let shared = SwitchManager()
 
     private var keepAwakeAssertionID: IOPMAssertionID = 0
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
 
     private init() {}
 
@@ -28,6 +28,8 @@ public final class SwitchManager: @unchecked Sendable {
     // MARK: - 状态刷新查询
 
     public func getCurrentStates() -> SwitchStates {
+        lock.lock()
+        defer { lock.unlock() }
         var s = SwitchStates()
         s.isKeepAwakeActive = (keepAwakeAssertionID != 0)
         s.isDesktopHidden = checkIsDesktopHidden()
@@ -58,6 +60,8 @@ public final class SwitchManager: @unchecked Sendable {
     }
 
     public func releaseKeepAwake() {
+        lock.lock()
+        defer { lock.unlock() }
         if keepAwakeAssertionID != 0 {
             IOPMAssertionRelease(keepAwakeAssertionID)
             keepAwakeAssertionID = 0
@@ -87,9 +91,11 @@ public final class SwitchManager: @unchecked Sendable {
         task.arguments = ["read", "com.apple.finder", "CreateDesktop"]
         let pipe = Pipe()
         task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
         try? task.run()
         task.waitUntilExit()
 
+        guard task.terminationStatus == 0 else { return false }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
             // 如果 CreateDesktop 是 false/0，说明桌面图标处于隐藏状态
@@ -121,9 +127,11 @@ public final class SwitchManager: @unchecked Sendable {
         task.arguments = ["read", "com.apple.finder", "AppleShowAllFiles"]
         let pipe = Pipe()
         task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
         try? task.run()
         task.waitUntilExit()
 
+        guard task.terminationStatus == 0 else { return false }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
             return (str as NSString).boolValue

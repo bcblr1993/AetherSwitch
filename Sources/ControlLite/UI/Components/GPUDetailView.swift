@@ -41,12 +41,12 @@ public struct GPUDetailView: View {
             SectionDividerHeader(title: "详细信息")
             VStack(spacing: 2) {
                 MetricDetailRow(title: "型号:", value: appState.metrics.gpuModelName)
-                MetricDetailRow(title: "核心数:", value: "\(appState.metrics.gpuCoreCount)")
+                MetricDetailRow(title: "核心数:", value: appState.metrics.gpuCoreCount > 0 ? "\(appState.metrics.gpuCoreCount)" : "不可用")
                 MetricDetailRow(title: "利用率:", value: "\(Int(appState.metrics.gpuUsage))%")
                 MetricDetailRow(title: "渲染利用率:", value: "\(Int(appState.metrics.gpuRenderUsage))%")
                 MetricDetailRow(title: "Tiler利用率:", value: "\(Int(appState.metrics.gpuTilerUsage))%")
                 MetricDetailRow(title: "ANE 利用率:", value: "0%")
-                MetricDetailRow(title: "FPS:", value: "\(appState.metrics.screenFPS)")
+                MetricDetailRow(title: "显示器刷新率:", value: "\(appState.metrics.screenFPS)")
             }
         }
     }

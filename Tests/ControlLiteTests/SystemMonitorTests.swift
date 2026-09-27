@@ -42,6 +42,10 @@ final class SystemMonitorTests: XCTestCase {
 
         // 验证 GPU 深度属性
         XCTAssertFalse(metrics.gpuModelName.isEmpty, "GPU 型号名称不应为空")
-        XCTAssertGreaterThan(metrics.gpuCoreCount, 0, "GPU 核心数应大于 0")
+        XCTAssertGreaterThanOrEqual(metrics.gpuCoreCount, 0, "未知 GPU 核心数不能伪造")
+        XCTAssertEqual(metrics.ramUsedGB + metrics.ramFreeGB, metrics.ramTotalGB, accuracy: 0.001)
+        XCTAssertEqual(metrics.ramAppGB + metrics.ramWiredGB + metrics.ramCompressedGB, metrics.ramUsedGB, accuracy: 0.001)
+        XCTAssertTrue(metrics.diskReadHistory.isEmpty)
+        XCTAssertTrue(metrics.diskTopProcesses.isEmpty)
     }
 }

@@ -48,7 +48,7 @@ public struct SystemMetrics: Sendable {
 
     // GPU 深度指标 (图 2)
     public var gpuModelName: String = "Apple Silicon"
-    public var gpuCoreCount: Int = 16
+    public var gpuCoreCount: Int = 0
     public var gpuRenderUsage: Double = 0.0
     public var gpuTilerUsage: Double = 0.0
     public var gpuHistory: [Double] = []
@@ -135,7 +135,8 @@ public final class SystemMonitor: @unchecked Sendable {
     private var eCoreCount: Int = 2
     private var pCoreCount: Int = 8
     private var chipName: String = "Apple Silicon"
-    private var gpuCores: Int = 16
+    private var gpuCores: Int = 0
+    private let sampleLock = NSLock()
     private let cpuLock = NSLock()
     private let gpuLock = NSLock()
     private var smoothedGPU: Double = 0.0
@@ -147,11 +148,11 @@ public final class SystemMonitor: @unchecked Sendable {
     private var lastNetTimestamp: TimeInterval = 0
 
     // 历史点缓冲区（最多保留 25 个采样点）
-    private var cpuHistoryBuffer: [Double] = Array(repeating: 20.0, count: 25)
-    private var gpuHistoryBuffer: [Double] = Array(repeating: 15.0, count: 25)
-    private var ramHistoryBuffer: [Double] = Array(repeating: 60.0, count: 25)
-    private var diskWriteHistoryBuffer: [Double] = Array(repeating: 2.0, count: 25)
-    private var diskReadHistoryBuffer: [Double] = Array(repeating: 1.0, count: 25)
+    private var cpuHistoryBuffer: [Double] = []
+    private var gpuHistoryBuffer: [Double] = []
+    private var ramHistoryBuffer: [Double] = []
+    private var diskWriteHistoryBuffer: [Double] = []
+    private var diskReadHistoryBuffer: [Double] = []
 
     private init() {
         var numCPUsU: natural_t = 0
@@ -180,7 +181,7 @@ public final class SystemMonitor: @unchecked Sendable {
         var nameBuf = [CChar](repeating: 0, count: 256)
         var nameSize = nameBuf.count
         if sysctlbyname("machdep.cpu.brand_string", &nameBuf, &nameSize, nil, 0) == 0 {
-            self.chipName = String(cString: nameBuf)
+            self.chipName = String(decoding: nameBuf.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         }
     }
 
@@ -194,6 +195,8 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - 采样分流
 
     public func sample(fullMetrics: Bool = true, activeTab: String = "overview") -> SystemMetrics {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
         var m = SystemMetrics()
         m.gpuModelName = chipName
         m.gpuCoreCount = gpuCores
@@ -262,21 +265,12 @@ public final class SystemMonitor: @unchecked Sendable {
         m.gpuHistory = gpuHistoryBuffer
         m.ramHistory = ramHistoryBuffer
 
-        // 模拟磁盘 I/O 速率波形（若无硬件计数器则基于活跃动态）
-        m.diskWriteBytesSec = max(0.5, (m.cpuUsage * 1024 * 70).truncatingRemainder(dividingBy: 1024 * 1024 * 12))
-        m.diskReadBytesSec = max(0.2, (m.cpuUsage * 1024 * 40).truncatingRemainder(dividingBy: 1024 * 1024 * 8))
-        appendHistory(&diskWriteHistoryBuffer, value: m.diskWriteBytesSec / (1024 * 1024))
-        appendHistory(&diskReadHistoryBuffer, value: m.diskReadBytesSec / (1024 * 1024))
-        m.diskWriteHistory = diskWriteHistoryBuffer
-        m.diskReadHistory = diskReadHistoryBuffer
-
         // 仅在对应 Tab 需要时才抓取 TOP 进程，确保极度省电
         if activeTab == "cpu" {
             m.cpuTopProcesses = fetchTopProcesses(mode: .cpu)
         } else if activeTab == "ram" {
             m.ramTopProcesses = fetchTopProcesses(mode: .ram)
-        } else if activeTab == "disk" {
-            m.diskTopProcesses = fetchTopProcesses(mode: .disk)
+
         }
 
         return m
@@ -320,10 +314,10 @@ public final class SystemMonitor: @unchecked Sendable {
         if let prevCpuInfo = prevCpuInfo {
             for i in 0..<Int(numCPUs) {
                 let offset = Int(CPU_STATE_MAX) * i
-                let u = Int64(cpuInfo[offset + Int(CPU_STATE_USER)] - prevCpuInfo[offset + Int(CPU_STATE_USER)])
-                let s = Int64(cpuInfo[offset + Int(CPU_STATE_SYSTEM)] - prevCpuInfo[offset + Int(CPU_STATE_SYSTEM)])
-                let n = Int64(cpuInfo[offset + Int(CPU_STATE_NICE)] - prevCpuInfo[offset + Int(CPU_STATE_NICE)])
-                let id = Int64(cpuInfo[offset + Int(CPU_STATE_IDLE)] - prevCpuInfo[offset + Int(CPU_STATE_IDLE)])
+                let u = Int64(UInt32(bitPattern: cpuInfo[offset + Int(CPU_STATE_USER)]) &- UInt32(bitPattern: prevCpuInfo[offset + Int(CPU_STATE_USER)]))
+                let s = Int64(UInt32(bitPattern: cpuInfo[offset + Int(CPU_STATE_SYSTEM)]) &- UInt32(bitPattern: prevCpuInfo[offset + Int(CPU_STATE_SYSTEM)]))
+                let n = Int64(UInt32(bitPattern: cpuInfo[offset + Int(CPU_STATE_NICE)]) &- UInt32(bitPattern: prevCpuInfo[offset + Int(CPU_STATE_NICE)]))
+                let id = Int64(UInt32(bitPattern: cpuInfo[offset + Int(CPU_STATE_IDLE)]) &- UInt32(bitPattern: prevCpuInfo[offset + Int(CPU_STATE_IDLE)]))
                 let coreInUse = u + s + n
                 let coreTotal = coreInUse + id
                 inUse += coreInUse
@@ -379,7 +373,7 @@ public final class SystemMonitor: @unchecked Sendable {
         var total: Double = 0.0
         var render: Double = 0.0
         var tiler: Double = 0.0
-        var cores: Int = 8
+        var cores: Int = 0
         var model: String? = nil
     }
 
@@ -401,9 +395,13 @@ public final class SystemMonitor: @unchecked Sendable {
 
         var service = IOIteratorNext(iterator)
         while service != 0 {
-            var props: Unmanaged<CFMutableDictionary>?
-            if IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
-               let dict = props?.takeRetainedValue() as? [String: Any] {
+            var dict: [String: Any] = [:]
+            for key in ["PerformanceStatistics", "gpu-core-count", "core-count", "model"] {
+                if let property = IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() {
+                    dict[key] = property
+                }
+            }
+            do {
                 if let perfStats = dict["PerformanceStatistics"] as? [String: Any] {
                     func readDouble(_ key: String) -> Double? {
                         if let num = perfStats[key] as? NSNumber {
@@ -437,41 +435,14 @@ public final class SystemMonitor: @unchecked Sendable {
             service = IOIteratorNext(iterator)
         }
 
-        // 综合取渲染、计算与贴图各维度的实际峰值
-        let rawPeak = max(maxDev, maxRend, maxTile)
 
         gpuLock.lock()
         defer { gpuLock.unlock() }
 
-        // 峰值保持与平滑衰减算法 (Peak-Hold Decay Filtering):
-        // 瞬间检测到图形活动时以 100% 敏锐度立刻拉起，活动停歇后按 0.55 系数平滑递减（约 3~5 秒自然回落至 0%），
-        // 彻底消除由于 Apple Silicon 极短微秒级渲染脉冲在离散定时间隙下导致的“始终显示为 0%”假死体验，同时兼顾低功耗与真实感。
-        if rawPeak > smoothedGPU {
-            smoothedGPU = min(100.0, rawPeak)
-        } else {
-            smoothedGPU = max(rawPeak, smoothedGPU * 0.55)
-            if smoothedGPU < 0.8 {
-                smoothedGPU = 0.0
-            }
-        }
-
-        if maxRend > smoothedGPURender {
-            smoothedGPURender = min(100.0, maxRend)
-        } else {
-            smoothedGPURender = max(maxRend, smoothedGPURender * 0.55)
-            if smoothedGPURender < 0.8 {
-                smoothedGPURender = 0.0
-            }
-        }
-
-        if maxTile > smoothedGPUTiler {
-            smoothedGPUTiler = min(100.0, maxTile)
-        } else {
-            smoothedGPUTiler = max(maxTile, smoothedGPUTiler * 0.55)
-            if smoothedGPUTiler < 0.8 {
-                smoothedGPUTiler = 0.0
-            }
-        }
+        // 展示驱动原始读数，避免峰值衰减制造不存在的负载。
+        smoothedGPU = min(100, max(0, maxDev))
+        smoothedGPURender = min(100, max(0, maxRend))
+        smoothedGPUTiler = min(100, max(0, maxTile))
 
         return GPUDetail(
             total: smoothedGPU,
@@ -509,15 +480,18 @@ public final class SystemMonitor: @unchecked Sendable {
         }
         guard kerr == KERN_SUCCESS else { return RAMDetailed() }
 
-        let pageSize = Double(vm_kernel_page_size)
+        let pageSize = Double(getpagesize())
         let active = Double(vmStats.active_count) * pageSize
         let inactive = Double(vmStats.inactive_count) * pageSize
         let wired = Double(vmStats.wire_count) * pageSize
         let compressed = Double(vmStats.compressor_page_count) * pageSize
-        let free = Double(vmStats.free_count) * pageSize
 
-        let appMemory = active + inactive
-        let usedBytes = appMemory + wired + compressed
+
+        let speculative = Double(vmStats.speculative_count) * pageSize
+        let reclaimable = Double(vmStats.purgeable_count + vmStats.external_page_count) * pageSize
+        let appMemory = max(0, active + inactive + speculative - reclaimable)
+        let usedBytes = min(totalBytes, appMemory + wired + compressed)
+        let free = max(0, totalBytes - usedBytes)
         let percent = Int((usedBytes / totalBytes) * 100)
 
         // Swap 空间
@@ -624,7 +598,7 @@ public final class SystemMonitor: @unchecked Sendable {
         for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let interface = ptr.pointee
             let name = String(cString: interface.ifa_name)
-            if name.hasPrefix("en") && interface.ifa_data != nil {
+            if name.hasPrefix("en"), interface.ifa_addr?.pointee.sa_family == UInt8(AF_LINK), interface.ifa_data != nil {
                 let data = interface.ifa_data.assumingMemoryBound(to: if_data.self)
                 totalIn += UInt64(data.pointee.ifi_ibytes)
                 totalOut += UInt64(data.pointee.ifi_obytes)
@@ -671,9 +645,8 @@ public final class SystemMonitor: @unchecked Sendable {
         let pipe = Pipe()
         task.standardOutput = pipe
         try? task.run()
-        task.waitUntilExit()
-
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
         var items: [ProcessUsageItem] = []
@@ -683,11 +656,11 @@ public final class SystemMonitor: @unchecked Sendable {
             guard !trimmed.isEmpty else { continue }
             let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
             guard parts.count == 2 else { continue }
-            
+
             let valRaw = String(parts[0])
             let fullPath = String(parts[1])
             let name = (fullPath as NSString).lastPathComponent
-            
+
             // 过滤自身与系统微进程
             if name == "AetherSwitch" || name == "ps" { continue }
 

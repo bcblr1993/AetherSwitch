@@ -129,7 +129,7 @@ public struct PopoverView: View {
                         } label: {
                             HStack(spacing: 3) {
                                 Circle().fill(Color.orange).frame(width: 5, height: 5)
-                                Text("发现 v\(version) • 点击升级")
+                                Text("发现 v\(version) • 下载安装")
                                     .font(.system(size: 9.5, weight: .bold))
                                     .foregroundColor(.orange)
                             }
@@ -161,6 +161,8 @@ public struct PopoverView: View {
                             .font(.system(size: 9.5))
                             .foregroundColor(.secondary)
 
+                    case .failed(let reason):
+                        Text(reason).font(.caption).foregroundStyle(.secondary)
                     default:
                         Button {
                             updateMgr.checkForUpdates(manual: true)
@@ -191,9 +193,7 @@ public struct PopoverView: View {
                     Button("立即检查更新") {
                         updateMgr.checkForUpdates(manual: true)
                     }
-                    Button("模拟新版本更新 (v1.0.1 演示)") {
-                        updateMgr.simulateNewVersionForDemo(version: "1.0.1")
-                    }
+
                 }
 
                 Spacer()
@@ -214,10 +214,7 @@ public struct PopoverView: View {
         }
         .padding(14)
         .frame(width: AppTheme.panelWidth)
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-        )
+        .background(.regularMaterial)
     }
 
     // MARK: - 概览区块
@@ -236,7 +233,7 @@ public struct PopoverView: View {
                     title: "GPU 负载",
                     icon: "sparkles.tv",
                     percent: appState.metrics.gpuUsage,
-                    detailText: "\(appState.metrics.gpuCoreCount) 核心",
+                    detailText: appState.metrics.gpuCoreCount > 0 ? "\(appState.metrics.gpuCoreCount) 核心" : "核心数不可用",
                     accentColor: .indigo
                 )
 

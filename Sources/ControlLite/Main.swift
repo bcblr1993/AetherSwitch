@@ -18,6 +18,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     static func main() {
+        if CommandLine.arguments.contains("--diagnose") {
+            _ = SystemMonitor.shared.sample(fullMetrics: false)
+            Thread.sleep(forTimeInterval: 1)
+            let m = SystemMonitor.shared.sample(fullMetrics: true)
+            print("CPU=\(m.cpuUsage) GPU=\(m.gpuUsage) GPU_CORES=\(m.gpuCoreCount) RAM_USED_GB=\(m.ramUsedGB) RAM_AVAILABLE_GB=\(m.ramFreeGB) RAM_TOTAL_GB=\(m.ramTotalGB) DISK_USED_GB=\(m.diskUsedGB) DISK_TOTAL_GB=\(m.diskTotalGB)")
+            return
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -93,8 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             queue: .main
         ) { [weak self] note in
+            let tab = note.userInfo?["tab"] as? String
             Task { @MainActor in
-                if let tab = note.userInfo?["tab"] as? String {
+                if let tab {
                     AppState.shared.selectedTab = tab
                 }
                 AppState.shared.showAbout = false
@@ -122,8 +130,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             object: nil,
             queue: .main
         ) { [weak self] note in
+            let raw = note.userInfo?["style"] as? String
             Task { @MainActor in
-                if let raw = note.userInfo?["style"] as? String, let style = MenuBarStyle(rawValue: raw) {
+                if let raw, let style = MenuBarStyle(rawValue: raw) {
                     AppState.shared.menuBarStyle = style
                     self?.updateStatusItemWidth()
                 }
@@ -196,7 +205,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             AppState.shared.isPopoverOpen = false
         } else {
             AppState.shared.isPopoverOpen = true
-            AppState.shared.refreshFull()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
         }

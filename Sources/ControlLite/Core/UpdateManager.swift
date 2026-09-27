@@ -50,7 +50,7 @@ public final class UpdateManager: ObservableObject {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
                     // 若 GitHub 仓库未发布 release 或接口返回异常
-                    self.status = manual ? .upToDate : .idle
+                    self.status = manual ? .failed(reason: "暂时无法检查更新，请稍后重试") : .idle
                     return
                 }
 
@@ -76,10 +76,10 @@ public final class UpdateManager: ObservableObject {
                         self.status = .upToDate
                     }
                 } else {
-                    self.status = manual ? .upToDate : .idle
+                    self.status = manual ? .failed(reason: "暂时无法检查更新，请稍后重试") : .idle
                 }
             } catch {
-                self.status = manual ? .upToDate : .idle
+                self.status = manual ? .failed(reason: "暂时无法检查更新，请稍后重试") : .idle
             }
         }
     }
@@ -87,73 +87,14 @@ public final class UpdateManager: ObservableObject {
     /// 触发自动更新安装流程
     public func downloadAndInstall() {
         guard case .available(_, let url) = status else { return }
-        self.status = .downloading(progress: 0.1)
-
-        Task {
-            do {
-                let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("AetherSwitchUpdate_\(UUID().uuidString)")
-                try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-                let dmgFile = tempDir.appendingPathComponent("Update.dmg")
-
-                self.status = .downloading(progress: 0.3)
-                let (downloadedLocation, _) = try await URLSession.shared.download(from: url)
-                try FileManager.default.moveItem(at: downloadedLocation, to: dmgFile)
-                self.status = .downloading(progress: 0.8)
-
-                // 挂载 DMG 并提取新版本
-                let mountDir = tempDir.appendingPathComponent("Mount")
-                let attachTask = Process()
-                attachTask.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-                attachTask.arguments = ["attach", dmgFile.path, "-mountpoint", mountDir.path, "-nobrowse", "-quiet"]
-                try attachTask.run()
-                attachTask.waitUntilExit()
-
-                let sourceApp = mountDir.appendingPathComponent("AetherSwitch.app")
-                let stagingApp = tempDir.appendingPathComponent("AetherSwitch.app")
-                if FileManager.default.fileExists(atPath: sourceApp.path) {
-                    try FileManager.default.copyItem(at: sourceApp, to: stagingApp)
-                }
-
-                // 卸载 DMG
-                let detachTask = Process()
-                detachTask.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-                detachTask.arguments = ["detach", mountDir.path, "-quiet"]
-                try? detachTask.run()
-                detachTask.waitUntilExit()
-
-                // 执行替换与重启脚本
-                self.status = .readyToRestart(appPath: stagingApp)
-                self.performRestartAndReplace(newAppPath: stagingApp.path)
-            } catch {
-                self.status = .failed(reason: "下载更新失败，请稍后重试")
-            }
-        }
+        // 由系统浏览器下载签名安装包，避免未经验证的脚本覆盖当前应用。
+        NSWorkspace.shared.open(url)
     }
 
     /// 模拟测试用：切换为发现新版本状态
     public func simulateNewVersionForDemo(version: String = "1.0.1") {
         let fakeUrl = URL(string: "https://github.com/bcblr1993/AetherSwitch/releases/download/v\(version)/AetherSwitch-\(version)-arm64.dmg")!
         self.status = .available(version: version, downloadURL: fakeUrl)
-    }
-
-    // MARK: - 替换并重启当前应用
-
-    private func performRestartAndReplace(newAppPath: String) {
-        guard let currentBundlePath = Bundle.main.bundlePath as String? else { return }
-        
-        let script = """
-        sleep 1
-        rm -rf "\(currentBundlePath)"
-        cp -R "\(newAppPath)" "\(currentBundlePath)"
-        open "\(currentBundlePath)"
-        """
-
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/sh")
-        task.arguments = ["-c", script]
-        try? task.run()
-
-        NSApplication.shared.terminate(nil)
     }
 
     private func isRemoteNewer(current: String, remote: String) -> Bool {

@@ -8,7 +8,7 @@ public enum AppTheme {
     
     // 背景与卡片色
     public static let cardBackground = Color(nsColor: .controlBackgroundColor).opacity(0.65)
-    public static let cardBorder = Color.white.opacity(0.12)
+    public static let cardBorder = Color(nsColor: .separatorColor).opacity(0.5)
     public static let cardBorderSubtle = Color.black.opacity(0.08)
 
     // 快捷开关主题色

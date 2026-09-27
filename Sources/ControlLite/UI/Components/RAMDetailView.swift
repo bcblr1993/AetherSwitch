@@ -75,7 +75,7 @@ public struct RAMDetailView: View {
 
                 VStack(spacing: 2) {
                     MetricDetailRow(dotColor: .blue, title: "App 内存:", value: String(format: "%.2f GB", appState.metrics.ramAppGB))
-                    MetricDetailRow(dotColor: .orange, title: "联动内存:", value: String(format: "%.2f GB", appState.metrics.ramWiredGB))
+                    MetricDetailRow(dotColor: .orange, title: "联结内存:", value: String(format: "%.2f GB", appState.metrics.ramWiredGB))
                     MetricDetailRow(dotColor: .red, title: "压缩内存:", value: String(format: "%.2f GB", appState.metrics.ramCompressedGB))
                     MetricDetailRow(dotColor: .gray.opacity(0.6), title: "可用:", value: String(format: "%.2f GB", appState.metrics.ramFreeGB))
                     MetricDetailRow(title: "交换区:", value: String(format: "%.0f MB", appState.metrics.ramSwapUsedMB))

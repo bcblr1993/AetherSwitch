@@ -73,7 +73,7 @@ final class MetricsFormattingTests: XCTestCase {
         XCTAssertTrue(metrics.gpuRenderUsage >= 0.0 && metrics.gpuRenderUsage <= 100.0)
         XCTAssertTrue(metrics.gpuTilerUsage >= 0.0 && metrics.gpuTilerUsage <= 100.0)
         XCTAssertFalse(metrics.gpuModelName.isEmpty)
-        XCTAssertGreaterThan(metrics.gpuCoreCount, 0)
+        XCTAssertGreaterThanOrEqual(metrics.gpuCoreCount, 0)
     }
 
     @MainActor
@@ -92,7 +92,7 @@ final class MetricsFormattingTests: XCTestCase {
         if let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
             hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
             if let data = bitmap.representation(using: .png, properties: [:]) {
-                let path = "/Users/chenxu/.gemini/antigravity/brain/8b598f01-7256-41b9-a348-3ec29b9af745/menubar_snapshot.png"
+                let path = "/tmp/aetherswitch-menubar-snapshot.png"
                 try? data.write(to: URL(fileURLWithPath: path))
             }
         }
@@ -176,7 +176,7 @@ final class MetricsFormattingTests: XCTestCase {
         appState.showAbout = false
         UpdateManager.shared.setVersionForSnapshot(version: "1.0.0", status: .upToDate)
 
-        let targetDir = "/Users/chenxu/Documents/antigravity/aethernative-site/src/content/apps/aetherswitch/media"
+        let targetDir = "/tmp/aetherswitch-website-snapshots"
         let fileManager = FileManager.default
         try? fileManager.createDirectory(atPath: targetDir, withIntermediateDirectories: true)
 

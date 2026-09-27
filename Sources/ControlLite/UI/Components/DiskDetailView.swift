@@ -17,28 +17,9 @@ public struct DiskDetailView: View {
                         .foregroundColor(.secondary)
                 }
 
-                HStack(spacing: 16) {
-                    HStack(spacing: 4) {
-                        Circle().fill(Color.red).frame(width: 6, height: 6)
-                        Text(appState.metrics.diskWriteSpeedFormatted)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                    }
-                    HStack(spacing: 4) {
-                        Circle().fill(Color.blue).frame(width: 6, height: 6)
-                        Text(appState.metrics.diskReadSpeedFormatted)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                    }
-                    Spacer()
-                }
-
-                // 双向对称读写波形图（上红下蓝）
-                BidirectionalDiskWaveformView(
-                    writeData: appState.metrics.diskWriteHistory,
-                    readData: appState.metrics.diskReadHistory,
-                    height: 52
-                )
+                Text("磁盘读写速率暂不可用")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 // 存储容量比例条
                 GeometryReader { geo in

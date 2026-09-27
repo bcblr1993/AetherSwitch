@@ -28,8 +28,7 @@ public struct SwitchCard: View {
     }
 
     public var body: some View {
-        Button(action: onToggle) {
-            HStack(spacing: 12) {
+        HStack(spacing: 12) {
                 // 图标徽标
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -53,20 +52,11 @@ public struct SwitchCard: View {
 
                 Spacer()
 
-                // 自定义精细 Toggle 开关
-                ZStack(alignment: isActive ? .trailing : .leading) {
-                    Capsule()
-                        .fill(isActive ? activeTint : Color.secondary.opacity(0.22))
-                        .frame(width: 34, height: 20)
-                    
-                    Circle()
-                        .fill(Color.white)
-                        .padding(2)
-                        .frame(width: 20, height: 20)
-                        .shadow(color: .black.opacity(0.15), radius: 1, x: 0, y: 1)
-                }
-                .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isActive)
-            }
+                Toggle(title, isOn: Binding(get: { isActive }, set: { _ in onToggle() }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(activeTint)
+        }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(
@@ -77,8 +67,6 @@ public struct SwitchCard: View {
                             .strokeBorder(isActive ? activeTint.opacity(0.3) : AppTheme.cardBorder, lineWidth: 0.8)
                     )
             )
-        }
-        .buttonStyle(.plain)
         .onHover { hover in
             withAnimation(.easeInOut(duration: 0.15)) {
                 self.isHovering = hover

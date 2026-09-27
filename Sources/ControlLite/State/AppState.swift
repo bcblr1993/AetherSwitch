@@ -64,6 +64,7 @@ public final class AppState: ObservableObject {
         }
     }
 
+    private var samplingInFlight = false
     private var timer: Timer?
     private let monitor = SystemMonitor.shared
     private let switchMgr = SwitchManager.shared
@@ -102,6 +103,8 @@ public final class AppState: ObservableObject {
     }
 
     private func tick() {
+        guard !samplingInFlight else { return }
+        samplingInFlight = true
         let isFull = isPopoverOpen
         let tab = selectedTab
         Task {
@@ -111,6 +114,7 @@ public final class AppState: ObservableObject {
                 return (m, s)
             }.value
 
+            self.samplingInFlight = false
             self.metrics = sampledMetrics
             if let s = sampledSwitches {
                 self.switches = s
@@ -119,17 +123,7 @@ public final class AppState: ObservableObject {
     }
 
     public func refreshFull() {
-        let tab = selectedTab
-        Task {
-            let (m, s) = await Task.detached(priority: .userInitiated) {
-                let metrics = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab)
-                let switches = SwitchManager.shared.getCurrentStates()
-                return (metrics, switches)
-            }.value
-
-            self.metrics = m
-            self.switches = s
-        }
+        tick()
     }
 
     // MARK: - 快捷开关触发
