@@ -37,10 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
-        let controller = NSHostingController(rootView: PopoverView(appState: AppState.shared))
-        controller.preferredContentSize = NSSize(width: AppTheme.panelWidth, height: 580)
-        popover.contentViewController = controller
-        popover.contentSize = NSSize(width: AppTheme.panelWidth, height: 580)
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
@@ -50,17 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem.button {
-            let hosting = PassthroughHostingView(rootView: MenuBarView(appState: AppState.shared))
-            hosting.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(hosting)
-            self.hostingView = hosting
-
-            NSLayoutConstraint.activate([
-                hosting.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
-                hosting.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -4),
-                hosting.centerYAnchor.constraint(equalTo: button.centerYAnchor)
-            ])
-
+            button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
             button.target = self
             button.action = #selector(statusItemClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -176,13 +162,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - 动态调整状态栏宽度
 
     private func updateStatusItemWidth() {
-        guard let hosting = hostingView else { return }
-        let fittingWidth = ceil(hosting.fittingSize.width)
-        guard fittingWidth > 0 else { return }
-        let targetLength = fittingWidth + 8
-        if abs(statusItem.length - targetLength) > 0.5 {
-            statusItem.length = targetLength
+        guard let button = statusItem.button else { return }
+        let state = AppState.shared
+        let m = state.metrics
+        switch state.menuBarStyle {
+        case .statsColumns:
+            button.title = String(format: "CPU %.0f%%  GPU %.0f%%  RAM %d%%  SSD %d%%  ↓ %@  ↑ %@", m.cpuUsage, m.gpuUsage, m.ramPercent, m.diskPercent, m.menuBarDownloadFormatted, m.menuBarUploadFormatted)
+        case .compact:
+            button.title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"
+        case .iconOnly:
+            button.title = ""
+        case .iconAndSpeed:
+            button.title = "↓ \(m.menuBarDownloadFormatted)  ↑ \(m.menuBarUploadFormatted)"
+        case .iconAndRAM:
+            button.title = "\(m.ramPercent)%"
         }
+        button.image = state.menuBarStyle == .statsColumns ? nil : NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
+        button.imagePosition = .imageLeading
+        button.toolTip = "AetherSwitch · 点击查看系统状态"
+        statusItem.length = NSStatusItem.variableLength
+
     }
 
     // MARK: - 交互事件
@@ -204,6 +203,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.performClose(nil)
             AppState.shared.isPopoverOpen = false
         } else {
+            let controller = NSHostingController(rootView: PopoverView(appState: AppState.shared))
+            controller.preferredContentSize = NSSize(width: AppTheme.panelWidth, height: 580)
+            popover.contentViewController = controller
+            popover.contentSize = NSSize(width: AppTheme.panelWidth, height: 580)
             AppState.shared.isPopoverOpen = true
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
@@ -290,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         AppState.shared.isPopoverOpen = false
+        popover.contentViewController = nil
         malloc_zone_pressure_relief(nil, 0)
     }
 }

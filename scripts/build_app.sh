@@ -12,8 +12,8 @@ cd "$PROJECT_DIR"
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.0"
-BUILD_NUMBER="$(date +%Y%m%d01)"
-OUTPUT_DIR="$PROJECT_DIR/outputs"
+BUILD_NUMBER="2026092702"
+OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 
 echo "==> [1/5] 执行全量单元测试与质量门禁..."
 swift test
@@ -22,11 +22,12 @@ echo "==> [2/5] 编译生产环境 Release 二进制 (Apple Silicon arm64)..."
 swift build -c release --arch arm64
 
 echo "==> [3/5] 组装 macOS App Bundle..."
-rm -rf "$OUTPUT_DIR"
+test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; }
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS"
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources"
 
-cp "$PROJECT_DIR/.build/release/ControlLite" "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
+cp "$BIN_DIR/ControlLite" "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 
 # 生成生产级 Info.plist
 cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
@@ -84,8 +85,7 @@ echo "==> [5/5] 生成 DMG 安装包与发布校验清单 SHA256SUMS.txt..."
 cd "$OUTPUT_DIR"
 tar -czf "${APP_NAME}-${VERSION}-arm64.tar.gz" "${APP_NAME}.app"
 
-DMG_ROOT="/tmp/${APP_NAME}_dmg_root"
-rm -rf "$DMG_ROOT"
+DMG_ROOT="$(mktemp -d /tmp/aetherswitch-dmg.XXXXXX)"
 mkdir -p "$DMG_ROOT"
 cp -R "${APP_NAME}.app" "$DMG_ROOT/"
 ln -s /Applications "$DMG_ROOT/Applications"
