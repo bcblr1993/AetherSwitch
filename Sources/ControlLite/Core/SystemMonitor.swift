@@ -197,7 +197,7 @@ public final class SystemMonitor: @unchecked Sendable {
 
     // MARK: - 采样分流
 
-    public func sample(fullMetrics: Bool = true, activeTab: String = "overview") -> SystemMetrics {
+    public func sample(fullMetrics: Bool = true, activeTab: String = "overview", includeProcesses: Bool = false) -> SystemMetrics {
         sampleLock.lock()
         defer { sampleLock.unlock() }
         var m = SystemMetrics()
@@ -271,9 +271,9 @@ public final class SystemMonitor: @unchecked Sendable {
         m.ramHistory = ramHistoryBuffer
 
         // 仅在对应 Tab 需要时才抓取 TOP 进程，确保极度省电
-        if activeTab == "cpu" {
+        if includeProcesses && activeTab == "cpu" {
             m.cpuTopProcesses = fetchTopProcesses(mode: .cpu)
-        } else if activeTab == "ram" {
+        } else if includeProcesses && activeTab == "ram" {
             m.ramTopProcesses = fetchTopProcesses(mode: .ram)
 
         }
