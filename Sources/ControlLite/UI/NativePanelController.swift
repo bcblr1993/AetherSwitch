@@ -11,6 +11,7 @@ final class NativePanelController: NSViewController {
     private var tabSubscription: AnyCancellable?
     private var errorSubscription: AnyCancellable?
     private var switchSubscription: AnyCancellable?
+    private var pendingSubscription: AnyCancellable?
     private var updateSubscription: AnyCancellable?
     private let updateMessage = NSTextField(wrappingLabelWithString: "")
     private var updateButton: NSButton!
@@ -92,6 +93,9 @@ final class NativePanelController: NSViewController {
             let states = [s.isKeepAwakeActive, s.isDesktopHidden, s.isHiddenFilesVisible, s.isDarkModeActive]
             for (control, active) in zip(self.switches, states) { control.state = active ? .on : .off }
         }
+        pendingSubscription = state.$pendingSwitches.sink { [weak self] pending in
+            for control in self?.switches ?? [] { control.isEnabled = !pending.contains(control.tag) }
+        }
     }
 
     private func rebuild(tab requestedTab: String? = nil) {
@@ -143,6 +147,7 @@ final class NativePanelController: NSViewController {
                 let control = NSSwitch()
                 control.controlSize = .small
                 control.tag = index
+                control.isEnabled = !state.pendingSwitches.contains(index)
                 control.target = self
                 control.action = #selector(toggle(_:))
                 control.setAccessibilityLabel(title)

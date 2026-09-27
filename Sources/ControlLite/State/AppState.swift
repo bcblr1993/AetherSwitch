@@ -64,6 +64,8 @@ public final class AppState: ObservableObject {
     }
 
     @Published public private(set) var switchError: String?
+    @Published public private(set) var pendingSwitches: Set<Int> = []
+    private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
     private var timer: Timer?
     private let monitor = SystemMonitor.shared
@@ -106,6 +108,7 @@ public final class AppState: ObservableObject {
         samplingInFlight = true
         let isFull = isPopoverOpen
         let tab = selectedTab
+        let revision = switchRevision
         Task {
             let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
                 let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab)
@@ -114,7 +117,7 @@ public final class AppState: ObservableObject {
             }.value
 
             self.samplingInFlight = false
-            if let s = sampledSwitches { self.switches = s }
+            if let s = sampledSwitches, revision == self.switchRevision, self.pendingSwitches.isEmpty { self.switches = s }
             self.metrics = sampledMetrics
         }
     }
@@ -126,34 +129,48 @@ public final class AppState: ObservableObject {
     // MARK: - 快捷开关触发
 
     public func toggleKeepAwake() {
+        switchError = nil
+        switchRevision &+= 1
+        let expected = !switchMgr.getCurrentStates().isKeepAwakeActive
         let active = switchMgr.toggleKeepAwake()
         self.switches.isKeepAwakeActive = active
+        if active != expected { switchError = "无法设置保持常亮，请稍后重试。" }
     }
 
     public func toggleHideDesktop() {
-        Task {
-            let hidden = await Task.detached(priority: .userInitiated) {
-                SwitchManager.shared.toggleHideDesktop()
-            }.value
-            self.switches.isDesktopHidden = hidden
-        }
+        toggleFinder(index: 1, keyPath: \.isDesktopHidden) { SwitchManager.shared.toggleHideDesktop() }
     }
 
     public func toggleHiddenFiles() {
+        toggleFinder(index: 2, keyPath: \.isHiddenFilesVisible) { SwitchManager.shared.toggleHiddenFiles() }
+    }
+
+    func toggleFinder(index: Int, keyPath: WritableKeyPath<SwitchStates, Bool>, operation: @escaping @Sendable () -> Bool) {
+        guard !pendingSwitches.contains(index) else { return }
+        let expected = !switchMgr.getCurrentStates()[keyPath: keyPath]
+        pendingSwitches.insert(index)
+        switchError = nil
+        switchRevision &+= 1
         Task {
-            let visible = await Task.detached(priority: .userInitiated) {
-                SwitchManager.shared.toggleHiddenFiles()
-            }.value
-            self.switches.isHiddenFilesVisible = visible
+            let value = await Task.detached(priority: .userInitiated, operation: operation).value
+            self.switches[keyPath: keyPath] = value
+            switchRevision &+= 1
+            pendingSwitches.remove(index)
+            if value != expected { switchError = "无法修改 Finder 设置，请稍后重试。" }
         }
     }
 
     public func toggleDarkMode() {
+        guard !pendingSwitches.contains(3) else { return }
         let expected = !switchMgr.getCurrentStates().isDarkModeActive
+        pendingSwitches.insert(3)
         switchError = nil
+        switchRevision &+= 1
         Task {
             let isDark = switchMgr.toggleDarkMode()
             self.switches.isDarkModeActive = isDark
+            switchRevision &+= 1
+            pendingSwitches.remove(3)
             if isDark != expected {
                 self.switchError = "无法切换外观。请在系统设置的隐私与安全性中允许 AetherSwitch 控制系统事件。"
             }
