@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import AppKit
 
 /// 自动更新状态
