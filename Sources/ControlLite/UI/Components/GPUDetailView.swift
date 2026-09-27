@@ -45,7 +45,6 @@ public struct GPUDetailView: View {
                 MetricDetailRow(title: "利用率:", value: "\(Int(appState.metrics.gpuUsage))%")
                 MetricDetailRow(title: "渲染利用率:", value: "\(Int(appState.metrics.gpuRenderUsage))%")
                 MetricDetailRow(title: "Tiler利用率:", value: "\(Int(appState.metrics.gpuTilerUsage))%")
-                MetricDetailRow(title: "ANE 利用率:", value: "0%")
                 MetricDetailRow(title: "显示器刷新率:", value: "\(appState.metrics.screenFPS)")
             }
         }

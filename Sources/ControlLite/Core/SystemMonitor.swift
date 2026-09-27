@@ -146,6 +146,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private var lastNetBytesIn: UInt64 = 0
     private var lastNetBytesOut: UInt64 = 0
     private var lastNetTimestamp: TimeInterval = 0
+    private var lastNetworkRate: (Double, Double) = (0, 0)
 
     // 历史点缓冲区（最多保留 25 个采样点）
     private var cpuHistoryBuffer: [Double] = []
@@ -612,7 +613,7 @@ public final class SystemMonitor: @unchecked Sendable {
         let now = ProcessInfo.processInfo.systemUptime
         let interval = now - lastNetTimestamp
 
-        guard interval >= 0.3 else { return (0.0, 0.0) }
+        guard interval >= 0.3 else { return lastNetworkRate }
 
         let downRate = currentIn >= lastNetBytesIn ? Double(currentIn - lastNetBytesIn) / interval : 0.0
         let upRate = currentOut >= lastNetBytesOut ? Double(currentOut - lastNetBytesOut) / interval : 0.0
@@ -621,7 +622,8 @@ public final class SystemMonitor: @unchecked Sendable {
         lastNetBytesOut = currentOut
         lastNetTimestamp = now
 
-        return (downRate, upRate)
+        lastNetworkRate = (downRate, upRate)
+        return lastNetworkRate
     }
 
     // MARK: - TOP 进程抓取

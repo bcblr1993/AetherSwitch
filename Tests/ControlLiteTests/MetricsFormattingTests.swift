@@ -702,4 +702,33 @@ final class MetricsFormattingTests: XCTestCase {
         .shadow(color: .black.opacity(0.4), radius: 16, x: 0, y: 8)
         saveView(diskCard, filename: "disk-zh.png")
     }
+    @MainActor
+    func testRenderProductionPanels() throws {
+        let state = AppState.shared
+        state.showAbout = false
+        for scheme in [ColorScheme.light, .dark] {
+            for tab in ["overview", "cpu", "gpu", "ram", "disk"] {
+                state.selectedTab = tab
+                let controller = NativePanelController()
+                let hosting = controller.view
+                hosting.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+                let fit = hosting.fittingSize
+                XCTAssertGreaterThan(fit.height, 100)
+                hosting.frame = CGRect(x: 0, y: 0, width: 360, height: fit.height)
+                let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = hosting.appearance
+                window.contentView = hosting
+                window.backgroundColor = .windowBackgroundColor
+                hosting.wantsLayer = true
+                hosting.layer?.backgroundColor = (scheme == .dark ? NSColor(calibratedWhite: 0.16, alpha: 1) : NSColor(calibratedWhite: 0.96, alpha: 1)).cgColor
+                hosting.layoutSubtreeIfNeeded()
+                hosting.displayIfNeeded()
+                let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try data.write(to: URL(fileURLWithPath: "/tmp/aetherswitch-\(tab)-\(scheme == .dark ? "dark" : "light").png"))
+            }
+        }
+    }
+
 }

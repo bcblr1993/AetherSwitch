@@ -86,23 +86,9 @@ public final class SwitchManager: @unchecked Sendable {
     }
 
     private func checkIsDesktopHidden() -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        task.arguments = ["read", "com.apple.finder", "CreateDesktop"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
-        task.waitUntilExit()
-
-        guard task.terminationStatus == 0 else { return false }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            // 如果 CreateDesktop 是 false/0，说明桌面图标处于隐藏状态
-            let isDesktopVisible = (str as NSString).boolValue
-            return !isDesktopVisible
-        }
-        return false // 默认桌面是可见的，所以 isDesktopHidden = false
+        CFPreferencesAppSynchronize("com.apple.finder" as CFString)
+        guard let value = CFPreferencesCopyAppValue("CreateDesktop" as CFString, "com.apple.finder" as CFString) as? NSNumber else { return false }
+        return !value.boolValue
     }
 
     // MARK: - 3. 显示隐藏文件 (Show Hidden Files)
@@ -122,21 +108,8 @@ public final class SwitchManager: @unchecked Sendable {
     }
 
     private func checkIsHiddenFilesVisible() -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        task.arguments = ["read", "com.apple.finder", "AppleShowAllFiles"]
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = FileHandle.nullDevice
-        try? task.run()
-        task.waitUntilExit()
-
-        guard task.terminationStatus == 0 else { return false }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            return (str as NSString).boolValue
-        }
-        return false
+        CFPreferencesAppSynchronize("com.apple.finder" as CFString)
+        return (CFPreferencesCopyAppValue("AppleShowAllFiles" as CFString, "com.apple.finder" as CFString) as? NSNumber)?.boolValue ?? false
     }
 
     // MARK: - 4. 黑暗模式 (Dark Mode)
@@ -159,13 +132,8 @@ public final class SwitchManager: @unchecked Sendable {
     }
 
     private func checkIsDarkMode() -> Bool {
-        let script = "tell application \"System Events\" to tell appearance preferences to return dark mode"
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            let result = appleScript.executeAndReturnError(&error)
-            return result.booleanValue
-        }
-        return false
+        CFPreferencesSynchronize(kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        return (CFPreferencesCopyValue("AppleInterfaceStyle" as CFString, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? String) == "Dark"
     }
 
     // MARK: - 辅助重启 Finder

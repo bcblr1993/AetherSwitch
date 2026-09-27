@@ -12,7 +12,7 @@ cd "$PROJECT_DIR"
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.0"
-BUILD_NUMBER="2026092702"
+BUILD_NUMBER="2026092703"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 
 echo "==> [1/5] 执行全量单元测试与质量门禁..."
@@ -73,7 +73,7 @@ echo "==> [4/5] 执行代码签名与完整性校验..."
 CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
 if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
     echo "使用官方证书签名: $CERT_NAME"
-    codesign --force --deep --options runtime --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
+    codesign --force --deep --timestamp --options runtime --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
 else
     echo "未发现正式证书，使用本地开发签名 (Ad-Hoc)..."
     codesign --force --deep --sign - "$OUTPUT_DIR/${APP_NAME}.app"
@@ -93,7 +93,7 @@ hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_ROOT" -ov -format UDZO "$
 rm -rf "$DMG_ROOT"
 
 if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
-    codesign --force --sign "$CERT_NAME" "${APP_NAME}-${VERSION}-arm64.dmg"
+    codesign --force --timestamp --sign "$CERT_NAME" "${APP_NAME}-${VERSION}-arm64.dmg"
 fi
 
 shasum -a 256 "${APP_NAME}-${VERSION}-arm64.dmg" "${APP_NAME}-${VERSION}-arm64.tar.gz" > SHA256SUMS.txt

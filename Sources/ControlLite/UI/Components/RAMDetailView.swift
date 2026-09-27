@@ -9,11 +9,15 @@ public struct RAMDetailView: View {
             // MARK: - 顶部双仪表（压力表 + 占用圆环）
             HStack(spacing: 32) {
                 Spacer()
-                PressureGaugeView(
-                    statusText: appState.metrics.ramPressureLevel,
-                    percent: appState.metrics.ramPressurePercent,
-                    size: 68
-                )
+                VStack(spacing: 6) {
+                    Image(systemName: "memorychip")
+                        .font(.title2)
+                    Text(appState.metrics.ramPressureLevel)
+                        .font(.headline)
+                    Text("内存压力").font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(width: 90)
+
 
                 let totalRAM = max(1.0, appState.metrics.ramTotalGB)
                 let appPct = (appState.metrics.ramAppGB / totalRAM) * 100.0

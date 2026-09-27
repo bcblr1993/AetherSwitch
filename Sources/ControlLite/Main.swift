@@ -203,10 +203,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.performClose(nil)
             AppState.shared.isPopoverOpen = false
         } else {
-            let controller = NSHostingController(rootView: PopoverView(appState: AppState.shared))
-            controller.preferredContentSize = NSSize(width: AppTheme.panelWidth, height: 580)
+            let controller = NativePanelController()
+            _ = controller.view
             popover.contentViewController = controller
-            popover.contentSize = NSSize(width: AppTheme.panelWidth, height: 580)
+            popover.contentSize = controller.preferredContentSize
             AppState.shared.isPopoverOpen = true
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
@@ -252,6 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if !popover.isShown {
             togglePopover()
         }
+        (popover.contentViewController as? NativePanelController)?.about()
     }
 
     @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {
