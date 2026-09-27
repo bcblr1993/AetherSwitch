@@ -33,6 +33,8 @@ final class SystemMonitorTests: XCTestCase {
         XCTAssertTrue(metrics.cpuUsage >= 0.0 && metrics.cpuUsage <= 100.0, "CPU 利用率应在合法区间")
         XCTAssertTrue(metrics.gpuUsage >= 0.0 && metrics.gpuUsage <= 100.0, "GPU 利用率应在合法区间")
         XCTAssertGreaterThan(metrics.diskTotalGB, 0, "系统根目录磁盘总容量应大于 0")
+        XCTAssertEqual(metrics.cpuUserUsage + metrics.cpuSystemUsage, metrics.cpuUsage, accuracy: 0.001)
+        XCTAssertEqual(metrics.cpuUsage + metrics.cpuIdleUsage, 100, accuracy: 0.001)
         XCTAssertTrue(metrics.diskPercent > 0 && metrics.diskPercent <= 100, "磁盘使用率应在合法区间")
 
         // 验证 RAM 深度细分与压力指针

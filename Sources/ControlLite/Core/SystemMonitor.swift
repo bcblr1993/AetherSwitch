@@ -132,6 +132,7 @@ public final class SystemMonitor: @unchecked Sendable {
 
     private let hostPort = mach_host_self()
     private var previousAggregateTicks: [UInt32]?
+    private var lastAggregateCPU = CPUDetail()
     private var prevCpuInfo: processor_info_array_t?
     private var numPrevCpuInfo: mach_msg_type_number_t = 0
     private var numCPUs: UInt32 = 0
@@ -233,10 +234,12 @@ public final class SystemMonitor: @unchecked Sendable {
         // CPU 原生 Mach 内核采样
         let aggregate = fetchCPULightweight()
         let cpuDetail = fullMetrics ? fetchCPUDetailed() : aggregate
-        m.cpuUsage = cpuDetail.total
-        m.cpuUserUsage = cpuDetail.user
-        m.cpuSystemUsage = cpuDetail.system
-        m.cpuIdleUsage = cpuDetail.idle
+        // 总体指标始终采用连续采样的计数器，避免重新打开面板后
+        // 误用上一次展开以来的多核平均值，或首次多核基线的零值。
+        m.cpuUsage = aggregate.total
+        m.cpuUserUsage = aggregate.user
+        m.cpuSystemUsage = aggregate.system
+        m.cpuIdleUsage = aggregate.idle
         m.cpuECoreUsage = cpuDetail.eCore
         m.cpuPCoreUsage = cpuDetail.pCore
         m.cpuCoreLoads = cpuDetail.coreLoads
@@ -310,16 +313,17 @@ public final class SystemMonitor: @unchecked Sendable {
                 host_statistics(hostPort, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
-        guard result == KERN_SUCCESS else { return CPUDetail() }
+        guard result == KERN_SUCCESS else { return lastAggregateCPU }
         let ticks = [info.cpu_ticks.0, info.cpu_ticks.1, info.cpu_ticks.2, info.cpu_ticks.3]
         defer { previousAggregateTicks = ticks }
-        guard let previous = previousAggregateTicks else { return CPUDetail() }
+        guard let previous = previousAggregateTicks else { return lastAggregateCPU }
         let delta = zip(ticks, previous).map { UInt64($0.0 &- $0.1) }
         let total = delta.reduce(0, +)
-        guard total > 0 else { return CPUDetail() }
+        guard total > 0 else { return lastAggregateCPU }
         let scale = 100.0 / Double(total)
         let idle = Double(delta[Int(CPU_STATE_IDLE)]) * scale
-        return CPUDetail(total: 100 - idle, user: Double(delta[Int(CPU_STATE_USER)] + delta[Int(CPU_STATE_NICE)]) * scale, system: Double(delta[Int(CPU_STATE_SYSTEM)]) * scale, idle: idle)
+        lastAggregateCPU = CPUDetail(total: 100 - idle, user: Double(delta[Int(CPU_STATE_USER)] + delta[Int(CPU_STATE_NICE)]) * scale, system: Double(delta[Int(CPU_STATE_SYSTEM)]) * scale, idle: idle)
+        return lastAggregateCPU
     }
 
     private func fetchCPUDetailed() -> CPUDetail {

@@ -278,7 +278,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func checkUpdateAction() {
-        UpdateManager.shared.checkForUpdates(manual: true)
+        if popover?.isShown != true { togglePopover() }
+        (popover?.contentViewController as? NativePanelController)?.checkUpdate()
     }
 
     @objc private func refreshAction() {

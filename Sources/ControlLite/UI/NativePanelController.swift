@@ -11,6 +11,9 @@ final class NativePanelController: NSViewController {
     private var tabSubscription: AnyCancellable?
     private var errorSubscription: AnyCancellable?
     private var switchSubscription: AnyCancellable?
+    private var updateSubscription: AnyCancellable?
+    private let updateMessage = NSTextField(wrappingLabelWithString: "")
+    private var updateButton: NSButton!
     private var values: [(NSTextField, (SystemMetrics) -> String)] = []
     private var switches: [NSSwitch] = []
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk"]
@@ -33,8 +36,14 @@ final class NativePanelController: NSViewController {
         content.alignment = .leading
         content.spacing = 6
         root.addArrangedSubview(content)
-        let footer = NSStackView(views: [label("v\(UpdateManager.shared.currentVersion)", size: 11), spacer(), button("检查更新", action: #selector(checkUpdate)), button("退出", action: #selector(quit))])
+        updateButton = button("检查更新", action: #selector(checkUpdate))
+        let footer = NSStackView(views: [label("v\(UpdateManager.shared.currentVersion)", size: 11), spacer(), updateButton, button("退出", action: #selector(quit))])
         root.addArrangedSubview(footer)
+        updateMessage.font = .systemFont(ofSize: 11)
+        updateMessage.textColor = .secondaryLabelColor
+        updateMessage.isHidden = true
+        root.addArrangedSubview(updateMessage)
+        updateMessage.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         let errorField = NSTextField(wrappingLabelWithString: "")
         errorField.font = .systemFont(ofSize: 11)
         errorField.textColor = .systemRed
@@ -50,6 +59,25 @@ final class NativePanelController: NSViewController {
         root.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 330), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
+        updateSubscription = UpdateManager.shared.$status.sink { [weak self] status in
+            guard let self else { return }
+            self.updateButton.isEnabled = status != .checking
+            self.updateButton.title = "检查更新"
+            switch status {
+            case .idle: self.updateMessage.stringValue = ""
+            case .checking: self.updateMessage.stringValue = "正在检查更新…"
+            case .upToDate: self.updateMessage.stringValue = "当前已是最新版本。"
+            case .available(let version, _):
+                self.updateMessage.stringValue = "新版本 \(version) 可用。下载后打开安装包更新。"
+                self.updateButton.title = "下载更新"
+            case .failed(let reason):
+                self.updateMessage.stringValue = reason
+                self.updateButton.title = "重试"
+            default: self.updateMessage.stringValue = ""
+            }
+            self.updateMessage.isHidden = self.updateMessage.stringValue.isEmpty
+            self.preferredContentSize = NSSize(width: 330, height: self.view.fittingSize.height)
+        }
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
             self.tabs.selectedSegment = self.tabNames.firstIndex(of: tab) ?? 0
@@ -86,7 +114,7 @@ final class NativePanelController: NSViewController {
             metric("设备利用率") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }
             metric("渲染利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuRenderUsage) : "不可用" }
             metric("Tiler 利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuTilerUsage) : "不可用" }
-            note("IOKit 驱动瞬时读数；不采用峰值保持或人工负载。")
+            note("显示系统提供的瞬时利用率；无可用读数时显示不可用。")
         case "ram":
             metric("已用 / 总内存") { String(format: "%.2f / %.0f GB", $0.ramUsedGB, $0.ramTotalGB) }
             metric("应用内存") { String(format: "%.2f GB", $0.ramAppGB) }
@@ -170,10 +198,17 @@ final class NativePanelController: NSViewController {
     @objc func about() {
         let alert = NSAlert()
         alert.messageText = "AetherSwitch \(UpdateManager.shared.currentVersion)"
-        alert.informativeText = "原生系统状态与快捷开关\nSwift 6 · AppKit · Mach · IOKit"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "开发版本"
+        alert.informativeText = "系统状态与快捷开关\n构建 \(build)\n\n系统指标在本机采集，不上传到服务器。"
         alert.addButton(withTitle: "完成")
         alert.runModal()
     }
-    @objc private func checkUpdate() { NSWorkspace.shared.open(URL(string: "https://github.com/bcblr1993/AetherSwitch/releases/latest")!) }
+    @objc func checkUpdate() {
+        if case .available = UpdateManager.shared.status {
+            UpdateManager.shared.downloadAndInstall()
+        } else {
+            UpdateManager.shared.checkForUpdates(manual: true)
+        }
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 }
