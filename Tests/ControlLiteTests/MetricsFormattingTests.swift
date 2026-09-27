@@ -714,7 +714,7 @@ final class MetricsFormattingTests: XCTestCase {
                 hosting.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
                 let fit = hosting.fittingSize
                 XCTAssertGreaterThan(fit.height, 100)
-                hosting.frame = CGRect(x: 0, y: 0, width: 360, height: fit.height)
+                hosting.frame = CGRect(x: 0, y: 0, width: 330, height: fit.height)
                 let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
                 window.appearance = hosting.appearance
                 window.contentView = hosting

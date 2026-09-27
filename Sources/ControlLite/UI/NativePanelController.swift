@@ -18,18 +18,19 @@ final class NativePanelController: NSViewController {
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 12
-        root.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        root.spacing = 8
+        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
         let header = NSStackView(views: [label("AetherSwitch", size: 14, weight: .semibold), spacer(), button("刷新", action: #selector(refresh)), button("关于", action: #selector(about))])
         header.orientation = .horizontal
         root.addArrangedSubview(header)
+        tabs.controlSize = .small
         tabs.target = self
         tabs.action = #selector(selectTab)
         tabs.selectedSegment = tabNames.firstIndex(of: state.selectedTab) ?? 0
         root.addArrangedSubview(tabs)
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 10
+        content.spacing = 6
         root.addArrangedSubview(content)
         let footer = NSStackView(views: [label("v\(UpdateManager.shared.currentVersion)", size: 11), spacer(), button("检查更新", action: #selector(checkUpdate)), button("退出", action: #selector(quit))])
         root.addArrangedSubview(footer)
@@ -44,7 +45,7 @@ final class NativePanelController: NSViewController {
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 360), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -32), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 330), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
@@ -105,6 +106,7 @@ final class NativePanelController: NSViewController {
             let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
             for (index, title) in ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"].enumerated() {
                 let control = NSSwitch()
+                control.controlSize = .small
                 control.tag = index
                 control.target = self
                 control.action = #selector(toggle(_:))
@@ -116,7 +118,7 @@ final class NativePanelController: NSViewController {
         for (field, format) in values { field.stringValue = format(state.metrics) }
         let current = state.switches
         for (control, active) in zip(switches, [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]) { control.state = active ? .on : .off }
-        preferredContentSize = NSSize(width: 360, height: view.fittingSize.height)
+        preferredContentSize = NSSize(width: 330, height: view.fittingSize.height)
     }
 
     private func metric(_ title: String, format: @escaping (SystemMetrics) -> String) {
@@ -145,7 +147,11 @@ final class NativePanelController: NSViewController {
         return field
     }
     private func spacer() -> NSView { let v = NSView(); v.setContentHuggingPriority(.defaultLow, for: .horizontal); return v }
-    private func button(_ title: String, action: Selector) -> NSButton { NSButton(title: title, target: self, action: action) }
+    private func button(_ title: String, action: Selector) -> NSButton {
+        let control = NSButton(title: title, target: self, action: action)
+        control.controlSize = .small
+        return control
+    }
     @objc private func selectTab() { state.selectedTab = tabNames[tabs.selectedSegment]; rebuild() }
     @objc private func refresh() { state.refreshFull() }
     @objc private func toggle(_ sender: NSSwitch) {
