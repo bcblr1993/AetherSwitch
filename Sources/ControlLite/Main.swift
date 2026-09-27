@@ -1,20 +1,11 @@
 import Cocoa
-import SwiftUI
 import Combine
-
-/// 穿透鼠标事件的 HostingView，让底层的 NSStatusBarButton 原生处理点击与拖动
-final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        return nil
-    }
-}
 
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
-    private var hostingView: PassthroughHostingView<MenuBarView>!
     private var cancellables = Set<AnyCancellable>()
 
     static func main() {
@@ -92,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                     AppState.shared.selectedTab = tab
                 }
                 AppState.shared.showAbout = false
-                if let self = self, !self.popover.isShown {
+                if let self = self, self.popover?.isShown != true {
                     self.togglePopover()
                 }
             }
@@ -105,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 AppState.shared.showAbout = true
-                if let self = self, !self.popover.isShown {
+                if let self = self, self.popover?.isShown != true {
                     self.togglePopover()
                 }
             }
@@ -145,6 +136,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
+        DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.aethernative.aetherswitch.reportStatus"), object: nil, queue: .main) { _ in
+            Task { @MainActor in
+                let state = AppState.shared
+                let json: [String: Any] = ["popoverOpen": state.isPopoverOpen, "tab": state.selectedTab, "cpu": state.metrics.cpuUsage, "gpu": state.metrics.gpuUsage, "ramUsedGB": state.metrics.ramUsedGB, "timestamp": Date().timeIntervalSince1970]
+                if let data = try? JSONSerialization.data(withJSONObject: json, options: .sortedKeys) {
+                    try? data.write(to: URL(fileURLWithPath: "/tmp/AetherSwitch-runtime.json"), options: .atomic)
+                }
+            }
+        }
+
         if CommandLine.arguments.contains("--open") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 Task { @MainActor in
@@ -167,7 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let m = state.metrics
         switch state.menuBarStyle {
         case .statsColumns:
-            button.title = String(format: "CPU %.0f%%  GPU %.0f%%  RAM %d%%  SSD %d%%  ↓ %@  ↑ %@", m.cpuUsage, m.gpuUsage, m.ramPercent, m.diskPercent, m.menuBarDownloadFormatted, m.menuBarUploadFormatted)
+            let gpu = m.gpuAvailable ? String(format: "%.0f%%", m.gpuUsage) : "—"
+            button.title = String(format: "CPU %.0f%%  GPU %@  RAM %d%%  SSD %d%%  ↓ %@  ↑ %@", m.cpuUsage, gpu, m.ramPercent, m.diskPercent, m.menuBarDownloadFormatted, m.menuBarUploadFormatted)
         case .compact:
             button.title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"
         case .iconOnly:
@@ -199,10 +201,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func togglePopover() {
         guard let button = statusItem.button else { return }
 
-        if popover.isShown {
+        if popover?.isShown == true {
             popover.performClose(nil)
             AppState.shared.isPopoverOpen = false
         } else {
+            let popover = NSPopover()
+            popover.behavior = .transient
+            popover.delegate = self
+            self.popover = popover
             let controller = NativePanelController()
             _ = controller.view
             popover.contentViewController = controller
@@ -249,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     @objc private func showAboutAction() {
         AppState.shared.showAbout = true
-        if !popover.isShown {
+        if popover?.isShown != true {
             togglePopover()
         }
         (popover.contentViewController as? NativePanelController)?.about()
@@ -295,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         AppState.shared.isPopoverOpen = false
         popover.contentViewController = nil
+        popover = nil
         malloc_zone_pressure_relief(nil, 0)
     }
 }

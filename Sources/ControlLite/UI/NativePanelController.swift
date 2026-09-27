@@ -67,9 +67,9 @@ final class NativePanelController: NSViewController {
         case "gpu":
             metric("型号") { $0.gpuModelName }
             metric("核心数") { $0.gpuCoreCount > 0 ? "\($0.gpuCoreCount)" : "不可用" }
-            metric("设备利用率") { String(format: "%.0f%%", $0.gpuUsage) }
-            metric("渲染利用率") { String(format: "%.0f%%", $0.gpuRenderUsage) }
-            metric("Tiler 利用率") { String(format: "%.0f%%", $0.gpuTilerUsage) }
+            metric("设备利用率") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }
+            metric("渲染利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuRenderUsage) : "不可用" }
+            metric("Tiler 利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuTilerUsage) : "不可用" }
             note("IOKit 驱动瞬时读数；不采用峰值保持或人工负载。")
         case "ram":
             metric("已用 / 总内存") { String(format: "%.2f / %.0f GB", $0.ramUsedGB, $0.ramTotalGB) }
@@ -87,7 +87,7 @@ final class NativePanelController: NSViewController {
             note("磁盘读写速率暂不可用。APFS 容量与同一容器内其他卷共享。")
         default:
             metric("CPU") { String(format: "%.1f%%", $0.cpuUsage) }
-            metric("GPU") { String(format: "%.0f%%", $0.gpuUsage) }
+            metric("GPU") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }
             metric("内存") { String(format: "%.1f / %.0f GB · %d%%", $0.ramUsedGB, $0.ramTotalGB, $0.ramPercent) }
             metric("存储") { String(format: "%.0f / %.0f GB · %d%%", $0.diskUsedGB, $0.diskTotalGB, $0.diskPercent) }
             metric("下载") { $0.menuBarDownloadFormatted }

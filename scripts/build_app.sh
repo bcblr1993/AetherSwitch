@@ -11,8 +11,8 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.0.0"
-BUILD_NUMBER="2026092703"
+VERSION="1.0.1"
+BUILD_NUMBER="2026092704"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 
 echo "==> [1/5] 执行全量单元测试与质量门禁..."
@@ -89,7 +89,11 @@ DMG_ROOT="$(mktemp -d /tmp/aetherswitch-dmg.XXXXXX)"
 mkdir -p "$DMG_ROOT"
 cp -R "${APP_NAME}.app" "$DMG_ROOT/"
 ln -s /Applications "$DMG_ROOT/Applications"
-hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_ROOT" -ov -format UDZO "${APP_NAME}-${VERSION}-arm64.dmg"
+if diskutil image create from --help >/dev/null 2>&1; then
+    diskutil image create from --volumeName "$APP_NAME" --format UDZO "$DMG_ROOT" "${APP_NAME}-${VERSION}-arm64.dmg"
+else
+    hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_ROOT" -format UDZO "${APP_NAME}-${VERSION}-arm64.dmg"
+fi
 rm -rf "$DMG_ROOT"
 
 if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then

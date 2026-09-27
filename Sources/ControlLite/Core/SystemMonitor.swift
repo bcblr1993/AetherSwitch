@@ -22,6 +22,7 @@ public struct SystemMetrics: Sendable {
     // 基础概览
     public var cpuUsage: Double = 0.0
     public var gpuUsage: Double = 0.0
+    public var gpuAvailable: Bool = false
     public var ramPercent: Int = 0
     public var ramUsedGB: Double = 0.0
     public var ramTotalGB: Double = 0.0
@@ -129,6 +130,7 @@ public struct SystemMetrics: Sendable {
 public final class SystemMonitor: @unchecked Sendable {
     public static let shared = SystemMonitor()
 
+    private var previousAggregateTicks: [UInt32]?
     private var prevCpuInfo: processor_info_array_t?
     private var numPrevCpuInfo: mach_msg_type_number_t = 0
     private var numCPUs: UInt32 = 0
@@ -227,7 +229,8 @@ public final class SystemMonitor: @unchecked Sendable {
         m.diskFreeGB = diskFree
 
         // CPU 原生 Mach 内核采样
-        let cpuDetail = fetchCPUDetailed()
+        let aggregate = fetchCPULightweight()
+        let cpuDetail = fullMetrics ? fetchCPUDetailed() : aggregate
         m.cpuUsage = cpuDetail.total
         m.cpuUserUsage = cpuDetail.user
         m.cpuSystemUsage = cpuDetail.system
@@ -238,6 +241,7 @@ public final class SystemMonitor: @unchecked Sendable {
 
         // GPU 原生 IOKit IOAccelerator 采样
         let gpuDetail = fetchAppleSiliconGPU()
+        m.gpuAvailable = gpuDetail.available
         m.gpuUsage = gpuDetail.total
         m.gpuRenderUsage = gpuDetail.render
         m.gpuTilerUsage = gpuDetail.tiler
@@ -294,6 +298,26 @@ public final class SystemMonitor: @unchecked Sendable {
         var eCore: Double = 0.0
         var pCore: Double = 0.0
         var coreLoads: [Double] = []
+    }
+
+    private func fetchCPULightweight() -> CPUDetail {
+        var info = host_cpu_load_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return CPUDetail() }
+        let ticks = [info.cpu_ticks.0, info.cpu_ticks.1, info.cpu_ticks.2, info.cpu_ticks.3]
+        defer { previousAggregateTicks = ticks }
+        guard let previous = previousAggregateTicks else { return CPUDetail() }
+        let delta = zip(ticks, previous).map { UInt64($0.0 &- $0.1) }
+        let total = delta.reduce(0, +)
+        guard total > 0 else { return CPUDetail() }
+        let scale = 100.0 / Double(total)
+        let idle = Double(delta[Int(CPU_STATE_IDLE)]) * scale
+        return CPUDetail(total: 100 - idle, user: Double(delta[Int(CPU_STATE_USER)] + delta[Int(CPU_STATE_NICE)]) * scale, system: Double(delta[Int(CPU_STATE_SYSTEM)]) * scale, idle: idle)
     }
 
     private func fetchCPUDetailed() -> CPUDetail {
@@ -371,6 +395,7 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - GPU 深度采样
 
     private struct GPUDetail {
+        var available = false
         var total: Double = 0.0
         var render: Double = 0.0
         var tiler: Double = 0.0
@@ -384,10 +409,11 @@ public final class SystemMonitor: @unchecked Sendable {
         guard IOServiceGetMatchingServices(kIOMainPortDefault, matchDict, &iterator) == kIOReturnSuccess else {
             gpuLock.lock()
             defer { gpuLock.unlock() }
-            return GPUDetail(total: smoothedGPU, render: smoothedGPURender, tiler: smoothedGPUTiler, cores: gpuCores, model: chipName)
+            return GPUDetail()
         }
         defer { IOObjectRelease(iterator) }
 
+        var available = false
         var maxDev: Double = 0.0
         var maxRend: Double = 0.0
         var maxTile: Double = 0.0
@@ -414,7 +440,9 @@ public final class SystemMonitor: @unchecked Sendable {
                         return nil
                     }
 
-                    let dev = readDouble("Device Utilization %") ?? readDouble("GPU Activity(%)") ?? 0.0
+                    let device = readDouble("Device Utilization %") ?? readDouble("GPU Activity(%)")
+                    available = available || device != nil
+                    let dev = device ?? 0.0
                     let rend = readDouble("Renderer Utilization %") ?? dev
                     let tile = readDouble("Tiler Utilization %") ?? dev
 
@@ -446,6 +474,7 @@ public final class SystemMonitor: @unchecked Sendable {
         smoothedGPUTiler = min(100, max(0, maxTile))
 
         return GPUDetail(
+            available: available,
             total: smoothedGPU,
             render: smoothedGPURender,
             tiler: smoothedGPUTiler,

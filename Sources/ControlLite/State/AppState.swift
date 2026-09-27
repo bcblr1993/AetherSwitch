@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import Combine
 
 public enum MenuBarStyle: String, CaseIterable, Codable {
@@ -78,7 +77,7 @@ public final class AppState: ObservableObject {
         }
         self.metrics = monitor.sample(fullMetrics: false)
         self.switches = switchMgr.getCurrentStates()
-        startTimer(interval: 1.5)
+        startTimer(interval: 5.0)
     }
 
     // MARK: - 动态频率定时器
@@ -88,7 +87,7 @@ public final class AppState: ObservableObject {
         if isPopoverOpen {
             startTimer(interval: 1.0)
         } else {
-            startTimer(interval: 1.5)
+            startTimer(interval: 5.0)
         }
     }
 
@@ -114,10 +113,8 @@ public final class AppState: ObservableObject {
             }.value
 
             self.samplingInFlight = false
+            if let s = sampledSwitches { self.switches = s }
             self.metrics = sampledMetrics
-            if let s = sampledSwitches {
-                self.switches = s
-            }
         }
     }
 
@@ -129,9 +126,7 @@ public final class AppState: ObservableObject {
 
     public func toggleKeepAwake() {
         let active = switchMgr.toggleKeepAwake()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            self.switches.isKeepAwakeActive = active
-        }
+        self.switches.isKeepAwakeActive = active
     }
 
     public func toggleHideDesktop() {
@@ -139,9 +134,7 @@ public final class AppState: ObservableObject {
             let hidden = await Task.detached(priority: .userInitiated) {
                 SwitchManager.shared.toggleHideDesktop()
             }.value
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                self.switches.isDesktopHidden = hidden
-            }
+            self.switches.isDesktopHidden = hidden
         }
     }
 
@@ -150,9 +143,7 @@ public final class AppState: ObservableObject {
             let visible = await Task.detached(priority: .userInitiated) {
                 SwitchManager.shared.toggleHiddenFiles()
             }.value
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                self.switches.isHiddenFilesVisible = visible
-            }
+            self.switches.isHiddenFilesVisible = visible
         }
     }
 
@@ -161,9 +152,7 @@ public final class AppState: ObservableObject {
             let isDark = await Task.detached(priority: .userInitiated) {
                 SwitchManager.shared.toggleDarkMode()
             }.value
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                self.switches.isDarkModeActive = isDark
-            }
+            self.switches.isDarkModeActive = isDark
         }
     }
 }
