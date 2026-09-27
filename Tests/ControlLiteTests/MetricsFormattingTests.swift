@@ -93,4 +93,23 @@ final class MetricsFormattingTests: XCTestCase {
         XCTAssertFalse(strings(root).contains("保持常亮"))
     }
 
+    @MainActor
+    func testNativePanelUpdatesSwitchesWithoutNextMetricSample() throws {
+        let state = AppState.shared
+        let originalMetrics = state.metrics
+        let originalSwitches = state.switches
+        defer { state.updateForSnapshot(metrics: originalMetrics, switches: originalSwitches) }
+        state.selectedTab = "overview"
+        let controller = NativePanelController()
+        func controls(_ view: NSView) -> [NSSwitch] {
+            (view as? NSSwitch).map { [$0] } ?? view.subviews.flatMap { controls($0) }
+        }
+        let switches = controls(controller.view)
+        XCTAssertEqual(switches.count, 4)
+        var changed = originalSwitches
+        changed.isKeepAwakeActive.toggle()
+        state.updateForSnapshot(metrics: originalMetrics, switches: changed)
+        XCTAssertEqual(try XCTUnwrap(switches.first).state, changed.isKeepAwakeActive ? .on : .off)
+    }
+
 }
