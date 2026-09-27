@@ -63,6 +63,7 @@ public final class AppState: ObservableObject {
         }
     }
 
+    @Published public private(set) var switchError: String?
     private var samplingInFlight = false
     private var timer: Timer?
     private let monitor = SystemMonitor.shared
@@ -148,11 +149,14 @@ public final class AppState: ObservableObject {
     }
 
     public func toggleDarkMode() {
+        let expected = !switchMgr.getCurrentStates().isDarkModeActive
+        switchError = nil
         Task {
-            let isDark = await Task.detached(priority: .userInitiated) {
-                SwitchManager.shared.toggleDarkMode()
-            }.value
+            let isDark = switchMgr.toggleDarkMode()
             self.switches.isDarkModeActive = isDark
+            if isDark != expected {
+                self.switchError = "无法切换外观。请在系统设置的隐私与安全性中允许 AetherSwitch 控制系统事件。"
+            }
         }
     }
 }

@@ -81,8 +81,9 @@ public final class SwitchManager: @unchecked Sendable {
         try? process.run()
         process.waitUntilExit()
 
+        guard process.terminationStatus == 0 else { return currentHidden }
         restartFinder()
-        return shouldHide
+        return checkIsDesktopHidden()
     }
 
     private func checkIsDesktopHidden() -> Bool {
@@ -103,8 +104,9 @@ public final class SwitchManager: @unchecked Sendable {
         try? process.run()
         process.waitUntilExit()
 
+        guard process.terminationStatus == 0 else { return currentVisible }
         restartFinder()
-        return shouldShow
+        return checkIsHiddenFilesVisible()
     }
 
     private func checkIsHiddenFilesVisible() -> Bool {
@@ -126,7 +128,7 @@ public final class SwitchManager: @unchecked Sendable {
         if let appleScript = NSAppleScript(source: script) {
             var error: NSDictionary?
             let result = appleScript.executeAndReturnError(&error)
-            return result.booleanValue
+            return error == nil ? result.booleanValue : checkIsDarkMode()
         }
         return false
     }

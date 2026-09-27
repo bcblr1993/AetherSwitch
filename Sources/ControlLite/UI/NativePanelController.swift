@@ -9,6 +9,7 @@ final class NativePanelController: NSViewController {
     private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘"], trackingMode: .selectOne, target: nil, action: nil)
     private var subscription: AnyCancellable?
     private var tabSubscription: AnyCancellable?
+    private var errorSubscription: AnyCancellable?
     private var values: [(NSTextField, (SystemMetrics) -> String)] = []
     private var switches: [NSSwitch] = []
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk"]
@@ -32,6 +33,15 @@ final class NativePanelController: NSViewController {
         root.addArrangedSubview(content)
         let footer = NSStackView(views: [label("v\(UpdateManager.shared.currentVersion)", size: 11), spacer(), button("检查更新", action: #selector(checkUpdate)), button("退出", action: #selector(quit))])
         root.addArrangedSubview(footer)
+        let errorField = NSTextField(wrappingLabelWithString: "")
+        errorField.font = .systemFont(ofSize: 11)
+        errorField.textColor = .systemRed
+        root.addArrangedSubview(errorField)
+        errorField.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        errorSubscription = state.$switchError.sink { error in
+            errorField.stringValue = error ?? ""
+            errorField.isHidden = error == nil
+        }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 360), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -32), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
