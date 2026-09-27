@@ -22,6 +22,33 @@ final class MetricsFormattingTests: XCTestCase {
         XCTAssertEqual(metrics.downloadSpeedFormatted, "120M")
     }
 
+    func testMenuBarRateFormatting() {
+        var metrics = SystemMetrics()
+
+        // 0 速率
+        metrics.netDownloadBytesSec = 0
+        XCTAssertEqual(metrics.menuBarDownloadFormatted, "0 KB/s")
+
+        // 字节级
+        metrics.netDownloadBytesSec = 512
+        XCTAssertEqual(metrics.menuBarDownloadFormatted, "512 B/s")
+
+        // KB 级（对齐用户参考图中的 39 KB/s 与 561 KB/s）
+        metrics.netUploadBytesSec = 1024 * 39
+        XCTAssertEqual(metrics.menuBarUploadFormatted, "39 KB/s")
+
+        metrics.netDownloadBytesSec = 1024 * 561
+        XCTAssertEqual(metrics.menuBarDownloadFormatted, "561 KB/s")
+
+        // MB 级 (小数)
+        metrics.netDownloadBytesSec = 1024 * 1024 * 3.5
+        XCTAssertEqual(metrics.menuBarDownloadFormatted, "3.5 MB/s")
+
+        // 大 MB 级 (整数)
+        metrics.netDownloadBytesSec = 1024 * 1024 * 120
+        XCTAssertEqual(metrics.menuBarDownloadFormatted, "120 MB/s")
+    }
+
     func testRAMPercentBounds() {
         var metrics = SystemMetrics()
         metrics.ramPercent = 56

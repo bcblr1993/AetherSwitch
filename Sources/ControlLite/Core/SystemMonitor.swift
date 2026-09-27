@@ -82,6 +82,14 @@ public struct SystemMetrics: Sendable {
         formatBytesRate(netUploadBytesSec)
     }
 
+    public var menuBarDownloadFormatted: String {
+        formatMenuBarRate(netDownloadBytesSec)
+    }
+
+    public var menuBarUploadFormatted: String {
+        formatMenuBarRate(netUploadBytesSec)
+    }
+
     public var diskReadSpeedFormatted: String {
         formatBytesRate(diskReadBytesSec) + "/s"
     }
@@ -99,6 +107,20 @@ public struct SystemMetrics: Sendable {
             return String(format: "%.0fK", rate / 1024)
         } else {
             return String(format: "%.0fB", rate)
+        }
+    }
+
+    private func formatMenuBarRate(_ rate: Double) -> String {
+        if rate >= 1024 * 1024 * 100 {
+            return String(format: "%.0f MB/s", rate / (1024 * 1024))
+        } else if rate >= 1024 * 1024 {
+            return String(format: "%.1f MB/s", rate / (1024 * 1024))
+        } else if rate >= 1024 {
+            return String(format: "%.0f KB/s", rate / 1024)
+        } else if rate > 0 {
+            return String(format: "%.0f B/s", rate)
+        } else {
+            return "0 KB/s"
         }
     }
 }
@@ -173,7 +195,7 @@ public final class SystemMonitor: @unchecked Sendable {
         m.gpuCoreCount = gpuCores
         m.screenFPS = Int(NSScreen.main?.maximumFramesPerSecond ?? 120)
 
-        // 1. 基础轻量指标（RAM & 网络）
+        // 1. 基础轻量核心指标（RAM、网络、磁盘、CPU、GPU）- 均采用微秒级系统内核原生采样，服务于菜单栏 5 列常驻显示
         let ramData = fetchRAMDetailed()
         m.ramPercent = ramData.percent
         m.ramUsedGB = ramData.usedGB
@@ -190,23 +212,13 @@ public final class SystemMonitor: @unchecked Sendable {
         m.netDownloadBytesSec = downRate
         m.netUploadBytesSec = upRate
 
-        guard fullMetrics else { return m }
-
-        // 2. 全量硬件指标
         let (diskUsed, diskTotal, diskPct, diskFree) = fetchDisk()
         m.diskUsedGB = diskUsed
         m.diskTotalGB = diskTotal
         m.diskPercent = diskPct
         m.diskFreeGB = diskFree
 
-        // Uptime & Load Average
-        m.uptimeString = fetchUptime()
-        let loads = fetchLoadAvg()
-        m.loadAvg1m = loads.0
-        m.loadAvg5m = loads.1
-        m.loadAvg15m = loads.2
-
-        // CPU 深度采样
+        // CPU 原生 Mach 内核采样
         let cpuDetail = fetchCPUDetailed()
         m.cpuUsage = cpuDetail.total
         m.cpuUserUsage = cpuDetail.user
@@ -216,7 +228,7 @@ public final class SystemMonitor: @unchecked Sendable {
         m.cpuPCoreUsage = cpuDetail.pCore
         m.cpuCoreLoads = cpuDetail.coreLoads
 
-        // GPU 深度采样
+        // GPU 原生 IOKit IOAccelerator 采样
         let gpuDetail = fetchAppleSiliconGPU()
         m.gpuUsage = gpuDetail.total
         m.gpuRenderUsage = gpuDetail.render
@@ -228,6 +240,15 @@ public final class SystemMonitor: @unchecked Sendable {
             self.gpuCores = gpuDetail.cores
             m.gpuCoreCount = gpuDetail.cores
         }
+
+        guard fullMetrics else { return m }
+
+        // 2. 仅在 Popover 展开时执行的重度计算（Uptime, LoadAvg, 历史波形数组, TOP 进程）
+        m.uptimeString = fetchUptime()
+        let loads = fetchLoadAvg()
+        m.loadAvg1m = loads.0
+        m.loadAvg5m = loads.1
+        m.loadAvg15m = loads.2
 
         // 维护历史波形
         appendHistory(&cpuHistoryBuffer, value: m.cpuUsage)

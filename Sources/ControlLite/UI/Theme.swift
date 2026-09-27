@@ -27,4 +27,15 @@ public enum AppTheme {
             return Color.red
         }
     }
+
+    /// 菜单栏 Stats 样式指标色（低负载：科技蓝，中负载：活力橙，高负载：警示红）
+    public static func menuBarMetricColor(for percent: Double) -> Color {
+        if percent >= 85 {
+            return Color(red: 1.0, green: 0.27, blue: 0.27)
+        } else if percent >= 70 {
+            return Color(red: 1.0, green: 0.60, blue: 0.0)
+        } else {
+            return Color(red: 0.12, green: 0.60, blue: 1.0)
+        }
+    }
 }

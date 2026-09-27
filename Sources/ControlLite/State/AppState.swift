@@ -3,17 +3,17 @@ import SwiftUI
 import Combine
 
 public enum MenuBarStyle: String, CaseIterable, Codable {
-    case iconAndStats = "iconAndStats"     // 图标 + 内存 + 实时网速（默认全能）
-    case iconOnly = "iconOnly"             // 仅应用图标（极简 OneSwitch 风格）
-    case statsOnly = "statsOnly"           // 仅监控指标（Stats 风格）
+    case statsColumns = "statsColumns"     // Stats 顶级监控（CPU / GPU / RAM / SSD / 速率）
+    case compact = "compact"               // 紧凑单行（图标 + 内存 + 实时网速）
+    case iconOnly = "iconOnly"             // 仅应用图标 (极简 OneSwitch)
     case iconAndSpeed = "iconAndSpeed"     // 图标 + 实时网速
     case iconAndRAM = "iconAndRAM"         // 图标 + 内存占用
 
     public var title: String {
         switch self {
-        case .iconAndStats: return "图标 + 内存 + 实时网速"
+        case .statsColumns: return "Stats 状态栏 (CPU/GPU/RAM/SSD/网速)"
+        case .compact: return "紧凑单行 (图标 + 内存 + 网速)"
         case .iconOnly: return "仅应用图标 (极简)"
-        case .statsOnly: return "仅硬件监控数据"
         case .iconAndSpeed: return "图标 + 实时网速"
         case .iconAndRAM: return "图标 + 内存占用"
         }
@@ -64,8 +64,12 @@ public final class AppState: ObservableObject {
     private let switchMgr = SwitchManager.shared
 
     private init() {
-        let savedStyle = UserDefaults.standard.string(forKey: "menuBarStyle") ?? MenuBarStyle.iconAndStats.rawValue
-        self.menuBarStyle = MenuBarStyle(rawValue: savedStyle) ?? .iconAndStats
+        let savedStyle = UserDefaults.standard.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
+        if savedStyle == "iconAndStats" || savedStyle == "statsOnly" {
+            self.menuBarStyle = .statsColumns
+        } else {
+            self.menuBarStyle = MenuBarStyle(rawValue: savedStyle) ?? .statsColumns
+        }
         self.metrics = monitor.sample(fullMetrics: false)
         self.switches = switchMgr.getCurrentStates()
         startTimer(interval: 1.5)

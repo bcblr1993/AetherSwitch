@@ -11,9 +11,15 @@ final class SystemMonitorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(metrics.ramUsedGB, 0, "已用内存应大于等于 0")
         XCTAssertTrue(metrics.ramPercent > 0 && metrics.ramPercent <= 100, "RAM 百分比应在 1~100 之间")
 
-        // 轻量模式下 CPU/GPU 采样应保持缺省 0，以保护电池
-        XCTAssertEqual(metrics.cpuUsage, 0.0)
-        XCTAssertEqual(metrics.gpuUsage, 0.0)
+        // 轻量模式下，为驱动菜单栏 5 列常驻显示（CPU/GPU/RAM/SSD/网速），核心指标均完成微秒级系统采样
+        XCTAssertTrue(metrics.cpuUsage >= 0.0 && metrics.cpuUsage <= 100.0, "CPU 利用率应在合法区间")
+        XCTAssertTrue(metrics.gpuUsage >= 0.0 && metrics.gpuUsage <= 100.0, "GPU 利用率应在合法区间")
+        XCTAssertTrue(metrics.diskPercent > 0 && metrics.diskPercent <= 100, "磁盘利用率应在合法区间")
+
+        // 验证重度开销项（历史波形、进程枚举）在轻量模式下彻底休眠
+        XCTAssertTrue(metrics.cpuTopProcesses.isEmpty, "轻量采样下不应枚举 CPU 进程以节省能耗")
+        XCTAssertTrue(metrics.ramTopProcesses.isEmpty, "轻量采样下不应枚举 RAM 进程以节省能耗")
+        XCTAssertTrue(metrics.cpuHistory.isEmpty, "轻量采样下不应更新 CPU 历史波形")
     }
 
     func testFullMetricsSampling() {
