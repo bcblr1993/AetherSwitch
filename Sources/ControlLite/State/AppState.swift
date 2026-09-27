@@ -111,9 +111,11 @@ public final class AppState: ObservableObject {
         let revision = switchRevision
         Task {
             let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
-                let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab)
-                let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
-                return (m, s)
+                autoreleasepool {
+                    let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab)
+                    let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
+                    return (m, s)
+                }
             }.value
 
             self.samplingInFlight = false

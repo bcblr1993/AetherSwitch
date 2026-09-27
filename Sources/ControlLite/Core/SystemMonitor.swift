@@ -1,7 +1,6 @@
 import Foundation
 import Darwin
 import IOKit
-import AppKit
 
 /// 进程占用简要信息
 public struct ProcessUsageItem: Identifiable, Sendable {
@@ -53,7 +52,7 @@ public struct SystemMetrics: Sendable {
     public var gpuRenderUsage: Double = 0.0
     public var gpuTilerUsage: Double = 0.0
     public var gpuHistory: [Double] = []
-    public var screenFPS: Int = 120
+    public var screenFPS: Int = 0 // 未采集，不将屏幕最大刷新率冒充实时帧率
 
     // 内存 RAM 深度指标 (图 3)
     public var ramAppGB: Double = 0.0
@@ -212,7 +211,6 @@ public final class SystemMonitor: @unchecked Sendable {
         var m = SystemMetrics()
         m.gpuModelName = chipName
         m.gpuCoreCount = gpuCores
-        m.screenFPS = Int(NSScreen.main?.maximumFramesPerSecond ?? 120)
 
         // 1. 基础轻量核心指标（RAM、网络、磁盘、CPU、GPU）- 均采用微秒级系统内核原生采样，服务于菜单栏 5 列常驻显示
         let ramData = fetchRAMDetailed()

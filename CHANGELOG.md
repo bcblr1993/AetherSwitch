@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 启用 Swift 6 严格模式，测试截图输出到临时目录。
 - 构建保留旧产物，Developer ID 显式使用安全时间戳。
 - 正式构建在生成产物前校验主干、干净工作区与 Developer ID 证书。
+- 移除后台未使用的显示模式查询，明确后台采样临时对象的释放边界。
 
 ## [1.0.0] - 2026-09-26
 
