@@ -137,6 +137,10 @@ public final class SystemMonitor: @unchecked Sendable {
     private var chipName: String = "Apple Silicon"
     private var gpuCores: Int = 16
     private let cpuLock = NSLock()
+    private let gpuLock = NSLock()
+    private var smoothedGPU: Double = 0.0
+    private var smoothedGPURender: Double = 0.0
+    private var smoothedGPUTiler: Double = 0.0
 
     private var lastNetBytesIn: UInt64 = 0
     private var lastNetBytesOut: UInt64 = 0
@@ -382,10 +386,19 @@ public final class SystemMonitor: @unchecked Sendable {
     private func fetchAppleSiliconGPU() -> GPUDetail {
         let matchDict = IOServiceMatching("IOAccelerator")
         var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchDict, &iterator) == kIOReturnSuccess else { return GPUDetail() }
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matchDict, &iterator) == kIOReturnSuccess else {
+            gpuLock.lock()
+            defer { gpuLock.unlock() }
+            return GPUDetail(total: smoothedGPU, render: smoothedGPURender, tiler: smoothedGPUTiler, cores: gpuCores, model: chipName)
+        }
         defer { IOObjectRelease(iterator) }
 
-        var detail = GPUDetail()
+        var maxDev: Double = 0.0
+        var maxRend: Double = 0.0
+        var maxTile: Double = 0.0
+        var detectedCores: Int = gpuCores
+        var detectedModel: String? = nil
+
         var service = IOIteratorNext(iterator)
         while service != 0 {
             var props: Unmanaged<CFMutableDictionary>?
@@ -402,35 +415,71 @@ public final class SystemMonitor: @unchecked Sendable {
                         return nil
                     }
 
-                    if let dev = readDouble("Device Utilization %") {
-                        detail.total = dev
-                    }
-                    if let rend = readDouble("Renderer Utilization %") {
-                        detail.render = rend
-                    } else {
-                        detail.render = detail.total
-                    }
-                    if let tile = readDouble("Tiler Utilization %") {
-                        detail.tiler = tile
-                    } else {
-                        detail.tiler = detail.total
-                    }
+                    let dev = readDouble("Device Utilization %") ?? readDouble("GPU Activity(%)") ?? 0.0
+                    let rend = readDouble("Renderer Utilization %") ?? dev
+                    let tile = readDouble("Tiler Utilization %") ?? dev
+
+                    maxDev = max(maxDev, dev)
+                    maxRend = max(maxRend, rend)
+                    maxTile = max(maxTile, tile)
                 }
+
                 if let c = (dict["gpu-core-count"] as? NSNumber)?.intValue ?? (dict["core-count"] as? NSNumber)?.intValue ?? (dict["gpu-core-count"] as? Int) ?? (dict["core-count"] as? Int) {
-                    detail.cores = c
+                    detectedCores = c
                 }
-                if let m = dict["model"] as? String {
-                    detail.model = m
-                } else if let data = dict["model"] as? Data, let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters) {
-                    if !s.isEmpty {
-                        detail.model = s
-                    }
+                if let m = dict["model"] as? String, !m.isEmpty {
+                    detectedModel = m
+                } else if let data = dict["model"] as? Data, let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters), !s.isEmpty {
+                    detectedModel = s
                 }
             }
             IOObjectRelease(service)
             service = IOIteratorNext(iterator)
         }
-        return detail
+
+        // 综合取渲染、计算与贴图各维度的实际峰值
+        let rawPeak = max(maxDev, maxRend, maxTile)
+
+        gpuLock.lock()
+        defer { gpuLock.unlock() }
+
+        // 峰值保持与平滑衰减算法 (Peak-Hold Decay Filtering):
+        // 瞬间检测到图形活动时以 100% 敏锐度立刻拉起，活动停歇后按 0.55 系数平滑递减（约 3~5 秒自然回落至 0%），
+        // 彻底消除由于 Apple Silicon 极短微秒级渲染脉冲在离散定时间隙下导致的“始终显示为 0%”假死体验，同时兼顾低功耗与真实感。
+        if rawPeak > smoothedGPU {
+            smoothedGPU = min(100.0, rawPeak)
+        } else {
+            smoothedGPU = max(rawPeak, smoothedGPU * 0.55)
+            if smoothedGPU < 0.8 {
+                smoothedGPU = 0.0
+            }
+        }
+
+        if maxRend > smoothedGPURender {
+            smoothedGPURender = min(100.0, maxRend)
+        } else {
+            smoothedGPURender = max(maxRend, smoothedGPURender * 0.55)
+            if smoothedGPURender < 0.8 {
+                smoothedGPURender = 0.0
+            }
+        }
+
+        if maxTile > smoothedGPUTiler {
+            smoothedGPUTiler = min(100.0, maxTile)
+        } else {
+            smoothedGPUTiler = max(maxTile, smoothedGPUTiler * 0.55)
+            if smoothedGPUTiler < 0.8 {
+                smoothedGPUTiler = 0.0
+            }
+        }
+
+        return GPUDetail(
+            total: smoothedGPU,
+            render: smoothedGPURender,
+            tiler: smoothedGPUTiler,
+            cores: detectedCores,
+            model: detectedModel
+        )
     }
 
     // MARK: - 内存详细采样 (App, Wired, Compressed, Free, Swap)

@@ -91,6 +91,7 @@ public struct MenuBarView: View {
                     .foregroundColor(.white)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
 
             // 下行速率
@@ -103,6 +104,7 @@ public struct MenuBarView: View {
                     .foregroundColor(.white)
                     .monospacedDigit()
                     .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }

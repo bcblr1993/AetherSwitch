@@ -67,6 +67,15 @@ final class MetricsFormattingTests: XCTestCase {
         XCTAssertTrue(metrics.diskPercent >= 0 && metrics.diskPercent <= 100)
     }
 
+    func testGPUMetricsSamplingAndBounds() {
+        let metrics = SystemMonitor.shared.sample(fullMetrics: false)
+        XCTAssertTrue(metrics.gpuUsage >= 0.0 && metrics.gpuUsage <= 100.0)
+        XCTAssertTrue(metrics.gpuRenderUsage >= 0.0 && metrics.gpuRenderUsage <= 100.0)
+        XCTAssertTrue(metrics.gpuTilerUsage >= 0.0 && metrics.gpuTilerUsage <= 100.0)
+        XCTAssertFalse(metrics.gpuModelName.isEmpty)
+        XCTAssertGreaterThan(metrics.gpuCoreCount, 0)
+    }
+
     @MainActor
     func testRenderMenuBarSnapshot() {
         let appState = AppState.shared
