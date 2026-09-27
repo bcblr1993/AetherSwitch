@@ -39,7 +39,7 @@ final class NativePanelController: NSViewController {
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
             self.tabs.selectedSegment = self.tabNames.firstIndex(of: tab) ?? 0
-            self.rebuild()
+            self.rebuild(tab: tab)
         }
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
@@ -50,11 +50,11 @@ final class NativePanelController: NSViewController {
         }
     }
 
-    private func rebuild() {
+    private func rebuild(tab requestedTab: String? = nil) {
         content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
         values.removeAll()
         switches.removeAll()
-        let tab = state.selectedTab
+        let tab = requestedTab ?? state.selectedTab
         switch tab {
         case "cpu":
             metric("CPU 利用率") { String(format: "%.1f%%", $0.cpuUsage) }

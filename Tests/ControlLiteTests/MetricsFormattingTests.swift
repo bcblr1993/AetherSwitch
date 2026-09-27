@@ -731,4 +731,18 @@ final class MetricsFormattingTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testNativePanelTracksExternalTabSelection() {
+        let state = AppState.shared
+        state.selectedTab = "overview"
+        let controller = NativePanelController()
+        let root = controller.view
+        state.selectedTab = "ram"
+        func strings(_ view: NSView) -> [String] {
+            (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap { strings($0) }
+        }
+        XCTAssertTrue(strings(root).contains("已用 / 总内存"))
+        XCTAssertFalse(strings(root).contains("保持常亮"))
+    }
+
 }
