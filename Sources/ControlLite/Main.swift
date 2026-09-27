@@ -95,10 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                AppState.shared.showAbout = true
-                if let self = self, self.popover?.isShown != true {
-                    self.togglePopover()
-                }
+                self?.showAboutAction()
             }
         }
 
@@ -258,7 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover?.isShown != true {
             togglePopover()
         }
-        (popover.contentViewController as? NativePanelController)?.about()
+        (popover?.contentViewController as? NativePanelController)?.about()
     }
 
     @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {

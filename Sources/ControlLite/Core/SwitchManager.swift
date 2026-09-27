@@ -71,17 +71,13 @@ public final class SwitchManager: @unchecked Sendable {
     // MARK: - 2. 隐藏桌面 (Hide Desktop Icons)
 
     public func toggleHideDesktop() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
         let currentHidden = checkIsDesktopHidden()
         let shouldHide = !currentHidden
 
         // 隐藏桌面即 CreateDesktop = false
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        process.arguments = ["write", "com.apple.finder", "CreateDesktop", "-bool", shouldHide ? "FALSE" : "TRUE"]
-        try? process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else { return currentHidden }
+        guard writeFinderPreference("CreateDesktop", value: !shouldHide) else { return currentHidden }
         restartFinder()
         return checkIsDesktopHidden()
     }
@@ -95,16 +91,12 @@ public final class SwitchManager: @unchecked Sendable {
     // MARK: - 3. 显示隐藏文件 (Show Hidden Files)
 
     public func toggleHiddenFiles() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
         let currentVisible = checkIsHiddenFilesVisible()
         let shouldShow = !currentVisible
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
-        process.arguments = ["write", "com.apple.finder", "AppleShowAllFiles", "-bool", shouldShow ? "TRUE" : "FALSE"]
-        try? process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else { return currentVisible }
+        guard writeFinderPreference("AppleShowAllFiles", value: shouldShow) else { return currentVisible }
         restartFinder()
         return checkIsHiddenFilesVisible()
     }
@@ -139,6 +131,13 @@ public final class SwitchManager: @unchecked Sendable {
     }
 
     // MARK: - 辅助重启 Finder
+
+    private func writeFinderPreference(_ key: String, value: Bool) -> Bool {
+        let domain = "com.apple.finder" as CFString
+        CFPreferencesSetAppValue(key as CFString, value as CFBoolean, domain)
+        guard CFPreferencesAppSynchronize(domain) else { return false }
+        return (CFPreferencesCopyAppValue(key as CFString, domain) as? NSNumber)?.boolValue == value
+    }
 
     private func restartFinder() {
         let killTask = Process()

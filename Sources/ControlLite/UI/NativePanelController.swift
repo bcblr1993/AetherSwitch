@@ -10,6 +10,7 @@ final class NativePanelController: NSViewController {
     private var subscription: AnyCancellable?
     private var tabSubscription: AnyCancellable?
     private var errorSubscription: AnyCancellable?
+    private var switchSubscription: AnyCancellable?
     private var values: [(NSTextField, (SystemMetrics) -> String)] = []
     private var switches: [NSSwitch] = []
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk"]
@@ -39,9 +40,11 @@ final class NativePanelController: NSViewController {
         errorField.textColor = .systemRed
         root.addArrangedSubview(errorField)
         errorField.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        errorSubscription = state.$switchError.sink { error in
+        errorSubscription = state.$switchError.sink { [weak self] error in
             errorField.stringValue = error ?? ""
             errorField.isHidden = error == nil
+            guard let self, self.isViewLoaded else { return }
+            self.preferredContentSize = NSSize(width: 330, height: self.view.fittingSize.height)
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
@@ -55,7 +58,9 @@ final class NativePanelController: NSViewController {
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
             for (field, format) in self.values { field.stringValue = format(m) }
-            let s = self.state.switches
+        }
+        switchSubscription = state.$switches.sink { [weak self] s in
+            guard let self else { return }
             let states = [s.isKeepAwakeActive, s.isDesktopHidden, s.isHiddenFilesVisible, s.isDarkModeActive]
             for (control, active) in zip(self.switches, states) { control.state = active ? .on : .off }
         }
@@ -152,7 +157,7 @@ final class NativePanelController: NSViewController {
         control.controlSize = .small
         return control
     }
-    @objc private func selectTab() { state.selectedTab = tabNames[tabs.selectedSegment]; rebuild() }
+    @objc private func selectTab() { state.selectedTab = tabNames[tabs.selectedSegment] }
     @objc private func refresh() { state.refreshFull() }
     @objc private func toggle(_ sender: NSSwitch) {
         switch sender.tag {
