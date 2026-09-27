@@ -14,6 +14,17 @@ BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.1"
 BUILD_NUMBER="2026092710"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
+CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
+
+# 正式构建只接受已提交的主干源码与分发证书，失败时不生成半成品。
+RELEASE_BRANCH="$(git branch --show-current)"
+case "$RELEASE_BRANCH" in
+    main|master) ;;
+    *) echo "Release build requires main or master (current: $RELEASE_BRANCH)"; exit 1 ;;
+esac
+test -z "$(git status --porcelain)" || { echo "Release build requires a clean working tree"; exit 1; }
+test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; }
+security find-identity -v -p codesigning | grep -q "$CERT_NAME" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
 echo "==> [1/5] 执行全量单元测试与质量门禁..."
 swift test
@@ -22,7 +33,6 @@ echo "==> [2/5] 编译生产环境 Release 二进制 (Apple Silicon arm64)..."
 swift build -c release --arch arm64
 
 echo "==> [3/5] 组装 macOS App Bundle..."
-test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; }
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS"
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources"
 
@@ -72,14 +82,8 @@ if [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
 fi
 
 echo "==> [4/5] 执行代码签名与完整性校验..."
-CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
-if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
-    echo "使用官方证书签名: $CERT_NAME"
-    codesign --force --deep --timestamp --options runtime --entitlements "$PROJECT_DIR/Resources/AetherSwitch.entitlements" --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
-else
-    echo "未发现正式证书，使用本地开发签名 (Ad-Hoc)..."
-    codesign --force --deep --sign - "$OUTPUT_DIR/${APP_NAME}.app"
-fi
+echo "使用官方证书签名: $CERT_NAME"
+codesign --force --deep --timestamp --options runtime --entitlements "$PROJECT_DIR/Resources/AetherSwitch.entitlements" --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
 
 codesign --verify --deep --strict --verbose=2 "$OUTPUT_DIR/${APP_NAME}.app"
 
