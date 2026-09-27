@@ -12,7 +12,7 @@ cd "$PROJECT_DIR"
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.1"
-BUILD_NUMBER="2026092712"
+BUILD_NUMBER="2026092801"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
 
