@@ -63,4 +63,26 @@ final class SystemMonitorTests: XCTestCase {
         XCTAssertEqual(before, after)
     }
 
+    func testDiskSamplingResetsAfterLeavingDiskTab() {
+        let monitor = SystemMonitor.shared
+        _ = monitor.sample(fullMetrics: false)
+        let initial = monitor.sample(fullMetrics: true, activeTab: "disk")
+        guard initial.diskIOPending else {
+            XCTAssertFalse(initial.diskIOAvailable, "缺少驱动计数时不能显示伪造速率")
+            return
+        }
+        XCTAssertFalse(initial.diskIOAvailable)
+        Thread.sleep(forTimeInterval: 0.1)
+        let sampled = monitor.sample(fullMetrics: true, activeTab: "disk")
+        XCTAssertTrue(sampled.diskIOAvailable)
+        XCTAssertGreaterThanOrEqual(sampled.diskReadBytesSec, 0)
+        XCTAssertGreaterThanOrEqual(sampled.diskWriteBytesSec, 0)
+        let closed = monitor.sample(fullMetrics: false)
+        XCTAssertFalse(closed.diskIOAvailable)
+        XCTAssertTrue(closed.diskReadHistory.isEmpty)
+        let reopened = monitor.sample(fullMetrics: true, activeTab: "disk")
+        XCTAssertTrue(reopened.diskIOPending)
+        XCTAssertFalse(reopened.diskIOAvailable, "重新打开时不能将收起期间的累计 IO 作为当前速率")
+    }
+
 }

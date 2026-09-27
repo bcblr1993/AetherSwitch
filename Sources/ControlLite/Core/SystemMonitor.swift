@@ -69,6 +69,8 @@ public struct SystemMetrics: Sendable {
     // 磁盘深度指标 (图 4)
     public var diskReadBytesSec: Double = 0.0
     public var diskWriteBytesSec: Double = 0.0
+    public var diskIOAvailable = false
+    public var diskIOPending = false
     public var diskReadHistory: [Double] = []
     public var diskWriteHistory: [Double] = []
     public var diskTopProcesses: [ProcessUsageItem] = []
@@ -151,6 +153,10 @@ public final class SystemMonitor: @unchecked Sendable {
     private var lastNetBytesOut: UInt64 = 0
     private var lastNetTimestamp: TimeInterval = 0
     private var lastNetworkRate: (Double, Double) = (0, 0)
+    private var diskCounters: [UInt64: (read: UInt64, write: UInt64)] = [:]
+    private var diskTimestamp: TimeInterval = 0
+    private var lastDiskRate: (read: Double, write: Double) = (0, 0)
+    private var hasDiskRate = false
 
     // 历史点缓冲区（最多保留 25 个采样点）
     private var cpuHistoryBuffer: [Double] = []
@@ -258,6 +264,23 @@ public final class SystemMonitor: @unchecked Sendable {
             m.gpuCoreCount = gpuDetail.cores
         }
 
+        if fullMetrics && activeTab == "disk" {
+            let io = fetchDiskRate()
+            m.diskIOAvailable = io.available
+            m.diskIOPending = io.pending
+            m.diskReadBytesSec = io.read
+            m.diskWriteBytesSec = io.write
+            if io.available {
+                appendHistory(&diskReadHistoryBuffer, value: io.read)
+                appendHistory(&diskWriteHistoryBuffer, value: io.write)
+                m.diskReadHistory = diskReadHistoryBuffer
+                m.diskWriteHistory = diskWriteHistoryBuffer
+            }
+        } else {
+            diskCounters.removeAll(keepingCapacity: true)
+            diskTimestamp = 0
+            hasDiskRate = false
+        }
         guard fullMetrics else { return m }
 
         // 2. 仅在 Popover 展开时执行的重度计算（Uptime, LoadAvg, 历史波形数组, TOP 进程）
@@ -291,6 +314,53 @@ public final class SystemMonitor: @unchecked Sendable {
             buffer.removeFirst()
         }
         buffer.append(value)
+    }
+
+    // 物理驱动计数，不包含同一 APFS 容器内各卷的重复统计。
+    private func fetchDiskRate() -> (available: Bool, pending: Bool, read: Double, write: Double) {
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &iterator) == KERN_SUCCESS else {
+            diskCounters.removeAll(); diskTimestamp = 0; hasDiskRate = false
+            return (false, false, 0, 0)
+        }
+        defer { IOObjectRelease(iterator) }
+        var current: [UInt64: (read: UInt64, write: UInt64)] = [:]
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            var id: UInt64 = 0
+            if IORegistryEntryGetRegistryEntryID(service, &id) == KERN_SUCCESS,
+               let stats = IORegistryEntryCreateCFProperty(service, "Statistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any],
+               let read = stats["Bytes (Read)"] as? NSNumber,
+               let write = stats["Bytes (Write)"] as? NSNumber {
+                current[id] = (read.uint64Value, write.uint64Value)
+            }
+            IOObjectRelease(service)
+            service = IOIteratorNext(iterator)
+        }
+        guard !current.isEmpty else {
+            diskCounters.removeAll(); diskTimestamp = 0; hasDiskRate = false
+            return (false, false, 0, 0)
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard diskTimestamp > 0 else {
+            diskCounters = current; diskTimestamp = now
+            return (false, true, 0, 0)
+        }
+        let elapsed = now - diskTimestamp
+        guard elapsed >= 0.05 else { return (hasDiskRate, !hasDiskRate, hasDiskRate ? lastDiskRate.read : 0, hasDiskRate ? lastDiskRate.write : 0) }
+        var readBytes: Double = 0
+        var writeBytes: Double = 0
+        var matched = false
+        for (id, counter) in current {
+            guard let previous = diskCounters[id], counter.read >= previous.read, counter.write >= previous.write else { continue }
+            matched = true
+            readBytes += Double(counter.read - previous.read)
+            writeBytes += Double(counter.write - previous.write)
+        }
+        diskCounters = current; diskTimestamp = now
+        lastDiskRate = (readBytes / elapsed, writeBytes / elapsed)
+        hasDiskRate = matched
+        return (matched, !matched, lastDiskRate.read, lastDiskRate.write)
     }
 
     // MARK: - CPU 深度分解采样

@@ -128,7 +128,9 @@ final class NativePanelController: NSViewController {
             metric("系统卷已用") { String(format: "%.1f GB · %d%%", $0.diskUsedGB, $0.diskPercent) }
             metric("系统卷总容量") { String(format: "%.1f GB", $0.diskTotalGB) }
             metric("可用空间") { String(format: "%.1f GB", $0.diskFreeGB) }
-            note("磁盘读写速率暂不可用。APFS 容量与同一容器内其他卷共享。")
+            metric("所有物理磁盘读取") { $0.diskIOAvailable ? $0.diskReadSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
+            metric("所有物理磁盘写入") { $0.diskIOAvailable ? $0.diskWriteSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
+            note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
         default:
             metric("CPU") { String(format: "%.1f%%", $0.cpuUsage) }
             metric("GPU") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }

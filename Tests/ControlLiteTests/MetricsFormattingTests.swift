@@ -53,10 +53,22 @@ final class MetricsFormattingTests: XCTestCase {
     @MainActor
     func testRenderProductionPanels() throws {
         let state = AppState.shared
+        let originalMetrics = state.metrics
+        let originalSwitches = state.switches
+        let originalTab = state.selectedTab
+        defer {
+            state.updateForSnapshot(metrics: originalMetrics, switches: originalSwitches)
+            state.selectedTab = originalTab
+        }
         state.showAbout = false
         for dark in [false, true] {
             for tab in ["overview", "cpu", "gpu", "ram", "disk"] {
                 state.selectedTab = tab
+                if tab == "disk" {
+                    _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab)
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                state.updateForSnapshot(metrics: SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab), switches: originalSwitches)
                 let controller = NativePanelController()
                 let hosting = controller.view
                 hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
