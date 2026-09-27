@@ -51,8 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSLayoutConstraint.activate([
                 hosting.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 4),
                 hosting.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -4),
-                hosting.topAnchor.constraint(equalTo: button.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+                hosting.centerYAnchor.constraint(equalTo: button.centerYAnchor)
             ])
 
             button.target = self

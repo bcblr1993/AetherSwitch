@@ -28,14 +28,14 @@ public enum AppTheme {
         }
     }
 
-    /// 菜单栏 Stats 样式指标色（低负载：科技蓝，中负载：活力橙，高负载：警示红）
+    /// 菜单栏 Stats 样式指标色（低负载：电光青蓝，中负载：活力暖橙，高负载：高亮警示红）
     public static func menuBarMetricColor(for percent: Double) -> Color {
         if percent >= 85 {
-            return Color(red: 1.0, green: 0.27, blue: 0.27)
+            return Color(red: 1.0, green: 0.27, blue: 0.25) // 高亮警示红 #FF4540
         } else if percent >= 70 {
-            return Color(red: 1.0, green: 0.60, blue: 0.0)
+            return Color(red: 1.0, green: 0.62, blue: 0.05) // 活力暖橙 #FF9E0D (与参考图 79% 完全一致)
         } else {
-            return Color(red: 0.12, green: 0.60, blue: 1.0)
+            return Color(red: 0.0, green: 0.68, blue: 1.0)  // 电光青蓝 #00ADFF (与参考图 25%/14%/45% 完全一致，任何壁纸下均清晰)
         }
     }
 }
