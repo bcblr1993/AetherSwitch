@@ -12,7 +12,7 @@ cd "$PROJECT_DIR"
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.1"
-BUILD_NUMBER="2026092709"
+BUILD_NUMBER="2026092710"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 
 echo "==> [1/5] 执行全量单元测试与质量门禁..."

@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 @testable import ControlLite
 
 final class SystemMonitorTests: XCTestCase {
@@ -48,4 +49,16 @@ final class SystemMonitorTests: XCTestCase {
         XCTAssertTrue(metrics.diskReadHistory.isEmpty)
         XCTAssertTrue(metrics.diskTopProcesses.isEmpty)
     }
+    func testSamplingDoesNotLeakHostPortRights() {
+        let monitor = SystemMonitor.shared
+        let port = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, port) }
+        var before: mach_port_urefs_t = 0
+        var after: mach_port_urefs_t = 0
+        XCTAssertEqual(mach_port_get_refs(mach_task_self_, port, MACH_PORT_RIGHT_SEND, &before), KERN_SUCCESS)
+        for _ in 0..<20 { _ = monitor.sample(fullMetrics: false) }
+        XCTAssertEqual(mach_port_get_refs(mach_task_self_, port, MACH_PORT_RIGHT_SEND, &after), KERN_SUCCESS)
+        XCTAssertEqual(before, after)
+    }
+
 }

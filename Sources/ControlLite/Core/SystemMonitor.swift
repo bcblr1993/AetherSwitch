@@ -130,6 +130,7 @@ public struct SystemMetrics: Sendable {
 public final class SystemMonitor: @unchecked Sendable {
     public static let shared = SystemMonitor()
 
+    private let hostPort = mach_host_self()
     private var previousAggregateTicks: [UInt32]?
     private var prevCpuInfo: processor_info_array_t?
     private var numPrevCpuInfo: mach_msg_type_number_t = 0
@@ -189,6 +190,7 @@ public final class SystemMonitor: @unchecked Sendable {
     }
 
     deinit {
+        mach_port_deallocate(mach_task_self_, hostPort)
         if let prevCpuInfo = prevCpuInfo {
             let prevSize = vm_size_t(numPrevCpuInfo) * vm_size_t(MemoryLayout<integer_t>.size)
             vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: prevCpuInfo)), prevSize)
@@ -305,7 +307,7 @@ public final class SystemMonitor: @unchecked Sendable {
         var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(hostPort, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else { return CPUDetail() }
@@ -323,7 +325,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private func fetchCPUDetailed() -> CPUDetail {
         var numCPUInfo: mach_msg_type_number_t = 0
         var cpuInfo: processor_info_array_t?
-        let kerr = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &numCPUs, &cpuInfo, &numCPUInfo)
+        let kerr = host_processor_info(hostPort, PROCESSOR_CPU_LOAD_INFO, &numCPUs, &cpuInfo, &numCPUInfo)
         guard kerr == KERN_SUCCESS, let cpuInfo = cpuInfo else { return CPUDetail() }
 
         cpuLock.lock()
@@ -505,7 +507,7 @@ public final class SystemMonitor: @unchecked Sendable {
 
         let kerr = withUnsafeMutablePointer(to: &vmStats) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(size)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &size)
+                host_statistics64(hostPort, HOST_VM_INFO64, $0, &size)
             }
         }
         guard kerr == KERN_SUCCESS else { return RAMDetailed() }
