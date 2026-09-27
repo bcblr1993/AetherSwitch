@@ -92,12 +92,6 @@ public final class UpdateManager: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
-    /// 模拟测试用：切换为发现新版本状态
-    public func simulateNewVersionForDemo(version: String = "1.0.1") {
-        let fakeUrl = URL(string: "https://github.com/bcblr1993/AetherSwitch/releases/download/v\(version)/AetherSwitch-\(version)-arm64.dmg")!
-        self.status = .available(version: version, downloadURL: fakeUrl)
-    }
-
     private func isRemoteNewer(current: String, remote: String) -> Bool {
         return remote.compare(current, options: .numeric) == .orderedDescending
     }

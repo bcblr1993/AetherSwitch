@@ -114,16 +114,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         DistributedNotificationCenter.default().addObserver(
-            forName: NSNotification.Name("com.aethernative.aetherswitch.simulateUpdate"),
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in
-                UpdateManager.shared.simulateNewVersionForDemo(version: "1.0.1")
-            }
-        }
-
-        DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.aethernative.aetherswitch.checkForUpdates"),
             object: nil,
             queue: .main
