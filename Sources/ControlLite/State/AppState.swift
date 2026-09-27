@@ -30,6 +30,11 @@ public final class AppState: ObservableObject {
     // 开关状态
     @Published public private(set) var switches = SwitchStates()
 
+    public func updateForSnapshot(metrics: SystemMetrics, switches: SwitchStates) {
+        self.metrics = metrics
+        self.switches = switches
+    }
+
     // 菜单栏渲染模式
     @Published public var menuBarStyle: MenuBarStyle {
         didSet {

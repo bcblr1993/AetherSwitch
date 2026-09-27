@@ -23,9 +23,17 @@ public final class UpdateManager: ObservableObject {
     private let updateCheckURL = URL(string: "https://api.github.com/repos/bcblr1993/AetherSwitch/releases/latest")!
 
     private init() {
-        if let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+        if Bundle.main.bundleIdentifier == "com.aethernative.aetherswitch",
+           let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
             self.currentVersion = ver
+        } else {
+            self.currentVersion = "1.0.0"
         }
+    }
+
+    public func setVersionForSnapshot(version: String = "1.0.0", status: UpdateStatus = .upToDate) {
+        self.currentVersion = version
+        self.status = status
     }
 
     /// 检查更新

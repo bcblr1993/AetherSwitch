@@ -56,11 +56,17 @@ cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>
 </plist>
 EOF
+
+if [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
+    cp "$PROJECT_DIR/Resources/AppIcon.icns" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources/AppIcon.icns"
+fi
 
 echo "==> [4/5] 执行代码签名与完整性校验..."
 CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
@@ -74,15 +80,30 @@ fi
 
 codesign --verify --deep --strict --verbose=2 "$OUTPUT_DIR/${APP_NAME}.app"
 
-echo "==> [5/5] 生成发布校验清单 SHA256SUMS.txt..."
+echo "==> [5/5] 生成 DMG 安装包与发布校验清单 SHA256SUMS.txt..."
 cd "$OUTPUT_DIR"
 tar -czf "${APP_NAME}-${VERSION}-arm64.tar.gz" "${APP_NAME}.app"
-shasum -a 256 "${APP_NAME}-${VERSION}-arm64.tar.gz" > SHA256SUMS.txt
+
+DMG_ROOT="/tmp/${APP_NAME}_dmg_root"
+rm -rf "$DMG_ROOT"
+mkdir -p "$DMG_ROOT"
+cp -R "${APP_NAME}.app" "$DMG_ROOT/"
+ln -s /Applications "$DMG_ROOT/Applications"
+hdiutil create -volname "${APP_NAME}" -srcfolder "$DMG_ROOT" -ov -format UDZO "${APP_NAME}-${VERSION}-arm64.dmg"
+rm -rf "$DMG_ROOT"
+
+if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
+    codesign --force --sign "$CERT_NAME" "${APP_NAME}-${VERSION}-arm64.dmg"
+fi
+
+shasum -a 256 "${APP_NAME}-${VERSION}-arm64.dmg" "${APP_NAME}-${VERSION}-arm64.tar.gz" > SHA256SUMS.txt
 
 echo "=============================================================================="
 echo "✅ 构建完成！产物路径："
 echo "   App Bundle:  $OUTPUT_DIR/${APP_NAME}.app"
+echo "   DMG Package: $OUTPUT_DIR/${APP_NAME}-${VERSION}-arm64.dmg"
 echo "   Archive:     $OUTPUT_DIR/${APP_NAME}-${VERSION}-arm64.tar.gz"
-echo "   Checksum:    $(cat "$OUTPUT_DIR/SHA256SUMS.txt")"
+echo "   Checksums: "
+cat "$OUTPUT_DIR/SHA256SUMS.txt"
 echo "   App Size:    $(du -sh "$OUTPUT_DIR/${APP_NAME}.app" | cut -f1)"
 echo "=============================================================================="
