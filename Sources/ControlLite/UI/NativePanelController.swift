@@ -167,7 +167,7 @@ private final class DetailVisualView: DashboardCardView {
         case "ram":
             ring(center: NSPoint(x: width / 2, y: 48), radius: 31, percent: Double(metrics.ramPercent), tint: .systemBlue)
             text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 38, width: 60, height: 24), size: 18, weight: .semibold, alignment: .center)
-            text("内存压力 · \(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: .secondaryLabelColor, alignment: .center)
+            text("内存占用 · 压力\(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: .secondaryLabelColor, alignment: .center)
             history(metrics.ramHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
         case "disk":
             text("读取  \(metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : "—")", in: NSRect(x: 12, y: 12, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemBlue)
@@ -229,6 +229,65 @@ private final class DetailVisualView: DashboardCardView {
     }
 }
 
+private final class DetailRowsView: DashboardCardView {
+    let kind: String
+    var metrics: SystemMetrics { didSet { updateAccessibility(); needsDisplay = true } }
+    init(kind: String, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero); updateAccessibility() }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    var rowCount: Int { entries.count }
+    var idealHeight: CGFloat { 24 + CGFloat(rowCount) * 24 }
+    private func updateAccessibility() {
+        setAccessibilityElement(true)
+        setAccessibilityLabel(entries.map { "\($0.0) \($0.1)" }.joined(separator: ", "))
+    }
+    private var entries: [(String, String)] {
+        switch kind {
+        case "cpu": return [
+            ("系统", String(format: "%.1f%%", metrics.cpuSystemUsage)),
+            ("用户", String(format: "%.1f%%", metrics.cpuUserUsage)),
+            ("空闲", String(format: "%.1f%%", metrics.cpuIdleUsage)),
+            ("能效核心", String(format: "%.1f%%", metrics.cpuECoreUsage)),
+            ("性能核心", String(format: "%.1f%%", metrics.cpuPCoreUsage)),
+            ("1 / 5 / 15 分钟", String(format: "%.2f / %.2f / %.2f", metrics.loadAvg1m, metrics.loadAvg5m, metrics.loadAvg15m)),
+            ("运行时间", metrics.uptimeString)
+        ]
+        case "gpu": return [
+            ("型号", metrics.gpuModelName), ("核心数", metrics.gpuCoreCount > 0 ? "\(metrics.gpuCoreCount)" : "不可用"),
+            ("设备利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "不可用"),
+            ("渲染利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuRenderUsage) : "不可用"),
+            ("Tiler 利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuTilerUsage) : "不可用")
+        ]
+        case "ram": return [
+            ("已用 / 总内存", String(format: "%.2f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)),
+            ("应用内存", String(format: "%.2f GB", metrics.ramAppGB)),
+            ("联结内存", String(format: "%.2f GB", metrics.ramWiredGB)),
+            ("压缩内存", String(format: "%.2f GB", metrics.ramCompressedGB)),
+            ("可用内存", String(format: "%.2f GB", metrics.ramFreeGB)),
+            ("交换空间", String(format: "%.0f MB", metrics.ramSwapUsedMB)),
+            ("内存压力", metrics.ramPressureLevel)
+        ]
+        case "disk": return [
+            ("系统卷已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
+            ("系统卷总容量", String(format: "%.1f GB", metrics.diskTotalGB)),
+            ("可用空间", String(format: "%.1f GB", metrics.diskFreeGB)),
+            ("物理磁盘读取", metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : (metrics.diskIOPending ? "采样中…" : "不可用")),
+            ("物理磁盘写入", metrics.diskIOAvailable ? metrics.diskWriteSpeedFormatted : (metrics.diskIOPending ? "采样中…" : "不可用"))
+        ]
+        default: return [("下载速率", "\(metrics.downloadSpeedFormatted)/s"), ("上传速率", "\(metrics.uploadSpeedFormatted)/s")]
+        }
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        text("详细信息", in: NSRect(x: 0, y: 0, width: bounds.width, height: 16), size: 10, color: .secondaryLabelColor, alignment: .center)
+        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
+        let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 18)); line.line(to: NSPoint(x: bounds.width, y: 18)); line.stroke()
+        for (index, entry) in entries.enumerated() {
+            let y = CGFloat(index) * 24 + 25
+            text(entry.0, in: NSRect(x: 0, y: y, width: 130, height: 18), size: 12, color: .secondaryLabelColor)
+            text(entry.1, in: NSRect(x: 132, y: y, width: bounds.width - 132, height: 18), size: 12, weight: .semibold, alignment: .right)
+        }
+    }
+}
+
 /// 系统原生面板；复用现有状态与采样引擎，避免常驻 SwiftUI 渲染树。
 @MainActor
 final class NativePanelController: NSViewController {
@@ -244,7 +303,7 @@ final class NativePanelController: NSViewController {
     private var updateSubscription: AnyCancellable?
     private let updateMessage = NSTextField(wrappingLabelWithString: "")
     private var updateButton: NSButton!
-    private var values: [(NSTextField, (SystemMetrics) -> String)] = []
+    private var detailRows: DetailRowsView?
     private var metricTiles: [DashboardMetricView] = []
     private var networkTile: DashboardNetworkView?
     private var switches: [NSSwitch] = []
@@ -326,7 +385,7 @@ final class NativePanelController: NSViewController {
         }
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
-            for (field, format) in self.values { field.stringValue = format(m) }
+            self.detailRows?.metrics = m
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
             self.detailVisual?.metrics = m
@@ -345,7 +404,7 @@ final class NativePanelController: NSViewController {
     private func rebuild(tab requestedTab: String? = nil) {
         autoreleasepool {
             content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
-            values.removeAll()
+            detailRows = nil
             detailVisual = nil
         }
         CATransaction.flush()
@@ -353,43 +412,23 @@ final class NativePanelController: NSViewController {
         switch tab {
         case "cpu":
             visual("cpu")
-            metric("CPU 利用率") { String(format: "%.1f%%", $0.cpuUsage) }
-            metric("用户") { String(format: "%.1f%%", $0.cpuUserUsage) }
-            metric("系统") { String(format: "%.1f%%", $0.cpuSystemUsage) }
-            metric("空闲") { String(format: "%.1f%%", $0.cpuIdleUsage) }
-            metric("1 / 5 / 15 分钟负载") { String(format: "%.2f / %.2f / %.2f", $0.loadAvg1m, $0.loadAvg5m, $0.loadAvg15m) }
-            metric("运行时间") { $0.uptimeString }
+            rows("cpu")
             note("进程 CPU 百分比可跨多个核心，系统利用率按全部核心归一化。")
         case "gpu":
             visual("gpu")
-            metric("型号") { $0.gpuModelName }
-            metric("核心数") { $0.gpuCoreCount > 0 ? "\($0.gpuCoreCount)" : "不可用" }
-            metric("设备利用率") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }
-            metric("渲染利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuRenderUsage) : "不可用" }
-            metric("Tiler 利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuTilerUsage) : "不可用" }
+            rows("gpu")
             note("显示系统提供的瞬时利用率；无可用读数时显示不可用。")
         case "ram":
             visual("ram")
-            metric("已用 / 总内存") { String(format: "%.2f / %.0f GB", $0.ramUsedGB, $0.ramTotalGB) }
-            metric("应用内存") { String(format: "%.2f GB", $0.ramAppGB) }
-            metric("联结内存") { String(format: "%.2f GB", $0.ramWiredGB) }
-            metric("压缩内存") { String(format: "%.2f GB", $0.ramCompressedGB) }
-            metric("可用内存") { String(format: "%.2f GB", $0.ramFreeGB) }
-            metric("交换空间") { String(format: "%.0f MB", $0.ramSwapUsedMB) }
-            metric("内存压力") { $0.ramPressureLevel }
+            rows("ram")
             note("可回收文件缓存不计入应用内存；内存压力采用系统等级。")
         case "disk":
             visual("disk")
-            metric("系统卷已用") { String(format: "%.1f GB · %d%%", $0.diskUsedGB, $0.diskPercent) }
-            metric("系统卷总容量") { String(format: "%.1f GB", $0.diskTotalGB) }
-            metric("可用空间") { String(format: "%.1f GB", $0.diskFreeGB) }
-            metric("所有物理磁盘读取") { $0.diskIOAvailable ? $0.diskReadSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
-            metric("所有物理磁盘写入") { $0.diskIOAvailable ? $0.diskWriteSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
+            rows("disk")
             note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
         case "network":
             visual("network")
-            metric("下载速率") { "\($0.downloadSpeedFormatted)/s" }
-            metric("上传速率") { "\($0.uploadSpeedFormatted)/s" }
+            rows("network")
             note("速率来自系统网络接口计数器，每秒刷新。")
         default:
             if !overviewComponents.isEmpty {
@@ -434,7 +473,6 @@ final class NativePanelController: NSViewController {
             }
             overviewComponents = content.arrangedSubviews
         }
-        for (field, format) in values { field.stringValue = format(state.metrics) }
         let current = state.switches
         for (control, active) in zip(switches, [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]) { control.state = active ? .on : .off }
         updatePreferredSize()
@@ -453,11 +491,12 @@ final class NativePanelController: NSViewController {
         onPreferredSizeChange?(size)
     }
 
-    private func metric(_ title: String, format: @escaping (SystemMetrics) -> String) {
-        let value = label(format(state.metrics), size: 13, weight: .medium)
-        value.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        values.append((value, format))
-        row(label(title, size: 13), value)
+    private func rows(_ kind: String) {
+        let panel = DetailRowsView(kind: kind, metrics: state.metrics)
+        detailRows = panel
+        content.addArrangedSubview(panel)
+        panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        panel.heightAnchor.constraint(equalToConstant: panel.idealHeight).isActive = true
     }
     private func visual(_ kind: String) {
         let panel = DetailVisualView(kind: kind, metrics: state.metrics)
@@ -465,13 +504,6 @@ final class NativePanelController: NSViewController {
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         panel.heightAnchor.constraint(equalToConstant: 170).isActive = true
-    }
-    private func row(_ left: NSView, _ right: NSView) {
-        let row = NSStackView(views: [left, spacer(), right])
-        row.orientation = .horizontal
-        row.spacing = 8
-        content.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
     }
     private func note(_ text: String) {
         let field = NSTextField(wrappingLabelWithString: text)

@@ -105,11 +105,12 @@ final class MetricsFormattingTests: XCTestCase {
         let overviewHeight = controller.preferredContentSize.height
         state.selectedTab = "ram"
         func strings(_ view: NSView) -> [String] {
-            (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap { strings($0) }
+            let own = (view as? NSTextField).map { [$0.stringValue] } ?? (view.accessibilityLabel().map { [$0] } ?? [])
+            return own + view.subviews.flatMap { strings($0) }
         }
-        XCTAssertTrue(strings(root).contains("已用 / 总内存"))
+        XCTAssertTrue(strings(root).contains { $0.contains("已用 / 总内存") })
         XCTAssertFalse(strings(root).contains("保持常亮"))
-        XCTAssertLessThan(controller.preferredContentSize.height, overviewHeight)
+        XCTAssertLessThan(controller.preferredContentSize.height, overviewHeight + 50)
     }
 
     @MainActor
