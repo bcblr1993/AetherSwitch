@@ -197,7 +197,7 @@ final class NativePanelController: NSViewController {
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 300), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 294), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
         updateSubscription = UpdateManager.shared.$status.sink { [weak self] status in
             guard let self else { return }
@@ -295,7 +295,7 @@ final class NativePanelController: NSViewController {
                 pair.distribution = .fillEqually
                 content.addArrangedSubview(pair)
                 pair.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                pair.heightAnchor.constraint(equalToConstant: 68).isActive = true
+                pair.heightAnchor.constraint(equalToConstant: 66).isActive = true
             }
             let network = DashboardNetworkView(metrics: state.metrics)
             networkTile = network
@@ -320,7 +320,7 @@ final class NativePanelController: NSViewController {
                 switchTiles.append(tile)
                 content.addArrangedSubview(tile)
                 tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                tile.heightAnchor.constraint(equalToConstant: 42).isActive = true
+                tile.heightAnchor.constraint(equalToConstant: 40).isActive = true
             }
         }
         for (field, format) in values { field.stringValue = format(state.metrics) }
@@ -337,7 +337,7 @@ final class NativePanelController: NSViewController {
         let height = root.edgeInsets.top + root.edgeInsets.bottom
             + visible.reduce(0) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, visible.count - 1)) * root.spacing
-        let size = NSSize(width: 300, height: height)
+        let size = NSSize(width: 294, height: height)
         preferredContentSize = size
         onPreferredSizeChange?(size)
     }
