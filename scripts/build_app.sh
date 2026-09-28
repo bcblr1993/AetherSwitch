@@ -26,7 +26,7 @@ test -z "$(git status --porcelain)" || { echo "Release build requires a clean wo
 test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; }
 security find-identity -v -p codesigning | grep -q "$CERT_NAME" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
-# 只清理本项目脚本生成的旧构建目录；正在运行的候选包留到进程退出后再清理。
+# 清除本项目旧构建产物；正在运行的候选包留到进程退出后再清理。
 for PREVIOUS_BUILD in "$PROJECT_DIR"/outputs/build-*; do
     [ -d "$PREVIOUS_BUILD" ] || continue
     [ ! -L "$PREVIOUS_BUILD" ] || continue
@@ -37,6 +37,13 @@ for PREVIOUS_BUILD in "$PROJECT_DIR"/outputs/build-*; do
     fi
     rm -r -- "$PREVIOUS_BUILD"
 done
+
+# SwiftPM 的编译中间产物会随反复构建累积；每次从干净的编译目录开始。
+# 仅触碰本项目 .build/out，保留 SwiftPM 的依赖与工作区元数据。
+SWIFT_BUILD_OUTPUT="$PROJECT_DIR/.build/out"
+if [ -d "$SWIFT_BUILD_OUTPUT" ] && [ ! -L "$SWIFT_BUILD_OUTPUT" ]; then
+    rm -r -- "$SWIFT_BUILD_OUTPUT"
+fi
 
 echo "==> [1/5] 执行全量单元测试与质量门禁..."
 swift test
