@@ -7,6 +7,7 @@ private final class MenuBarStatusView: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         let foreground = NSColor.labelColor
         let columns: [(String, String, Double?)] = [
             ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage),
@@ -38,6 +39,7 @@ private final class MenuBarStatusView: NSView {
             let y = top + offset
             let line = NSBezierPath(); line.move(to: NSPoint(x: iconX, y: y)); line.line(to: NSPoint(x: iconX + 22, y: y)); line.lineWidth = 1.5; line.stroke()
             NSBezierPath(ovalIn: NSRect(x: iconX + knob - 2, y: y - 2, width: 4, height: 4)).fill()
+        }
         }
     }
 }
