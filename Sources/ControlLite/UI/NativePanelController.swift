@@ -539,6 +539,7 @@ final class NativePanelController: NSViewController {
         // A stable popover size prevents AppKit from retaining a new graphics backing store
         // for each tab transition. Each detail chart uses the available vertical space.
         let size = NSSize(width: 294, height: max(519, height))
+        guard preferredContentSize != size else { return }
         preferredContentSize = size
         onPreferredSizeChange?(size)
     }
