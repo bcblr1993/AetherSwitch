@@ -10,7 +10,8 @@ private class DashboardCardView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
-        NSColor.controlBackgroundColor.setFill()
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        (dark ? NSColor(calibratedWhite: 0.29, alpha: 1) : NSColor(calibratedWhite: 0.98, alpha: 1)).setFill()
         shape.fill()
         NSColor.separatorColor.withAlphaComponent(0.22).setStroke()
         shape.lineWidth = 0.5
@@ -82,7 +83,7 @@ private final class DashboardMetricView: DashboardCardView {
         text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 80, height: 17), size: 10, weight: .medium, color: .secondaryLabelColor)
         text(value, in: NSRect(x: bounds.width - 49, y: 10, width: 37, height: 19), size: 12, weight: .semibold, alignment: .right)
         let track = NSRect(x: 11, y: 37, width: bounds.width - 22, height: 5)
-        NSColor.separatorColor.withAlphaComponent(0.32).setFill()
+        NSColor.labelColor.withAlphaComponent(0.15).setFill()
         NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
         tint.setFill()
         NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * min(100, max(0, percent)) / 100, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
@@ -155,7 +156,14 @@ private final class DetailVisualView: DashboardCardView {
         }
         needsDisplay = true
     } }
-    init(kind: String, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
+    init(kind: String, metrics: SystemMetrics) {
+        self.kind = kind; self.metrics = metrics
+        if kind == "network" {
+            downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
+            uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+        }
+        super.init(frame: .zero)
+    }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -164,35 +172,42 @@ private final class DetailVisualView: DashboardCardView {
         switch kind {
         case "cpu":
             trio([(metrics.cpuUserUsage, "用户"), (metrics.cpuUsage, "总负载"), (metrics.cpuSystemUsage, "系统")])
-            history(metrics.cpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
+            history(metrics.cpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
         case "gpu":
             if metrics.gpuAvailable {
                 trio([(metrics.gpuRenderUsage, "渲染"), (metrics.gpuUsage, "GPU"), (metrics.gpuTilerUsage, "Tiler")])
             } else {
                 text("GPU 读数不可用", in: NSRect(x: 12, y: 37, width: width - 24, height: 25), size: 13, color: .secondaryLabelColor, alignment: .center)
             }
-            history(metrics.gpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
+            history(metrics.gpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
         case "ram":
             ring(center: NSPoint(x: width / 2, y: 48), radius: 31, percent: Double(metrics.ramPercent), tint: .systemBlue)
             text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 38, width: 60, height: 24), size: 18, weight: .semibold, alignment: .center)
             text("内存占用 · 压力\(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: .secondaryLabelColor, alignment: .center)
-            history(metrics.ramHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
+            history(metrics.ramHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
         case "disk":
             text("读取  \(metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : "—")", in: NSRect(x: 12, y: 12, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemBlue)
             text("写入  \(metrics.diskIOAvailable ? metrics.diskWriteSpeedFormatted : "—")", in: NSRect(x: 12, y: 34, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemRed)
             let maxRate = max(1, (metrics.diskReadHistory + metrics.diskWriteHistory).max() ?? 1)
-            history(metrics.diskReadHistory, in: NSRect(x: 12, y: 65, width: width - 24, height: 42), tint: .systemBlue, maximum: maxRate)
-            history(metrics.diskWriteHistory, in: NSRect(x: 12, y: 65, width: width - 24, height: 42), tint: .systemRed, maximum: maxRate)
-            bar(percent: Double(metrics.diskPercent), in: NSRect(x: 12, y: 123, width: width - 24, height: 8), tint: .systemBlue)
-            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: 138, width: width - 24, height: 16), size: 10, color: .secondaryLabelColor)
+            let diskChart = NSRect(x: 12, y: 65, width: width - 24, height: bounds.height - 128)
+            history(metrics.diskReadHistory, in: diskChart, tint: .systemBlue, maximum: maxRate)
+            history(metrics.diskWriteHistory, in: diskChart, tint: .systemRed, maximum: maxRate, background: false)
+            bar(percent: Double(metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 47, width: width - 24, height: 8), tint: .systemBlue)
+            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 31, width: width - 24, height: 16), size: 10, color: .secondaryLabelColor)
         case "network":
             text("↓ \(metrics.downloadSpeedFormatted)/s", in: NSRect(x: 12, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemBlue)
             text("↑ \(metrics.uploadSpeedFormatted)/s", in: NSRect(x: width / 2, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemRed)
             text("下载", in: NSRect(x: 12, y: 50, width: width / 2 - 12, height: 16), size: 10, color: .secondaryLabelColor)
             text("上传", in: NSRect(x: width / 2, y: 50, width: width / 2 - 12, height: 16), size: 10, color: .secondaryLabelColor)
             let maxRate = max(1, (downloadHistory + uploadHistory).max() ?? 1)
-            history(downloadHistory, in: NSRect(x: 12, y: 87, width: width - 24, height: 70), tint: .systemBlue, maximum: maxRate)
-            history(uploadHistory, in: NSRect(x: 12, y: 87, width: width - 24, height: 70), tint: .systemRed, maximum: maxRate)
+            let networkChart = NSRect(x: 12, y: 87, width: width - 24, height: 124)
+            history(downloadHistory, in: networkChart, tint: .systemBlue, maximum: maxRate)
+            history(uploadHistory, in: networkChart, tint: .systemRed, maximum: maxRate, background: false)
+            text("本次面板采样", in: NSRect(x: 12, y: 220, width: width - 24, height: 16), size: 10, color: .secondaryLabelColor)
+            text("下载峰值", in: NSRect(x: 12, y: 242, width: 90, height: 18), size: 11, color: .secondaryLabelColor)
+            text(rate(downloadHistory.max() ?? 0), in: NSRect(x: 112, y: 242, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
+            text("上传峰值", in: NSRect(x: 12, y: 268, width: 90, height: 18), size: 11, color: .secondaryLabelColor)
+            text(rate(uploadHistory.max() ?? 0), in: NSRect(x: 112, y: 268, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
         default: break
         }
         if kind == "network" {
@@ -214,26 +229,38 @@ private final class DetailVisualView: DashboardCardView {
 
     private func ring(center: NSPoint, radius: CGFloat, percent: Double, tint: NSColor) {
         let track = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
-        track.lineWidth = 8; track.lineCapStyle = .round; NSColor.separatorColor.setStroke(); track.stroke()
+        track.lineWidth = 8; track.lineCapStyle = .round; NSColor.labelColor.withAlphaComponent(0.18).setStroke(); track.stroke()
         let fill = NSBezierPath(); fill.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - CGFloat(min(100, max(0, percent))) * 3.6, clockwise: true)
         fill.lineWidth = 8; fill.lineCapStyle = .round; tint.setStroke(); fill.stroke()
     }
 
-    private func history(_ samples: [Double], in rect: NSRect, tint: NSColor, maximum: Double) {
-        NSColor.separatorColor.withAlphaComponent(0.12).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
-        guard samples.count > 1 else { return }
-        let path = NSBezierPath()
-        for (index, sample) in samples.enumerated() {
-            let point = NSPoint(x: rect.minX + rect.width * CGFloat(index) / CGFloat(samples.count - 1), y: rect.maxY - rect.height * CGFloat(min(1, max(0, sample / maximum))))
-            if index == 0 { path.move(to: point) } else { path.line(to: point) }
+    private func history(_ samples: [Double], in rect: NSRect, tint: NSColor, maximum: Double, background: Bool = true) {
+        if background {
+            NSColor.labelColor.withAlphaComponent(0.08).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
         }
+        guard samples.count > 1 else { return }
+        let points = samples.enumerated().map { index, sample in
+            NSPoint(x: rect.minX + rect.width * CGFloat(index) / CGFloat(samples.count - 1), y: rect.maxY - rect.height * CGFloat(min(1, max(0, sample / maximum))))
+        }
+        let area = NSBezierPath()
+        area.move(to: NSPoint(x: rect.minX, y: rect.maxY))
+        points.forEach { area.line(to: $0) }
+        area.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+        area.close()
+        tint.withAlphaComponent(0.28).setFill(); area.fill()
+        let path = NSBezierPath(); path.move(to: points[0]); points.dropFirst().forEach { path.line(to: $0) }
         path.lineWidth = 1.5; tint.setStroke(); path.stroke()
     }
 
     private func bar(percent: Double, in rect: NSRect, tint: NSColor) {
         NSColor.separatorColor.setFill(); NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
         tint.setFill(); NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY, width: rect.width * CGFloat(min(100, max(0, percent))) / 100, height: rect.height), xRadius: 4, yRadius: 4).fill()
+    }
+    private func rate(_ bytes: Double) -> String {
+        if bytes >= 1_048_576 { return String(format: "%.1f MB/s", bytes / 1_048_576) }
+        if bytes >= 1024 { return String(format: "%.0f KB/s", bytes / 1024) }
+        return String(format: "%.0f B/s", bytes)
     }
 }
 
@@ -498,7 +525,9 @@ final class NativePanelController: NSViewController {
         let height = root.edgeInsets.top + root.edgeInsets.bottom
             + visible.reduce(0) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, visible.count - 1)) * root.spacing
-        let size = NSSize(width: 294, height: height)
+        // A stable popover size prevents AppKit from retaining a new graphics backing store
+        // for each tab transition. Each detail chart uses the available vertical space.
+        let size = NSSize(width: 294, height: max(519, height))
         preferredContentSize = size
         onPreferredSizeChange?(size)
     }
@@ -515,7 +544,8 @@ final class NativePanelController: NSViewController {
         detailVisual = panel
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        panel.heightAnchor.constraint(equalToConstant: 170).isActive = true
+        let height: CGFloat = kind == "network" ? 304 : kind == "gpu" ? 232 : kind == "disk" ? 218 : 170
+        panel.heightAnchor.constraint(equalToConstant: height).isActive = true
     }
     private func note(_ text: String) {
         let field = NSTextField(wrappingLabelWithString: text)

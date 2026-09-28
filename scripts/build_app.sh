@@ -26,6 +26,18 @@ test -z "$(git status --porcelain)" || { echo "Release build requires a clean wo
 test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; }
 security find-identity -v -p codesigning | grep -q "$CERT_NAME" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
+# 只清理本项目脚本生成的旧构建目录；正在运行的候选包留到进程退出后再清理。
+for PREVIOUS_BUILD in "$PROJECT_DIR"/outputs/build-*; do
+    [ -d "$PREVIOUS_BUILD" ] || continue
+    [ ! -L "$PREVIOUS_BUILD" ] || continue
+    [ "$PREVIOUS_BUILD" != "$OUTPUT_DIR" ] || continue
+    if pgrep -f "$PREVIOUS_BUILD/$APP_NAME.app/Contents/MacOS/$APP_NAME" >/dev/null; then
+        echo "Skipping active build: $PREVIOUS_BUILD"
+        continue
+    fi
+    rm -r -- "$PREVIOUS_BUILD"
+done
+
 echo "==> [1/5] 执行全量单元测试与质量门禁..."
 swift test
 

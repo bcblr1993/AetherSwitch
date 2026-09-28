@@ -110,7 +110,11 @@ final class MetricsFormattingTests: XCTestCase {
         }
         XCTAssertTrue(strings(root).contains { $0.contains("已用 / 总内存") })
         XCTAssertFalse(strings(root).contains("保持常亮"))
-        XCTAssertLessThan(controller.preferredContentSize.height, overviewHeight + 50)
+        XCTAssertEqual(controller.preferredContentSize.height, overviewHeight, accuracy: 1)
+        for tab in ["cpu", "gpu", "disk", "network"] {
+            state.selectedTab = tab
+            XCTAssertEqual(controller.preferredContentSize.height, overviewHeight, accuracy: 1)
+        }
     }
 
     @MainActor
