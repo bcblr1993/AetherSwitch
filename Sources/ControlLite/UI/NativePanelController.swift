@@ -315,8 +315,8 @@ private final class DetailRowsView: DashboardCardView {
             ("内存压力", metrics.ramPressureLevel)
         ]
         case "disk": return [
-            ("系统卷已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
-            ("系统卷总容量", String(format: "%.1f GB", metrics.diskTotalGB)),
+            ("共享容器已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
+            ("共享容器总容量", String(format: "%.1f GB", metrics.diskTotalGB)),
             ("可用空间", String(format: "%.1f GB", metrics.diskFreeGB)),
             ("物理磁盘读取", metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : (metrics.diskIOPending ? "采样中…" : "不可用")),
             ("物理磁盘写入", metrics.diskIOAvailable ? metrics.diskWriteSpeedFormatted : (metrics.diskIOPending ? "采样中…" : "不可用"))
