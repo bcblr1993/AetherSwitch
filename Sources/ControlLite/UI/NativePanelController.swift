@@ -212,14 +212,14 @@ private final class DetailVisualView: DashboardCardView {
             text("下载", in: NSRect(x: 12, y: 50, width: width / 2 - 12, height: 16), size: 10, color: secondaryTextColor)
             text("上传", in: NSRect(x: width / 2, y: 50, width: width / 2 - 12, height: 16), size: 10, color: secondaryTextColor)
             let maxRate = max(1, (downloadHistory + uploadHistory).max() ?? 1)
-            let networkChart = NSRect(x: 12, y: 87, width: width - 24, height: 124)
+            let networkChart = NSRect(x: 12, y: 87, width: width - 24, height: 92)
             history(downloadHistory, in: networkChart, tint: .systemBlue, maximum: maxRate)
             history(uploadHistory, in: networkChart, tint: .systemRed, maximum: maxRate, background: false)
-            text("本次面板采样", in: NSRect(x: 12, y: 220, width: width - 24, height: 16), size: 10, color: secondaryTextColor)
-            text("下载峰值", in: NSRect(x: 12, y: 242, width: 90, height: 18), size: 11, color: secondaryTextColor)
-            text(rate(downloadHistory.max() ?? 0), in: NSRect(x: 112, y: 242, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
-            text("上传峰值", in: NSRect(x: 12, y: 268, width: 90, height: 18), size: 11, color: secondaryTextColor)
-            text(rate(uploadHistory.max() ?? 0), in: NSRect(x: 112, y: 268, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
+            text("本次面板采样", in: NSRect(x: 12, y: 188, width: width - 24, height: 16), size: 10, color: secondaryTextColor)
+            text("下载峰值", in: NSRect(x: 12, y: 210, width: 90, height: 18), size: 11, color: secondaryTextColor)
+            text(rate(downloadHistory.max() ?? 0), in: NSRect(x: 112, y: 210, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
+            text("上传峰值", in: NSRect(x: 12, y: 236, width: 90, height: 18), size: 11, color: secondaryTextColor)
+            text(rate(uploadHistory.max() ?? 0), in: NSRect(x: 112, y: 236, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
         default: break
         }
         if kind == "network" {
@@ -570,7 +570,7 @@ final class NativePanelController: NSViewController {
         detailVisual = panel
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        let height: CGFloat = kind == "network" ? 304 : kind == "gpu" ? 232 : kind == "disk" ? 218 : 170
+        let height: CGFloat = kind == "network" ? 272 : kind == "gpu" ? 232 : kind == "disk" ? 218 : 170
         if let detailVisualHeight { detailVisualHeight.constant = height }
         else {
             let constraint = panel.heightAnchor.constraint(equalToConstant: height)

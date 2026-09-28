@@ -114,6 +114,10 @@ final class MetricsFormattingTests: XCTestCase {
         for tab in ["cpu", "gpu", "disk", "network"] {
             state.selectedTab = tab
             XCTAssertEqual(controller.preferredContentSize.height, overviewHeight, accuracy: 1)
+            if tab == "network" {
+                XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1,
+                                         "网络详情和底部操作栏必须完整容纳在弹出面板内")
+            }
             if tab == "disk" {
                 XCTAssertTrue(strings(root).contains { $0.contains("共享容器已用") })
             }
