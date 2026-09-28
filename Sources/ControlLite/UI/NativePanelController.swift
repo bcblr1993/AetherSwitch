@@ -167,6 +167,7 @@ private final class DetailVisualView: DashboardCardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         super.draw(dirtyRect)
         let width = bounds.width
         switch kind {
@@ -214,6 +215,7 @@ private final class DetailVisualView: DashboardCardView {
             text("传输历史", in: NSRect(x: 12, y: 74, width: width - 24, height: 14), size: 10, color: .secondaryLabelColor)
         } else if kind != "disk" {
             text("负载历史", in: NSRect(x: 12, y: 101, width: width - 24, height: 14), size: 10, color: .secondaryLabelColor)
+        }
         }
     }
 
@@ -312,6 +314,7 @@ private final class DetailRowsView: DashboardCardView {
         }
     }
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         text("详细信息", in: NSRect(x: 0, y: 0, width: bounds.width, height: 16), size: 10, color: .secondaryLabelColor, alignment: .center)
         NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
         let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 18)); line.line(to: NSPoint(x: bounds.width, y: 18)); line.stroke()
@@ -319,6 +322,7 @@ private final class DetailRowsView: DashboardCardView {
             let y = CGFloat(index) * 24 + 25
             text(entry.0, in: NSRect(x: 0, y: y, width: 130, height: 18), size: 12, color: .secondaryLabelColor)
             text(entry.1, in: NSRect(x: 132, y: y, width: bounds.width - 132, height: 18), size: 12, weight: .semibold, alignment: .right)
+        }
         }
     }
 }
