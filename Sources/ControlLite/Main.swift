@@ -3,6 +3,11 @@ import Combine
 
 /// 双行指标直接绘制在原生状态栏按钮内，保持截图中的紧凑列宽与彩色数值。
 private final class MenuBarStatusView: NSView {
+    private static let titleFont = NSFont.systemFont(ofSize: 8, weight: .medium)
+    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+    private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+    private static let centerStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()
+    private static let leadingStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .left; return style }()
     var metrics = SystemMetrics() { didSet { needsDisplay = true } }
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -15,23 +20,18 @@ private final class MenuBarStatusView: NSView {
             ("RAM", "\(metrics.ramPercent)%", Double(metrics.ramPercent)),
             ("SSD", "\(metrics.diskPercent)%", Double(metrics.diskPercent))
         ]
-        let titleFont = NSFont.systemFont(ofSize: 8, weight: .medium)
-        let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-        let center = NSMutableParagraphStyle(); center.alignment = .center
-        let leading = NSMutableParagraphStyle(); leading.alignment = .left
         let top = (bounds.height - 23) / 2
         for (index, column) in columns.enumerated() {
             let x = CGFloat(index) * 48
-            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: titleFont, .foregroundColor: foreground, .paragraphStyle: center])
+            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: foreground, .paragraphStyle: Self.centerStyle])
             let color: NSColor = column.2.map { $0 >= 80 ? .systemRed : ($0 >= 70 ? .systemOrange : .systemBlue) } ?? .secondaryLabelColor
-            (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: numberFont, .foregroundColor: color, .paragraphStyle: center])
+            (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
         }
         let rateX: CGFloat = 193
-        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: numberFont, .foregroundColor: NSColor.systemRed])
-        (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: rateFont, .foregroundColor: foreground, .paragraphStyle: leading])
-        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: numberFont, .foregroundColor: NSColor.systemBlue])
-        (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: rateFont, .foregroundColor: foreground, .paragraphStyle: leading])
+        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemRed])
+        (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemBlue])
+        (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
         let iconX: CGFloat = 299
         foreground.setStroke()
         foreground.setFill()
@@ -93,14 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 监听系统指标与样式变更，自适应动态调整状态栏宽度
         AppState.shared.$metrics
-            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemWidth()
             }
             .store(in: &cancellables)
 
         AppState.shared.$menuBarStyle
-            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemWidth()
             }
