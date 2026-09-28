@@ -77,7 +77,8 @@ swift test
 1. **架构原生针对性**：
    - 面向 Apple Silicon (arm64) 架构独立编译生产级可执行文件，开启完整编译器优化（`-O`）。
 2. **官方 Developer ID 签名**：
-   - 签名证书优先使用官方凭证：`Developer ID Application: YanNan Chen (5984KQD4D7)`；
+   - 使用钥匙串中的 `Developer ID Application` 证书，由 `scripts/signing_identity.sh` 自动识别；钥匙串里有多张时，用环境变量 `AETHERSWITCH_SIGNING_IDENTITY` 指定；
+   - 证书名称（含姓名与 Team ID）不得写入仓库；
    - 启用 Hardened Runtime（`--options runtime`）。
 3. **安全分发校验**：
    - 每次打包必须同时产出 `.app`、`.tar.gz` 独立包以及 `SHA256SUMS.txt` 校验清单。

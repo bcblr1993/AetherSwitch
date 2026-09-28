@@ -14,7 +14,8 @@ BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.1"
 BUILD_NUMBER="2026092801"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
-CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
+source "$PROJECT_DIR/scripts/signing_identity.sh"
+CERT_NAME="$(resolve_signing_identity)" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
 # 正式构建只接受已提交的主干源码与分发证书，失败时不生成半成品。
 RELEASE_BRANCH="$(git branch --show-current)"
