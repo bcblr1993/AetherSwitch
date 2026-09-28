@@ -177,12 +177,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        if CommandLine.arguments.contains("--open") {
+        if CommandLine.arguments.contains("--acceptance-cycle") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.togglePopover()
+                self.runAcceptanceCycle(at: 0)
+            }
+        } else if CommandLine.arguments.contains("--open") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 Task { @MainActor in
                     self.togglePopover()
                 }
             }
+        }
+    }
+
+    /// Release-gate UI exercise: change tabs on the app's own main thread, without
+    /// activating another app and accidentally dismissing the transient popover.
+    private func runAcceptanceCycle(at index: Int) {
+        let sequence = ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
+        guard index < sequence.count else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            let tab = sequence[index]
+            AppState.shared.selectedTab = tab
+            let record: [String: Any] = [
+                "tab": tab,
+                "popoverShown": self.popover?.isShown == true,
+                "height": self.popover?.contentSize.height ?? 0,
+                "timestamp": Date().timeIntervalSince1970
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
+               let line = String(data: data, encoding: .utf8) {
+                let path = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_LOG"] ?? "/tmp/AetherSwitch-acceptance.jsonl"
+                if index == 0 { try? Data().write(to: URL(fileURLWithPath: path), options: .atomic) }
+                if let handle = FileHandle(forWritingAtPath: path) {
+                    defer { try? handle.close() }
+                    _ = try? handle.seekToEnd()
+                    try? handle.write(contentsOf: Data((line + "\n").utf8))
+                }
+            }
+            self.runAcceptanceCycle(at: index + 1)
         }
     }
 
