@@ -316,7 +316,6 @@ final class NativePanelController: NSViewController {
     private var networkTile: DashboardNetworkView?
     private var switches: [NSSwitch] = []
     private var switchTiles: [DashboardSwitchView] = []
-    private var overviewComponents: [NSView] = []
     private var detailVisual: DetailVisualView?
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network"]
 
@@ -411,9 +410,19 @@ final class NativePanelController: NSViewController {
 
     private func rebuild(tab requestedTab: String? = nil) {
         autoreleasepool {
-            content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
+            let oldViews = content.arrangedSubviews
+            let oldObjects = oldViews.map { $0 as AnyObject }
+            let attached = content.constraints.filter { constraint in
+                oldObjects.contains { $0 === constraint.firstItem as AnyObject? || $0 === constraint.secondItem as AnyObject? }
+            }
+            NSLayoutConstraint.deactivate(attached)
+            oldViews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
             detailRows = nil
             detailVisual = nil
+            metricTiles.removeAll()
+            networkTile = nil
+            switches.removeAll()
+            switchTiles.removeAll()
         }
         CATransaction.flush()
         let tab = requestedTab ?? state.selectedTab
@@ -439,10 +448,6 @@ final class NativePanelController: NSViewController {
             rows("network")
             note("速率来自系统网络接口计数器，每秒刷新。")
         default:
-            if !overviewComponents.isEmpty {
-                for component in overviewComponents { content.addArrangedSubview(component) }
-                break
-            }
             metricTiles = (0..<4).map { DashboardMetricView(kind: $0, metrics: state.metrics) }
             let top = NSStackView(views: [metricTiles[0], metricTiles[1]])
             let bottom = NSStackView(views: [metricTiles[2], metricTiles[3]])
@@ -479,7 +484,6 @@ final class NativePanelController: NSViewController {
                 tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
                 tile.heightAnchor.constraint(equalToConstant: 40).isActive = true
             }
-            overviewComponents = content.arrangedSubviews
         }
         let current = state.switches
         for (control, active) in zip(switches, [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]) { control.state = active ? .on : .off }
