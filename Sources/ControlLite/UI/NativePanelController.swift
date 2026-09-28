@@ -144,7 +144,13 @@ private final class DashboardSwitchView: DashboardCardView {
 
 /// A single drawing surface keeps the live charts inexpensive while the popover is open.
 private final class DetailVisualView: DashboardCardView {
-    let kind: String
+    var kind: String { didSet {
+        if kind == "network" && downloadHistory.isEmpty {
+            downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
+            uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+        }
+        needsDisplay = true
+    } }
     private var downloadHistory: [Double] = []
     private var uploadHistory: [Double] = []
     var metrics: SystemMetrics { didSet {
@@ -267,7 +273,7 @@ private final class DetailVisualView: DashboardCardView {
 }
 
 private final class DetailRowsView: DashboardCardView {
-    let kind: String
+    var kind: String { didSet { updateAccessibility(); needsDisplay = true } }
     var metrics: SystemMetrics { didSet { updateAccessibility(); needsDisplay = true } }
     init(kind: String, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero); updateAccessibility() }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -348,6 +354,9 @@ final class NativePanelController: NSViewController {
     private var switches: [NSSwitch] = []
     private var switchTiles: [DashboardSwitchView] = []
     private var detailVisual: DetailVisualView?
+    private var detailVisualHeight: NSLayoutConstraint?
+    private var detailRowsHeight: NSLayoutConstraint?
+    private var detailNote: NSTextField?
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network"]
 
     override func loadView() {
@@ -448,8 +457,6 @@ final class NativePanelController: NSViewController {
             }
             NSLayoutConstraint.deactivate(attached)
             oldViews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
-            detailRows = nil
-            detailVisual = nil
             metricTiles.removeAll()
             networkTile = nil
             switches.removeAll()
@@ -537,24 +544,42 @@ final class NativePanelController: NSViewController {
     }
 
     private func rows(_ kind: String) {
-        let panel = DetailRowsView(kind: kind, metrics: state.metrics)
+        let panel = detailRows ?? DetailRowsView(kind: kind, metrics: state.metrics)
+        panel.kind = kind
+        panel.metrics = state.metrics
         detailRows = panel
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        panel.heightAnchor.constraint(equalToConstant: panel.idealHeight).isActive = true
+        if let detailRowsHeight { detailRowsHeight.constant = panel.idealHeight }
+        else {
+            let height = panel.heightAnchor.constraint(equalToConstant: panel.idealHeight)
+            height.isActive = true
+            detailRowsHeight = height
+        }
     }
     private func visual(_ kind: String) {
-        let panel = DetailVisualView(kind: kind, metrics: state.metrics)
+        let panel = detailVisual ?? DetailVisualView(kind: kind, metrics: state.metrics)
+        panel.kind = kind
+        panel.metrics = state.metrics
         detailVisual = panel
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         let height: CGFloat = kind == "network" ? 304 : kind == "gpu" ? 232 : kind == "disk" ? 218 : 170
-        panel.heightAnchor.constraint(equalToConstant: height).isActive = true
+        if let detailVisualHeight { detailVisualHeight.constant = height }
+        else {
+            let constraint = panel.heightAnchor.constraint(equalToConstant: height)
+            constraint.isActive = true
+            detailVisualHeight = constraint
+        }
     }
     private func note(_ text: String) {
-        let field = NSTextField(wrappingLabelWithString: text)
-        field.font = .systemFont(ofSize: 11)
-        field.textColor = .secondaryLabelColor
+        let field = detailNote ?? NSTextField(wrappingLabelWithString: text)
+        if detailNote == nil {
+            field.font = .systemFont(ofSize: 11)
+            field.textColor = .secondaryLabelColor
+            detailNote = field
+        }
+        field.stringValue = text
         content.addArrangedSubview(field)
         field.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
     }
