@@ -1,6 +1,19 @@
 import AppKit
 import Combine
 
+private final class MetricBarView: NSView {
+    var percent: Double = 0 { didSet { needsDisplay = true } }
+    var tint: NSColor = .systemGreen
+    override func draw(_ dirtyRect: NSRect) {
+        let track = bounds.insetBy(dx: 0, dy: 1)
+        NSColor.separatorColor.withAlphaComponent(0.32).setFill()
+        NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
+        let filled = NSRect(x: track.minX, y: track.minY, width: track.width * min(100, max(0, percent)) / 100, height: track.height)
+        tint.setFill()
+        NSBezierPath(roundedRect: filled, xRadius: 3, yRadius: 3).fill()
+    }
+}
+
 /// 系统原生面板；复用现有状态与采样引擎，避免常驻 SwiftUI 渲染树。
 @MainActor
 final class NativePanelController: NSViewController {
@@ -16,17 +29,23 @@ final class NativePanelController: NSViewController {
     private let updateMessage = NSTextField(wrappingLabelWithString: "")
     private var updateButton: NSButton!
     private var values: [(NSTextField, (SystemMetrics) -> String)] = []
+    private var progressValues: [(MetricBarView, (SystemMetrics) -> Double)] = []
     private var switches: [NSSwitch] = []
+    private var switchDescriptions: [NSTextField] = []
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk"]
 
     override func loadView() {
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 8
+        root.spacing = 10
         root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        let header = NSStackView(views: [label("AetherSwitch", size: 14, weight: .semibold), spacer(), button("刷新", action: #selector(refresh)), button("关于", action: #selector(about))])
+        let brand = NSImageView(image: NSImage(systemSymbolName: "slider.horizontal.2.square.on.square", accessibilityDescription: nil)!)
+        brand.contentTintColor = .systemIndigo
+        brand.symbolConfiguration = .init(pointSize: 16, weight: .semibold)
+        let header = NSStackView(views: [brand, label("AetherSwitch", size: 15, weight: .semibold), spacer(), iconButton("arrow.clockwise", hint: "刷新硬件状态", action: #selector(refresh)), iconButton("info.circle", hint: "关于 AetherSwitch", action: #selector(about))])
         header.orientation = .horizontal
+        header.spacing = 8
         root.addArrangedSubview(header)
         tabs.controlSize = .small
         tabs.target = self
@@ -35,7 +54,7 @@ final class NativePanelController: NSViewController {
         root.addArrangedSubview(tabs)
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 6
+        content.spacing = 8
         root.addArrangedSubview(content)
         updateButton = button("检查更新", action: #selector(checkUpdate))
         let footer = NSStackView(views: [label("v\(UpdateManager.shared.currentVersion)", size: 11), spacer(), updateButton, button("退出", action: #selector(quit))])
@@ -54,11 +73,11 @@ final class NativePanelController: NSViewController {
             errorField.stringValue = error ?? ""
             errorField.isHidden = error == nil
             guard let self, self.isViewLoaded else { return }
-            self.preferredContentSize = NSSize(width: 330, height: self.view.fittingSize.height)
+            self.preferredContentSize = NSSize(width: 350, height: self.view.fittingSize.height)
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 330), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 350), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
         updateSubscription = UpdateManager.shared.$status.sink { [weak self] status in
             guard let self else { return }
@@ -77,7 +96,7 @@ final class NativePanelController: NSViewController {
             default: self.updateMessage.stringValue = ""
             }
             self.updateMessage.isHidden = self.updateMessage.stringValue.isEmpty
-            self.preferredContentSize = NSSize(width: 330, height: self.view.fittingSize.height)
+            self.preferredContentSize = NSSize(width: 350, height: self.view.fittingSize.height)
         }
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
@@ -87,11 +106,14 @@ final class NativePanelController: NSViewController {
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
             for (field, format) in self.values { field.stringValue = format(m) }
+            for (bar, value) in self.progressValues { bar.percent = value(m) }
         }
         switchSubscription = state.$switches.sink { [weak self] s in
             guard let self else { return }
             let states = [s.isKeepAwakeActive, s.isDesktopHidden, s.isHiddenFilesVisible, s.isDarkModeActive]
             for (control, active) in zip(self.switches, states) { control.state = active ? .on : .off }
+            let descriptions = [activeDescription(0, states[0]), activeDescription(1, states[1]), activeDescription(2, states[2]), activeDescription(3, states[3])]
+            for (field, description) in zip(self.switchDescriptions, descriptions) { field.stringValue = description }
         }
         pendingSubscription = state.$pendingSwitches.sink { [weak self] pending in
             for control in self?.switches ?? [] { control.isEnabled = !pending.contains(control.tag) }
@@ -101,7 +123,9 @@ final class NativePanelController: NSViewController {
     private func rebuild(tab requestedTab: String? = nil) {
         content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
         values.removeAll()
+        progressValues.removeAll()
         switches.removeAll()
+        switchDescriptions.removeAll()
         let tab = requestedTab ?? state.selectedTab
         switch tab {
         case "cpu":
@@ -136,29 +160,25 @@ final class NativePanelController: NSViewController {
             metric("所有物理磁盘写入") { $0.diskIOAvailable ? $0.diskWriteSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
             note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
         default:
-            metric("CPU") { String(format: "%.1f%%", $0.cpuUsage) }
-            metric("GPU") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }
-            metric("内存") { String(format: "%.1f / %.0f GB · %d%%", $0.ramUsedGB, $0.ramTotalGB, $0.ramPercent) }
-            metric("存储") { String(format: "%.0f / %.0f GB · %d%%", $0.diskUsedGB, $0.diskTotalGB, $0.diskPercent) }
-            metric("下载") { $0.menuBarDownloadFormatted }
-            metric("上传") { $0.menuBarUploadFormatted }
-            let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
-            for (index, title) in ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"].enumerated() {
-                let control = NSSwitch()
-                control.controlSize = .small
-                control.tag = index
-                control.isEnabled = !state.pendingSwitches.contains(index)
-                control.target = self
-                control.action = #selector(toggle(_:))
-                control.setAccessibilityLabel(title)
-                switches.append(control)
-                row(label(title, size: 13), control)
+            let top = NSStackView(views: [metricCard("CPU 负载", icon: "cpu", tint: .systemGreen, value: { String(format: "%.0f%%", $0.cpuUsage) }, percent: { $0.cpuUsage }, detail: { String(format: "%.1f%% 利用率", $0.cpuUsage) }), metricCard("GPU 负载", icon: "sparkles.tv", tint: .systemIndigo, value: { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "—" }, percent: { $0.gpuAvailable ? $0.gpuUsage : 0 }, detail: { $0.gpuAvailable ? "\($0.gpuCoreCount) 核心" : "暂无可用读数" })])
+            let bottom = NSStackView(views: [metricCard("RAM 内存", icon: "memorychip", tint: .systemRed, value: { "\($0.ramPercent)%" }, percent: { Double($0.ramPercent) }, detail: { String(format: "%.1f / %.0f GB", $0.ramUsedGB, $0.ramTotalGB) }), metricCard("SSD 存储", icon: "internaldrive", tint: .systemGreen, value: { "\($0.diskPercent)%" }, percent: { Double($0.diskPercent) }, detail: { String(format: "%.0f / %.0f GB", $0.diskUsedGB, $0.diskTotalGB) })])
+            for pair in [top, bottom] {
+                pair.orientation = .horizontal
+                pair.spacing = 8
+                pair.distribution = .fillEqually
+                content.addArrangedSubview(pair)
+                pair.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
             }
+            networkCard()
+            let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
+            separator.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+            for index in 0..<4 { switchCard(index) }
         }
         for (field, format) in values { field.stringValue = format(state.metrics) }
         let current = state.switches
         for (control, active) in zip(switches, [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]) { control.state = active ? .on : .off }
-        preferredContentSize = NSSize(width: 330, height: view.fittingSize.height)
+        for (bar, value) in progressValues { bar.percent = value(state.metrics) }
+        preferredContentSize = NSSize(width: 350, height: view.fittingSize.height)
     }
 
     private func metric(_ title: String, format: @escaping (SystemMetrics) -> String) {
@@ -166,6 +186,115 @@ final class NativePanelController: NSViewController {
         value.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         values.append((value, format))
         row(label(title, size: 13), value)
+    }
+    private func metricCard(_ title: String, icon: String, tint: NSColor, value: @escaping (SystemMetrics) -> String, percent: @escaping (SystemMetrics) -> Double, detail: @escaping (SystemMetrics) -> String) -> NSView {
+        let symbol = NSImageView(image: NSImage(systemSymbolName: icon, accessibilityDescription: title)!)
+        symbol.contentTintColor = tint
+        symbol.symbolConfiguration = .init(pointSize: 13, weight: .medium)
+        let name = label(title, size: 11, weight: .medium)
+        name.textColor = .secondaryLabelColor
+        let amount = label(value(state.metrics), size: 13, weight: .bold)
+        amount.font = .monospacedDigitSystemFont(ofSize: 13, weight: .bold)
+        values.append((amount, value))
+        let heading = NSStackView(views: [symbol, name, spacer(), amount])
+        heading.orientation = .horizontal
+        heading.spacing = 4
+        let bar = MetricBarView()
+        bar.tint = tint
+        bar.percent = percent(state.metrics)
+        bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        progressValues.append((bar, percent))
+        let caption = label(detail(state.metrics), size: 10)
+        caption.textColor = .secondaryLabelColor
+        values.append((caption, detail))
+        let body = NSStackView(views: [heading, bar, caption])
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 8
+        return card(body, height: 77)
+    }
+    private func networkCard() {
+        let down = networkValue("下载速率", icon: "arrow.down", tint: .systemBlue) { $0.menuBarDownloadFormatted }
+        let up = networkValue("上传速率", icon: "arrow.up", tint: .systemTeal) { $0.menuBarUploadFormatted }
+        let divider = NSBox(); divider.boxType = .separator
+        let pair = NSStackView(views: [down, divider, up])
+        pair.orientation = .horizontal
+        pair.distribution = .fillEqually
+        pair.spacing = 8
+        let box = card(pair, height: 54)
+        content.addArrangedSubview(box)
+        box.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+    }
+    private func networkValue(_ title: String, icon: String, tint: NSColor, format: @escaping (SystemMetrics) -> String) -> NSView {
+        let symbol = NSImageView(image: NSImage(systemSymbolName: icon, accessibilityDescription: title)!)
+        symbol.contentTintColor = tint
+        let heading = label(title, size: 10, weight: .medium)
+        heading.textColor = .secondaryLabelColor
+        let value = label(format(state.metrics), size: 12, weight: .semibold)
+        value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        values.append((value, format))
+        let words = NSStackView(views: [heading, value])
+        words.orientation = .vertical
+        words.alignment = .leading
+        words.spacing = 2
+        let row = NSStackView(views: [symbol, words])
+        row.orientation = .horizontal
+        row.spacing = 8
+        return row
+    }
+    private func switchCard(_ index: Int) {
+        let titles = ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"]
+        let icons = ["cup.and.saucer.fill", "menubar.dock.rectangle", "eye.fill", "sun.max.fill"]
+        let tints: [NSColor] = [.systemOrange, .systemBlue, .systemPurple, .systemIndigo]
+        let current = state.switches
+        let states = [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]
+        let symbol = NSImageView(image: NSImage(systemSymbolName: icons[index], accessibilityDescription: titles[index])!)
+        symbol.contentTintColor = tints[index]
+        symbol.symbolConfiguration = .init(pointSize: 15, weight: .medium)
+        let title = label(titles[index], size: 12, weight: .semibold)
+        let subtitle = label(activeDescription(index, states[index]), size: 10)
+        subtitle.textColor = .secondaryLabelColor
+        switchDescriptions.append(subtitle)
+        let words = NSStackView(views: [title, subtitle])
+        words.orientation = .vertical
+        words.alignment = .leading
+        words.spacing = 2
+        let control = NSSwitch()
+        control.controlSize = .small
+        control.tag = index
+        control.isEnabled = !state.pendingSwitches.contains(index)
+        control.target = self
+        control.action = #selector(toggle(_:))
+        control.setAccessibilityLabel(titles[index])
+        switches.append(control)
+        let body = NSStackView(views: [symbol, words, spacer(), control])
+        body.orientation = .horizontal
+        body.spacing = 10
+        let box = card(body, height: 48)
+        content.addArrangedSubview(box)
+        box.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+    }
+    private func activeDescription(_ index: Int, _ active: Bool) -> String {
+        let descriptions = [
+            ("屏幕保持唤醒", "遵循系统休眠设置"),
+            ("桌面图标已隐藏", "桌面图标正常显示"),
+            ("隐藏文件已显示", "隐藏文件保持收起"),
+            ("当前为深色外观", "当前为浅色外观")
+        ]
+        return active ? descriptions[index].0 : descriptions[index].1
+    }
+    private func card(_ body: NSView, height: CGFloat) -> NSView {
+        let box = NSBox()
+        box.boxType = .custom
+        box.cornerRadius = 12
+        box.fillColor = .controlBackgroundColor
+        box.borderColor = .separatorColor
+        box.borderWidth = 0.5
+        box.contentViewMargins = NSSize(width: 10, height: 8)
+        box.contentView = body
+        body.widthAnchor.constraint(equalTo: box.widthAnchor, constant: -20).isActive = true
+        box.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return box
     }
     private func row(_ left: NSView, _ right: NSView) {
         let row = NSStackView(views: [left, spacer(), right])
@@ -190,6 +319,12 @@ final class NativePanelController: NSViewController {
     private func button(_ title: String, action: Selector) -> NSButton {
         let control = NSButton(title: title, target: self, action: action)
         control.controlSize = .small
+        return control
+    }
+    private func iconButton(_ symbol: String, hint: String, action: Selector) -> NSButton {
+        let control = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: hint)!, target: self, action: action)
+        control.isBordered = false
+        control.toolTip = hint
         return control
     }
     @objc private func selectTab() { state.selectedTab = tabNames[tabs.selectedSegment] }
