@@ -12,7 +12,7 @@
    - 所有硬件监控必须通过 POSIX、Mach 内核（`host_processor_info`, `host_statistics64`）及 IOKit（`IOAccelerator`）直接采样；
    - 开关控制必须直接通过 IOKit 电源断言（`IOPMAssertion`）与 macOS defaults API 驱动。
 2. **内存与功耗门禁**：
-   - 生产环境物理内存驻留集（Physical Footprint）必须严格控制在 **≤ 30 MB**，验收时同时检查实时值与进程峰值；
+   - 生产环境物理内存驻留集（Physical Footprint）必须严格控制在 **≤ 50 MB**，验收时同时检查实时值与进程峰值，保留完整的 Stats 风格详情面板；
    - 面板折叠状态下，CPU 与 GPU 高阶采样必须彻底休眠，后台空载 CPU 占用 **≤ 0.1%**，按连续监测间隔的内核累计 CPU 时间验证。
 
 ---
@@ -64,6 +64,8 @@ swift test
 # 2. 自动化打包与签名验证门禁
 ./scripts/build_app.sh
 ```
+
+签名构建完成后，对本次 `.app` 执行 `scripts/verify_popover_memory.py`，逐页检查 CPU、GPU、内存、磁盘与网络弹窗，并以进程峰值验证上述物理内存上限。此门禁失败不得发布。
 
 ### 质量验收标准：
 1. **测试用例 100% 绿色**：涵盖指标格式化、边界值、轻量/全量采样调度、常亮断言生命周期管理；

@@ -56,13 +56,16 @@ final class MetricsFormattingTests: XCTestCase {
         let originalMetrics = state.metrics
         let originalSwitches = state.switches
         let originalTab = state.selectedTab
+        let originalVersion = UpdateManager.shared.currentVersion
         defer {
             state.updateForSnapshot(metrics: originalMetrics, switches: originalSwitches)
             state.selectedTab = originalTab
+            UpdateManager.shared.setVersionForSnapshot(version: originalVersion)
         }
+        UpdateManager.shared.setVersionForSnapshot(version: "1.0.2")
         state.showAbout = false
         for dark in [false, true] {
-            for tab in ["overview", "cpu", "gpu", "ram", "disk"] {
+            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network"] {
                 state.selectedTab = tab
                 if tab == "disk" {
                     _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab)
@@ -74,7 +77,7 @@ final class MetricsFormattingTests: XCTestCase {
                 hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 let fit = hosting.fittingSize
                 XCTAssertGreaterThan(fit.height, 100)
-                hosting.frame = CGRect(x: 0, y: 0, width: 330, height: fit.height)
+                hosting.frame = CGRect(x: 0, y: 0, width: 294, height: fit.height)
                 let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
                 window.appearance = hosting.appearance
                 window.contentView = hosting
@@ -94,15 +97,31 @@ final class MetricsFormattingTests: XCTestCase {
     @MainActor
     func testNativePanelTracksExternalTabSelection() {
         let state = AppState.shared
+        let originalTab = state.selectedTab
+        defer { state.selectedTab = originalTab }
         state.selectedTab = "overview"
         let controller = NativePanelController()
         let root = controller.view
+        let overviewHeight = controller.preferredContentSize.height
         state.selectedTab = "ram"
         func strings(_ view: NSView) -> [String] {
-            (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap { strings($0) }
+            let own = (view as? NSTextField).map { [$0.stringValue] } ?? (view.accessibilityLabel().map { [$0] } ?? [])
+            return own + view.subviews.flatMap { strings($0) }
         }
-        XCTAssertTrue(strings(root).contains("已用 / 总内存"))
+        XCTAssertTrue(strings(root).contains { $0.contains("已用 / 总内存") })
         XCTAssertFalse(strings(root).contains("保持常亮"))
+        XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, overviewHeight)
+        for tab in ["cpu", "gpu", "disk", "network"] {
+            state.selectedTab = tab
+            // AppKit font metrics differ by macOS version; allow the panel to grow
+            // while ensuring every detail page and the footer still fit.
+            XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, overviewHeight)
+            XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1,
+                                     "\(tab) 详情和底部操作栏必须完整容纳在弹出面板内")
+            if tab == "disk" {
+                XCTAssertTrue(strings(root).contains { $0.contains("共享容器已用") })
+            }
+        }
     }
 
     @MainActor
@@ -149,7 +168,7 @@ final class MetricsFormattingTests: XCTestCase {
         manager.setVersionForSnapshot(status: .available(version: "1.0.2", downloadURL: URL(string: "https://example.com/test.dmg")!))
         XCTAssertTrue(buttons.contains { $0.title == "下载更新" })
         manager.setVersionForSnapshot(status: .upToDate)
-        XCTAssertTrue(fields.contains { !$0.isHidden && $0.stringValue == "当前已是最新版本。" })
+        XCTAssertTrue(buttons.contains { $0.title == "已是最新" })
     }
 
 }

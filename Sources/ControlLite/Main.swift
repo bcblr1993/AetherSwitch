@@ -1,12 +1,57 @@
 import Cocoa
 import Combine
 
+/// 双行指标直接绘制在原生状态栏按钮内，保持截图中的紧凑列宽与彩色数值。
+private final class MenuBarStatusView: NSView {
+    private static let titleFont = NSFont.systemFont(ofSize: 8, weight: .medium)
+    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+    private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+    private static let centerStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()
+    private static let leadingStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .left; return style }()
+    var metrics = SystemMetrics() { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
+        let foreground = NSColor.labelColor
+        let columns: [(String, String, Double?)] = [
+            ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage),
+            ("GPU", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "—", metrics.gpuAvailable ? metrics.gpuUsage : nil),
+            ("RAM", "\(metrics.ramPercent)%", Double(metrics.ramPercent)),
+            ("SSD", "\(metrics.diskPercent)%", Double(metrics.diskPercent))
+        ]
+        let top = (bounds.height - 23) / 2
+        for (index, column) in columns.enumerated() {
+            let x = CGFloat(index) * 48
+            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: foreground, .paragraphStyle: Self.centerStyle])
+            let color: NSColor = column.2.map { $0 >= 80 ? .systemRed : ($0 >= 70 ? .systemOrange : .systemBlue) } ?? .secondaryLabelColor
+            (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
+        }
+        let rateX: CGFloat = 193
+        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemRed])
+        (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemBlue])
+        (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+        let iconX: CGFloat = 299
+        foreground.setStroke()
+        foreground.setFill()
+        for (offset, knob) in [(CGFloat(3), CGFloat(9)), (CGFloat(11), CGFloat(17)), (CGFloat(19), CGFloat(7))] {
+            let y = top + offset
+            let line = NSBezierPath(); line.move(to: NSPoint(x: iconX, y: y)); line.line(to: NSPoint(x: iconX + 22, y: y)); line.lineWidth = 1.5; line.stroke()
+            NSBezierPath(ovalIn: NSRect(x: iconX + knob - 2, y: y - 2, width: 4, height: 4)).fill()
+        }
+        }
+    }
+}
+
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var cancellables = Set<AnyCancellable>()
+    private var menuBarStatusView: MenuBarStatusView?
+    private var appliedMenuBarStyle: MenuBarStyle?
 
     static func main() {
         if CommandLine.arguments.contains("--diagnose") {
@@ -29,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.animates = true
+        popover.animates = false
         popover.delegate = self
         self.popover = popover
 
@@ -48,14 +93,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 监听系统指标与样式变更，自适应动态调整状态栏宽度
         AppState.shared.$metrics
-            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemWidth()
             }
             .store(in: &cancellables)
 
         AppState.shared.$menuBarStyle
-            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateStatusItemWidth()
             }
@@ -133,13 +176,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        if CommandLine.arguments.contains("--open") {
+        if CommandLine.arguments.contains("--acceptance-cycle") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if let initialTab = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_INITIAL_TAB"] {
+                    AppState.shared.selectedTab = initialTab
+                }
+                self.togglePopover()
+                self.runAcceptanceCycle(at: 0)
+            }
+        } else if CommandLine.arguments.contains("--open") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 Task { @MainActor in
                     self.togglePopover()
                 }
             }
         }
+    }
+
+    /// Release-gate UI exercise: change tabs on the app's own main thread, without
+    /// activating another app and accidentally dismissing the transient popover.
+    private func runAcceptanceCycle(at index: Int) {
+        let sequence = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_TABS"]?
+            .split(separator: ",").map(String.init)
+            ?? ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
+        guard index < sequence.count else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            let tab = sequence[index]
+            if AppState.shared.selectedTab != tab {
+                AppState.shared.selectedTab = tab
+            }
+            let record: [String: Any] = [
+                "tab": tab,
+                "popoverShown": self.popover?.isShown == true,
+                "height": self.popover?.contentSize.height ?? 0,
+                "footprintMB": self.physicalFootprintMB() ?? -1,
+                "timestamp": Date().timeIntervalSince1970
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
+               let line = String(data: data, encoding: .utf8) {
+                let path = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_LOG"] ?? "/tmp/AetherSwitch-acceptance.jsonl"
+                if index == 0 { try? Data().write(to: URL(fileURLWithPath: path), options: .atomic) }
+                if let handle = FileHandle(forWritingAtPath: path) {
+                    defer { try? handle.close() }
+                    _ = try? handle.seekToEnd()
+                    try? handle.write(contentsOf: Data((line + "\n").utf8))
+                }
+            }
+            self.runAcceptanceCycle(at: index + 1)
+        }
+    }
+
+    private func physicalFootprintMB() -> Double? {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : nil
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -153,23 +249,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard let button = statusItem.button else { return }
         let state = AppState.shared
         let m = state.metrics
+        let styleChanged = appliedMenuBarStyle != state.menuBarStyle
+        if !styleChanged && state.menuBarStyle == .iconOnly { return }
         switch state.menuBarStyle {
         case .statsColumns:
-            let gpu = m.gpuAvailable ? String(format: "%.0f%%", m.gpuUsage) : "—"
-            button.title = String(format: "CPU %.0f%%  GPU %@  RAM %d%%  SSD %d%%  ↓ %@  ↑ %@", m.cpuUsage, gpu, m.ramPercent, m.diskPercent, m.menuBarDownloadFormatted, m.menuBarUploadFormatted)
+            if styleChanged {
+                button.title = ""
+                button.image = nil
+                statusItem.length = 324
+            }
+            let display = menuBarStatusView ?? MenuBarStatusView(frame: button.bounds)
+            if display.superview == nil {
+                display.autoresizingMask = [.width, .height]
+                button.addSubview(display)
+            }
+            menuBarStatusView = display
+            if styleChanged { display.frame = button.bounds }
+            display.metrics = m
         case .compact:
+            menuBarStatusView?.removeFromSuperview()
             button.title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"
         case .iconOnly:
+            menuBarStatusView?.removeFromSuperview()
             button.title = ""
         case .iconAndSpeed:
+            menuBarStatusView?.removeFromSuperview()
             button.title = "↓ \(m.menuBarDownloadFormatted)  ↑ \(m.menuBarUploadFormatted)"
         case .iconAndRAM:
+            menuBarStatusView?.removeFromSuperview()
             button.title = "\(m.ramPercent)%"
         }
-        button.image = state.menuBarStyle == .statsColumns ? nil : NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
-        button.imagePosition = .imageLeading
-        button.toolTip = "AetherSwitch · 点击查看系统状态"
-        statusItem.length = NSStatusItem.variableLength
+        if styleChanged && state.menuBarStyle != .statsColumns {
+            button.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
+            statusItem.length = NSStatusItem.variableLength
+        }
+        if styleChanged {
+            button.imagePosition = .imageLeading
+            button.toolTip = "AetherSwitch · 点击查看系统状态"
+            appliedMenuBarStyle = state.menuBarStyle
+        }
 
     }
 
@@ -193,10 +311,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             AppState.shared.isPopoverOpen = false
         } else {
             let popover = NSPopover()
-            popover.behavior = .transient
+            popover.behavior = CommandLine.arguments.contains("--acceptance-cycle") ? .applicationDefined : .transient
+            popover.animates = false
             popover.delegate = self
             self.popover = popover
             let controller = NativePanelController()
+            controller.onPreferredSizeChange = { [weak popover] size in
+                popover?.contentSize = size
+            }
             _ = controller.view
             popover.contentViewController = controller
             popover.contentSize = controller.preferredContentSize
