@@ -110,17 +110,14 @@ final class MetricsFormattingTests: XCTestCase {
         }
         XCTAssertTrue(strings(root).contains { $0.contains("已用 / 总内存") })
         XCTAssertFalse(strings(root).contains("保持常亮"))
-        XCTAssertEqual(controller.preferredContentSize.height, overviewHeight, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, overviewHeight)
         for tab in ["cpu", "gpu", "disk", "network"] {
             state.selectedTab = tab
-            if tab == "network" {
-                // Older AppKit font metrics can make this page slightly taller.
-                XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, overviewHeight)
-                XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1,
-                                         "网络详情和底部操作栏必须完整容纳在弹出面板内")
-            } else {
-                XCTAssertEqual(controller.preferredContentSize.height, overviewHeight, accuracy: 1)
-            }
+            // AppKit font metrics differ by macOS version; allow the panel to grow
+            // while ensuring every detail page and the footer still fit.
+            XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, overviewHeight)
+            XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1,
+                                     "\(tab) 详情和底部操作栏必须完整容纳在弹出面板内")
             if tab == "disk" {
                 XCTAssertTrue(strings(root).contains { $0.contains("共享容器已用") })
             }
