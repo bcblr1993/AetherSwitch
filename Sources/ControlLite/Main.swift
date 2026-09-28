@@ -298,7 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             AppState.shared.isPopoverOpen = false
         } else {
             let popover = NSPopover()
-            popover.behavior = .transient
+            popover.behavior = CommandLine.arguments.contains("--acceptance-cycle") ? .applicationDefined : .transient
             popover.animates = false
             popover.delegate = self
             self.popover = popover
