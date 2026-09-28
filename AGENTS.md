@@ -81,3 +81,28 @@ swift test
    - 启用 Hardened Runtime（`--options runtime`）。
 3. **安全分发校验**：
    - 每次打包必须同时产出 `.app`、`.tar.gz` 独立包以及 `SHA256SUMS.txt` 校验清单。
+
+---
+
+## 🌐 六、官网同步 (aethernative.com)
+
+1. **发版自动同步**：在 GitHub 发布（或编辑）Release 后，`.github/workflows/aethernative-sync.yml` 会通知 `bcblr1993/aethernative-site` 同步这个版本（版本号、日期、安装包地址、SHA-256），构建校验通过后自动部署。
+   - 需要仓库 Secret `AETHERNATIVE_SITE_TOKEN`（只对 `aethernative-site` 有 Contents 读写权限的 Fine-grained token，各软件仓库共用）。
+   - 也可以在 Actions →「同步到官网」手动运行，填入已有的 Release 标签重新同步。
+2. **Release 正文里的官网信息区块**（写在 HTML 注释里，GitHub 页面不显示）：
+
+   ```markdown
+   <!-- aethernative
+   summary:
+     zh: 一句话说明
+     en: One-line summary
+   notes:                       # 可选，版本详情页的分段说明
+     - title: { zh: 修复, en: Fixes }
+       items:
+         - { zh: ..., en: ... }
+   # build: 2026100101          # 可选；识别不到构建号时再写
+   -->
+   ```
+
+   没写区块时仍会同步版本和下载地址，简介暂用 Release 标题。
+3. **软件介绍**（`website_content/apps/aetherswitch/` 下的 `app.yaml`、`docs/`、`media/`）仍用 `./scripts/sync_to_website.sh` 手动同步；版本记录以官网仓库为准，不再手改 `releases.yaml`。
