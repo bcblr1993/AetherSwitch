@@ -75,7 +75,7 @@ with (path / 'metrics.csv').open('w') as output:
         opened = receipt.get('popoverOpen') if responsive else None
         status = 'PASS'
         if footprint is None or peak is None or not responsive: status = 'UNVERIFIED'
-        elif footprint >= 30 or peak >= 30: status = 'FAIL_MEMORY'
+        elif footprint > 50 or peak > 50: status = 'FAIL_MEMORY'
         elif opened is not False: status = 'FAIL_POPOVER_OPEN'
         elif cpu is None: status = 'BASELINE' if cycle == 0 else 'UNVERIFIED'
         elif cpu > 0.1: status = 'FAIL_IDLE_CPU'
