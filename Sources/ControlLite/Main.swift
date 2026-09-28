@@ -8,7 +8,17 @@ private final class MenuBarStatusView: NSView {
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
     private static let centerStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()
     private static let leadingStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .left; return style }()
-    var metrics = SystemMetrics() { didSet { needsDisplay = true } }
+    var metrics = SystemMetrics() {
+        didSet {
+            if oldValue.cpuUsage != metrics.cpuUsage { setNeedsDisplay(NSRect(x: 0, y: 0, width: 48, height: bounds.height)) }
+            if oldValue.gpuUsage != metrics.gpuUsage || oldValue.gpuAvailable != metrics.gpuAvailable { setNeedsDisplay(NSRect(x: 48, y: 0, width: 48, height: bounds.height)) }
+            if oldValue.ramPercent != metrics.ramPercent { setNeedsDisplay(NSRect(x: 96, y: 0, width: 48, height: bounds.height)) }
+            if oldValue.diskPercent != metrics.diskPercent { setNeedsDisplay(NSRect(x: 144, y: 0, width: 48, height: bounds.height)) }
+            if oldValue.menuBarUploadFormatted != metrics.menuBarUploadFormatted || oldValue.menuBarDownloadFormatted != metrics.menuBarDownloadFormatted {
+                setNeedsDisplay(NSRect(x: 192, y: 0, width: 103, height: bounds.height))
+            }
+        }
+    }
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
@@ -23,22 +33,27 @@ private final class MenuBarStatusView: NSView {
         let top = (bounds.height - 23) / 2
         for (index, column) in columns.enumerated() {
             let x = CGFloat(index) * 48
+            guard dirtyRect.intersects(NSRect(x: x, y: 0, width: 48, height: bounds.height)) else { continue }
             (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: foreground, .paragraphStyle: Self.centerStyle])
             let color: NSColor = column.2.map { $0 >= 80 ? .systemRed : ($0 >= 70 ? .systemOrange : .systemBlue) } ?? .secondaryLabelColor
             (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
         }
         let rateX: CGFloat = 193
-        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemRed])
-        (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
-        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemBlue])
-        (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+        if dirtyRect.intersects(NSRect(x: 192, y: 0, width: 103, height: bounds.height)) {
+            ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemRed])
+            (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+            ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemBlue])
+            (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+        }
         let iconX: CGFloat = 299
-        foreground.setStroke()
-        foreground.setFill()
-        for (offset, knob) in [(CGFloat(3), CGFloat(9)), (CGFloat(11), CGFloat(17)), (CGFloat(19), CGFloat(7))] {
-            let y = top + offset
-            let line = NSBezierPath(); line.move(to: NSPoint(x: iconX, y: y)); line.line(to: NSPoint(x: iconX + 22, y: y)); line.lineWidth = 1.5; line.stroke()
-            NSBezierPath(ovalIn: NSRect(x: iconX + knob - 2, y: y - 2, width: 4, height: 4)).fill()
+        if dirtyRect.intersects(NSRect(x: 299, y: 0, width: 25, height: bounds.height)) {
+            foreground.setStroke()
+            foreground.setFill()
+            for (offset, knob) in [(CGFloat(3), CGFloat(9)), (CGFloat(11), CGFloat(17)), (CGFloat(19), CGFloat(7))] {
+                let y = top + offset
+                let line = NSBezierPath(); line.move(to: NSPoint(x: iconX, y: y)); line.line(to: NSPoint(x: iconX + 22, y: y)); line.lineWidth = 1.5; line.stroke()
+                NSBezierPath(ovalIn: NSRect(x: iconX + knob - 2, y: y - 2, width: 4, height: 4)).fill()
+            }
         }
         }
     }
