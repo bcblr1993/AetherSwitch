@@ -65,7 +65,7 @@ final class MetricsFormattingTests: XCTestCase {
         UpdateManager.shared.setVersionForSnapshot(version: "1.0.2")
         state.showAbout = false
         for dark in [false, true] {
-            for tab in ["overview", "cpu", "gpu", "ram", "disk"] {
+            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network"] {
                 state.selectedTab = tab
                 if tab == "disk" {
                     _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab)

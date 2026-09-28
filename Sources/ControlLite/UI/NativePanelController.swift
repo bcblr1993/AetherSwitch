@@ -5,6 +5,7 @@ private class DashboardCardView: NSView {
     private static let fonts: [CGFloat: NSFont] = [10: .systemFont(ofSize: 10), 11: .systemFont(ofSize: 11, weight: .medium), 12: .systemFont(ofSize: 12, weight: .semibold), 13: .systemFont(ofSize: 13, weight: .bold)]
     private static let leftStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .left; return value }()
     private static let rightStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .right; return value }()
+    private static let centerStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .center; return value }()
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
@@ -15,7 +16,7 @@ private class DashboardCardView: NSView {
         shape.stroke()
     }
     func text(_ value: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) {
-        (value as NSString).draw(in: rect, withAttributes: [.font: Self.fonts[size] ?? NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color, .paragraphStyle: alignment == .right ? Self.rightStyle : Self.leftStyle])
+        (value as NSString).draw(in: rect, withAttributes: [.font: Self.fonts[size] ?? NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color, .paragraphStyle: alignment == .right ? Self.rightStyle : alignment == .center ? Self.centerStyle : Self.leftStyle])
     }
     func icon(_ kind: Int, in rect: NSRect, tint: NSColor) {
         tint.setStroke(); tint.setFill()
@@ -132,13 +133,109 @@ private final class DashboardSwitchView: DashboardCardView {
     }
 }
 
+/// A single drawing surface keeps the live charts inexpensive while the popover is open.
+private final class DetailVisualView: DashboardCardView {
+    let kind: String
+    private var downloadHistory: [Double] = []
+    private var uploadHistory: [Double] = []
+    var metrics: SystemMetrics { didSet {
+        if kind == "network" {
+            downloadHistory.append(metrics.netDownloadBytesSec)
+            uploadHistory.append(metrics.netUploadBytesSec)
+            if downloadHistory.count > 60 { downloadHistory.removeFirst() }
+            if uploadHistory.count > 60 { uploadHistory.removeFirst() }
+        }
+        needsDisplay = true
+    } }
+    init(kind: String, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let width = bounds.width
+        switch kind {
+        case "cpu":
+            trio([(metrics.cpuUserUsage, "用户"), (metrics.cpuUsage, "总负载"), (metrics.cpuSystemUsage, "系统")])
+            history(metrics.cpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
+        case "gpu":
+            if metrics.gpuAvailable {
+                trio([(metrics.gpuRenderUsage, "渲染"), (metrics.gpuUsage, "GPU"), (metrics.gpuTilerUsage, "Tiler")])
+            } else {
+                text("GPU 读数不可用", in: NSRect(x: 12, y: 37, width: width - 24, height: 25), size: 13, color: .secondaryLabelColor, alignment: .center)
+            }
+            history(metrics.gpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
+        case "ram":
+            ring(center: NSPoint(x: width / 2, y: 48), radius: 31, percent: Double(metrics.ramPercent), tint: .systemBlue)
+            text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 38, width: 60, height: 24), size: 18, weight: .semibold, alignment: .center)
+            text("内存压力 · \(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: .secondaryLabelColor, alignment: .center)
+            history(metrics.ramHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: 45), tint: .systemBlue, maximum: 100)
+        case "disk":
+            text("读取  \(metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : "—")", in: NSRect(x: 12, y: 12, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemBlue)
+            text("写入  \(metrics.diskIOAvailable ? metrics.diskWriteSpeedFormatted : "—")", in: NSRect(x: 12, y: 34, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemRed)
+            let maxRate = max(1, (metrics.diskReadHistory + metrics.diskWriteHistory).max() ?? 1)
+            history(metrics.diskReadHistory, in: NSRect(x: 12, y: 65, width: width - 24, height: 42), tint: .systemBlue, maximum: maxRate)
+            history(metrics.diskWriteHistory, in: NSRect(x: 12, y: 65, width: width - 24, height: 42), tint: .systemRed, maximum: maxRate)
+            bar(percent: Double(metrics.diskPercent), in: NSRect(x: 12, y: 123, width: width - 24, height: 8), tint: .systemBlue)
+            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: 138, width: width - 24, height: 16), size: 10, color: .secondaryLabelColor)
+        case "network":
+            text("↓ \(metrics.downloadSpeedFormatted)/s", in: NSRect(x: 12, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemBlue)
+            text("↑ \(metrics.uploadSpeedFormatted)/s", in: NSRect(x: width / 2, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemRed)
+            text("下载", in: NSRect(x: 12, y: 50, width: width / 2 - 12, height: 16), size: 10, color: .secondaryLabelColor)
+            text("上传", in: NSRect(x: width / 2, y: 50, width: width / 2 - 12, height: 16), size: 10, color: .secondaryLabelColor)
+            let maxRate = max(1, (downloadHistory + uploadHistory).max() ?? 1)
+            history(downloadHistory, in: NSRect(x: 12, y: 87, width: width - 24, height: 70), tint: .systemBlue, maximum: maxRate)
+            history(uploadHistory, in: NSRect(x: 12, y: 87, width: width - 24, height: 70), tint: .systemRed, maximum: maxRate)
+        default: break
+        }
+        if kind == "network" {
+            text("传输历史", in: NSRect(x: 12, y: 74, width: width - 24, height: 14), size: 10, color: .secondaryLabelColor)
+        } else if kind != "disk" {
+            text("负载历史", in: NSRect(x: 12, y: 101, width: width - 24, height: 14), size: 10, color: .secondaryLabelColor)
+        }
+    }
+
+    private func trio(_ values: [(Double, String)]) {
+        let centers: [CGFloat] = [49, bounds.width / 2, bounds.width - 49]
+        for index in 0..<3 {
+            let radius: CGFloat = index == 1 ? 27 : 22
+            ring(center: NSPoint(x: centers[index], y: 43), radius: radius, percent: values[index].0, tint: .systemBlue)
+            text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 34, y: 34, width: 68, height: 20), size: index == 1 ? 13 : 11, weight: .semibold, alignment: .center)
+            text(values[index].1, in: NSRect(x: centers[index] - 38, y: 77, width: 76, height: 15), size: 10, color: .secondaryLabelColor, alignment: .center)
+        }
+    }
+
+    private func ring(center: NSPoint, radius: CGFloat, percent: Double, tint: NSColor) {
+        let track = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        track.lineWidth = 8; track.lineCapStyle = .round; NSColor.separatorColor.setStroke(); track.stroke()
+        let fill = NSBezierPath(); fill.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - CGFloat(min(100, max(0, percent))) * 3.6, clockwise: true)
+        fill.lineWidth = 8; fill.lineCapStyle = .round; tint.setStroke(); fill.stroke()
+    }
+
+    private func history(_ samples: [Double], in rect: NSRect, tint: NSColor, maximum: Double) {
+        NSColor.separatorColor.withAlphaComponent(0.12).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+        guard samples.count > 1 else { return }
+        let path = NSBezierPath()
+        for (index, sample) in samples.enumerated() {
+            let point = NSPoint(x: rect.minX + rect.width * CGFloat(index) / CGFloat(samples.count - 1), y: rect.maxY - rect.height * CGFloat(min(1, max(0, sample / maximum))))
+            if index == 0 { path.move(to: point) } else { path.line(to: point) }
+        }
+        path.lineWidth = 1.5; tint.setStroke(); path.stroke()
+    }
+
+    private func bar(percent: Double, in rect: NSRect, tint: NSColor) {
+        NSColor.separatorColor.setFill(); NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        tint.setFill(); NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY, width: rect.width * CGFloat(min(100, max(0, percent))) / 100, height: rect.height), xRadius: 4, yRadius: 4).fill()
+    }
+}
+
 /// 系统原生面板；复用现有状态与采样引擎，避免常驻 SwiftUI 渲染树。
 @MainActor
 final class NativePanelController: NSViewController {
     var onPreferredSizeChange: ((NSSize) -> Void)?
     private let state = AppState.shared
     private let content = NSStackView()
-    private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘", "网络"], trackingMode: .selectOne, target: nil, action: nil)
     private var subscription: AnyCancellable?
     private var tabSubscription: AnyCancellable?
     private var errorSubscription: AnyCancellable?
@@ -152,7 +249,9 @@ final class NativePanelController: NSViewController {
     private var networkTile: DashboardNetworkView?
     private var switches: [NSSwitch] = []
     private var switchTiles: [DashboardSwitchView] = []
-    private let tabNames = ["overview", "cpu", "gpu", "ram", "disk"]
+    private var overviewComponents: [NSView] = []
+    private var detailVisual: DetailVisualView?
+    private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network"]
 
     override func loadView() {
         let root = NSStackView()
@@ -230,6 +329,7 @@ final class NativePanelController: NSViewController {
             for (field, format) in self.values { field.stringValue = format(m) }
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
+            self.detailVisual?.metrics = m
         }
         switchSubscription = state.$switches.sink { [weak self] s in
             guard let self else { return }
@@ -246,15 +346,13 @@ final class NativePanelController: NSViewController {
         autoreleasepool {
             content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
             values.removeAll()
-            metricTiles.removeAll()
-            networkTile = nil
-            switches.removeAll()
-            switchTiles.removeAll()
+            detailVisual = nil
         }
         CATransaction.flush()
         let tab = requestedTab ?? state.selectedTab
         switch tab {
         case "cpu":
+            visual("cpu")
             metric("CPU 利用率") { String(format: "%.1f%%", $0.cpuUsage) }
             metric("用户") { String(format: "%.1f%%", $0.cpuUserUsage) }
             metric("系统") { String(format: "%.1f%%", $0.cpuSystemUsage) }
@@ -263,6 +361,7 @@ final class NativePanelController: NSViewController {
             metric("运行时间") { $0.uptimeString }
             note("进程 CPU 百分比可跨多个核心，系统利用率按全部核心归一化。")
         case "gpu":
+            visual("gpu")
             metric("型号") { $0.gpuModelName }
             metric("核心数") { $0.gpuCoreCount > 0 ? "\($0.gpuCoreCount)" : "不可用" }
             metric("设备利用率") {  $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuUsage) : "不可用" }
@@ -270,6 +369,7 @@ final class NativePanelController: NSViewController {
             metric("Tiler 利用率") { $0.gpuAvailable ? String(format: "%.0f%%", $0.gpuTilerUsage) : "不可用" }
             note("显示系统提供的瞬时利用率；无可用读数时显示不可用。")
         case "ram":
+            visual("ram")
             metric("已用 / 总内存") { String(format: "%.2f / %.0f GB", $0.ramUsedGB, $0.ramTotalGB) }
             metric("应用内存") { String(format: "%.2f GB", $0.ramAppGB) }
             metric("联结内存") { String(format: "%.2f GB", $0.ramWiredGB) }
@@ -279,13 +379,23 @@ final class NativePanelController: NSViewController {
             metric("内存压力") { $0.ramPressureLevel }
             note("可回收文件缓存不计入应用内存；内存压力采用系统等级。")
         case "disk":
+            visual("disk")
             metric("系统卷已用") { String(format: "%.1f GB · %d%%", $0.diskUsedGB, $0.diskPercent) }
             metric("系统卷总容量") { String(format: "%.1f GB", $0.diskTotalGB) }
             metric("可用空间") { String(format: "%.1f GB", $0.diskFreeGB) }
             metric("所有物理磁盘读取") { $0.diskIOAvailable ? $0.diskReadSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
             metric("所有物理磁盘写入") { $0.diskIOAvailable ? $0.diskWriteSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
             note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
+        case "network":
+            visual("network")
+            metric("下载速率") { "\($0.downloadSpeedFormatted)/s" }
+            metric("上传速率") { "\($0.uploadSpeedFormatted)/s" }
+            note("速率来自系统网络接口计数器，每秒刷新。")
         default:
+            if !overviewComponents.isEmpty {
+                for component in overviewComponents { content.addArrangedSubview(component) }
+                break
+            }
             metricTiles = (0..<4).map { DashboardMetricView(kind: $0, metrics: state.metrics) }
             let top = NSStackView(views: [metricTiles[0], metricTiles[1]])
             let bottom = NSStackView(views: [metricTiles[2], metricTiles[3]])
@@ -322,6 +432,7 @@ final class NativePanelController: NSViewController {
                 tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
                 tile.heightAnchor.constraint(equalToConstant: 40).isActive = true
             }
+            overviewComponents = content.arrangedSubviews
         }
         for (field, format) in values { field.stringValue = format(state.metrics) }
         let current = state.switches
@@ -347,6 +458,13 @@ final class NativePanelController: NSViewController {
         value.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         values.append((value, format))
         row(label(title, size: 13), value)
+    }
+    private func visual(_ kind: String) {
+        let panel = DetailVisualView(kind: kind, metrics: state.metrics)
+        detailVisual = panel
+        content.addArrangedSubview(panel)
+        panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        panel.heightAnchor.constraint(equalToConstant: 170).isActive = true
     }
     private func row(_ left: NSView, _ right: NSView) {
         let row = NSStackView(views: [left, spacer(), right])
