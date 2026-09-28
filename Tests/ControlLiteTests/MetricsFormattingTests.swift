@@ -56,10 +56,13 @@ final class MetricsFormattingTests: XCTestCase {
         let originalMetrics = state.metrics
         let originalSwitches = state.switches
         let originalTab = state.selectedTab
+        let originalVersion = UpdateManager.shared.currentVersion
         defer {
             state.updateForSnapshot(metrics: originalMetrics, switches: originalSwitches)
             state.selectedTab = originalTab
+            UpdateManager.shared.setVersionForSnapshot(version: originalVersion)
         }
+        UpdateManager.shared.setVersionForSnapshot(version: "1.0.2")
         state.showAbout = false
         for dark in [false, true] {
             for tab in ["overview", "cpu", "gpu", "ram", "disk"] {
@@ -94,15 +97,19 @@ final class MetricsFormattingTests: XCTestCase {
     @MainActor
     func testNativePanelTracksExternalTabSelection() {
         let state = AppState.shared
+        let originalTab = state.selectedTab
+        defer { state.selectedTab = originalTab }
         state.selectedTab = "overview"
         let controller = NativePanelController()
         let root = controller.view
+        let overviewHeight = controller.preferredContentSize.height
         state.selectedTab = "ram"
         func strings(_ view: NSView) -> [String] {
             (view as? NSTextField).map { [$0.stringValue] } ?? view.subviews.flatMap { strings($0) }
         }
         XCTAssertTrue(strings(root).contains("已用 / 总内存"))
         XCTAssertFalse(strings(root).contains("保持常亮"))
+        XCTAssertLessThan(controller.preferredContentSize.height, overviewHeight)
     }
 
     @MainActor

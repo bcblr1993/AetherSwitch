@@ -14,9 +14,21 @@ private final class MetricBarView: NSView {
     }
 }
 
+private final class DashboardCardView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
+        NSColor.controlBackgroundColor.setFill()
+        shape.fill()
+        NSColor.separatorColor.withAlphaComponent(0.22).setStroke()
+        shape.lineWidth = 0.5
+        shape.stroke()
+    }
+}
+
 /// 系统原生面板；复用现有状态与采样引擎，避免常驻 SwiftUI 渲染树。
 @MainActor
 final class NativePanelController: NSViewController {
+    var onPreferredSizeChange: ((NSSize) -> Void)?
     private let state = AppState.shared
     private let content = NSStackView()
     private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘"], trackingMode: .selectOne, target: nil, action: nil)
@@ -73,7 +85,7 @@ final class NativePanelController: NSViewController {
             errorField.stringValue = error ?? ""
             errorField.isHidden = error == nil
             guard let self, self.isViewLoaded else { return }
-            self.preferredContentSize = NSSize(width: 350, height: self.view.fittingSize.height)
+            self.updatePreferredSize()
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
@@ -96,7 +108,7 @@ final class NativePanelController: NSViewController {
             default: self.updateMessage.stringValue = ""
             }
             self.updateMessage.isHidden = self.updateMessage.stringValue.isEmpty
-            self.preferredContentSize = NSSize(width: 350, height: self.view.fittingSize.height)
+            self.updatePreferredSize()
         }
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
@@ -178,7 +190,20 @@ final class NativePanelController: NSViewController {
         let current = state.switches
         for (control, active) in zip(switches, [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]) { control.state = active ? .on : .off }
         for (bar, value) in progressValues { bar.percent = value(state.metrics) }
-        preferredContentSize = NSSize(width: 350, height: view.fittingSize.height)
+        updatePreferredSize()
+    }
+
+    private func updatePreferredSize() {
+        guard isViewLoaded else { return }
+        view.layoutSubtreeIfNeeded()
+        guard let root = view as? NSStackView else { return }
+        let visible = root.arrangedSubviews.filter { !$0.isHidden }
+        let height = root.edgeInsets.top + root.edgeInsets.bottom
+            + visible.reduce(0) { $0 + $1.fittingSize.height }
+            + CGFloat(max(0, visible.count - 1)) * root.spacing
+        let size = NSSize(width: 350, height: height)
+        preferredContentSize = size
+        onPreferredSizeChange?(size)
     }
 
     private func metric(_ title: String, format: @escaping (SystemMetrics) -> String) {
@@ -284,14 +309,14 @@ final class NativePanelController: NSViewController {
         return active ? descriptions[index].0 : descriptions[index].1
     }
     private func card(_ body: NSView, height: CGFloat) -> NSView {
-        let box = NSBox()
-        box.boxType = .custom
-        box.cornerRadius = 12
-        box.fillColor = .controlBackgroundColor
-        box.borderColor = .separatorColor
-        box.borderWidth = 0.5
-        box.contentViewMargins = NSSize(width: 10, height: 8)
-        box.contentView = body
+        let box = DashboardCardView()
+        box.addSubview(body)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10),
+            body.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -10),
+            body.centerYAnchor.constraint(equalTo: box.centerYAnchor)
+        ])
         body.widthAnchor.constraint(equalTo: box.widthAnchor, constant: -20).isActive = true
         box.heightAnchor.constraint(equalToConstant: height).isActive = true
         return box

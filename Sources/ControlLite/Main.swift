@@ -1,12 +1,54 @@
 import Cocoa
 import Combine
 
+/// 双行指标直接绘制在原生状态栏按钮内，保持截图中的紧凑列宽与彩色数值。
+private final class MenuBarStatusView: NSView {
+    var metrics = SystemMetrics() { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        let foreground = NSColor.labelColor
+        let columns: [(String, String, Double?)] = [
+            ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage),
+            ("GPU", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "—", metrics.gpuAvailable ? metrics.gpuUsage : nil),
+            ("RAM", "\(metrics.ramPercent)%", Double(metrics.ramPercent)),
+            ("SSD", "\(metrics.diskPercent)%", Double(metrics.diskPercent))
+        ]
+        let titleFont = NSFont.systemFont(ofSize: 8, weight: .medium)
+        let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        let center = NSMutableParagraphStyle(); center.alignment = .center
+        let leading = NSMutableParagraphStyle(); leading.alignment = .left
+        let top = (bounds.height - 23) / 2
+        for (index, column) in columns.enumerated() {
+            let x = CGFloat(index) * 48
+            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: titleFont, .foregroundColor: foreground, .paragraphStyle: center])
+            let color: NSColor = column.2.map { $0 >= 80 ? .systemRed : ($0 >= 70 ? .systemOrange : .systemBlue) } ?? .secondaryLabelColor
+            (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: numberFont, .foregroundColor: color, .paragraphStyle: center])
+        }
+        let rateX: CGFloat = 193
+        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: numberFont, .foregroundColor: NSColor.systemRed])
+        (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: rateFont, .foregroundColor: foreground, .paragraphStyle: leading])
+        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: numberFont, .foregroundColor: NSColor.systemBlue])
+        (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: rateFont, .foregroundColor: foreground, .paragraphStyle: leading])
+        let iconX: CGFloat = 299
+        foreground.setStroke()
+        foreground.setFill()
+        for (offset, knob) in [(CGFloat(3), CGFloat(9)), (CGFloat(11), CGFloat(17)), (CGFloat(19), CGFloat(7))] {
+            let y = top + offset
+            let line = NSBezierPath(); line.move(to: NSPoint(x: iconX, y: y)); line.line(to: NSPoint(x: iconX + 22, y: y)); line.lineWidth = 1.5; line.stroke()
+            NSBezierPath(ovalIn: NSRect(x: iconX + knob - 2, y: y - 2, width: 4, height: 4)).fill()
+        }
+    }
+}
+
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var cancellables = Set<AnyCancellable>()
+    private var menuBarStatusView: MenuBarStatusView?
 
     static func main() {
         if CommandLine.arguments.contains("--diagnose") {
@@ -155,21 +197,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let m = state.metrics
         switch state.menuBarStyle {
         case .statsColumns:
-            let gpu = m.gpuAvailable ? String(format: "%.0f%%", m.gpuUsage) : "—"
-            button.title = String(format: "CPU %.0f%%  GPU %@  RAM %d%%  SSD %d%%  ↓ %@  ↑ %@", m.cpuUsage, gpu, m.ramPercent, m.diskPercent, m.menuBarDownloadFormatted, m.menuBarUploadFormatted)
+            button.title = ""
+            button.image = nil
+            statusItem.length = 324
+            let display = menuBarStatusView ?? MenuBarStatusView(frame: button.bounds)
+            if display.superview == nil {
+                display.autoresizingMask = [.width, .height]
+                button.addSubview(display)
+            }
+            menuBarStatusView = display
+            display.frame = button.bounds
+            display.metrics = m
         case .compact:
+            menuBarStatusView?.removeFromSuperview()
             button.title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"
         case .iconOnly:
+            menuBarStatusView?.removeFromSuperview()
             button.title = ""
         case .iconAndSpeed:
+            menuBarStatusView?.removeFromSuperview()
             button.title = "↓ \(m.menuBarDownloadFormatted)  ↑ \(m.menuBarUploadFormatted)"
         case .iconAndRAM:
+            menuBarStatusView?.removeFromSuperview()
             button.title = "\(m.ramPercent)%"
         }
-        button.image = state.menuBarStyle == .statsColumns ? nil : NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
+        if state.menuBarStyle != .statsColumns {
+            button.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
+            statusItem.length = NSStatusItem.variableLength
+        }
         button.imagePosition = .imageLeading
         button.toolTip = "AetherSwitch · 点击查看系统状态"
-        statusItem.length = NSStatusItem.variableLength
 
     }
 
@@ -197,6 +254,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.delegate = self
             self.popover = popover
             let controller = NativePanelController()
+            controller.onPreferredSizeChange = { [weak popover] size in
+                popover?.contentSize = size
+            }
             _ = controller.view
             popover.contentViewController = controller
             popover.contentSize = controller.preferredContentSize
