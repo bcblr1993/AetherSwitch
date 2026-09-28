@@ -156,7 +156,7 @@ final class MetricsFormattingTests: XCTestCase {
         manager.setVersionForSnapshot(status: .available(version: "1.0.2", downloadURL: URL(string: "https://example.com/test.dmg")!))
         XCTAssertTrue(buttons.contains { $0.title == "下载更新" })
         manager.setVersionForSnapshot(status: .upToDate)
-        XCTAssertTrue(fields.contains { !$0.isHidden && $0.stringValue == "当前已是最新版本。" })
+        XCTAssertTrue(buttons.contains { $0.title == "已是最新" })
     }
 
 }

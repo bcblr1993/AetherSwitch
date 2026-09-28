@@ -206,7 +206,9 @@ final class NativePanelController: NSViewController {
             switch status {
             case .idle: self.updateMessage.stringValue = ""
             case .checking: self.updateMessage.stringValue = "正在检查更新…"
-            case .upToDate: self.updateMessage.stringValue = "当前已是最新版本。"
+            case .upToDate:
+                self.updateMessage.stringValue = ""
+                self.updateButton.title = "已是最新"
             case .available(let version, _):
                 self.updateMessage.stringValue = "新版本 \(version) 可用。下载后打开安装包更新。"
                 self.updateButton.title = "下载更新"
@@ -241,12 +243,15 @@ final class NativePanelController: NSViewController {
     }
 
     private func rebuild(tab requestedTab: String? = nil) {
-        content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
-        values.removeAll()
-        metricTiles.removeAll()
-        networkTile = nil
-        switches.removeAll()
-        switchTiles.removeAll()
+        autoreleasepool {
+            content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
+            values.removeAll()
+            metricTiles.removeAll()
+            networkTile = nil
+            switches.removeAll()
+            switchTiles.removeAll()
+        }
+        CATransaction.flush()
         let tab = requestedTab ?? state.selectedTab
         switch tab {
         case "cpu":
