@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.animates = true
+        popover.animates = false
         popover.delegate = self
         self.popover = popover
 
@@ -251,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else {
             let popover = NSPopover()
             popover.behavior = .transient
+            popover.animates = false
             popover.delegate = self
             self.popover = popover
             let controller = NativePanelController()

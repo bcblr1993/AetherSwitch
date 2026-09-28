@@ -197,7 +197,7 @@ final class NativePanelController: NSViewController {
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 350), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 330), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
         updateSubscription = UpdateManager.shared.$status.sink { [weak self] status in
             guard let self else { return }
@@ -290,13 +290,13 @@ final class NativePanelController: NSViewController {
                 pair.distribution = .fillEqually
                 content.addArrangedSubview(pair)
                 pair.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                pair.heightAnchor.constraint(equalToConstant: 77).isActive = true
+                pair.heightAnchor.constraint(equalToConstant: 70).isActive = true
             }
             let network = DashboardNetworkView(metrics: state.metrics)
             networkTile = network
             content.addArrangedSubview(network)
             network.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-            network.heightAnchor.constraint(equalToConstant: 54).isActive = true
+            network.heightAnchor.constraint(equalToConstant: 48).isActive = true
             let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
             separator.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
             let current = state.switches
@@ -315,7 +315,7 @@ final class NativePanelController: NSViewController {
                 switchTiles.append(tile)
                 content.addArrangedSubview(tile)
                 tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                tile.heightAnchor.constraint(equalToConstant: 48).isActive = true
+                tile.heightAnchor.constraint(equalToConstant: 44).isActive = true
             }
         }
         for (field, format) in values { field.stringValue = format(state.metrics) }
@@ -332,7 +332,7 @@ final class NativePanelController: NSViewController {
         let height = root.edgeInsets.top + root.edgeInsets.bottom
             + visible.reduce(0) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, visible.count - 1)) * root.spacing
-        let size = NSSize(width: 350, height: height)
+        let size = NSSize(width: 330, height: height)
         preferredContentSize = size
         onPreferredSizeChange?(size)
     }
