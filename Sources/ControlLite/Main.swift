@@ -194,7 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Release-gate UI exercise: change tabs on the app's own main thread, without
     /// activating another app and accidentally dismissing the transient popover.
     private func runAcceptanceCycle(at index: Int) {
-        let sequence = ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
+        let sequence = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_TABS"]?
+            .split(separator: ",").map(String.init)
+            ?? ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
         guard index < sequence.count else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
