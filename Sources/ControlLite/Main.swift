@@ -179,6 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         if CommandLine.arguments.contains("--acceptance-cycle") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                if let initialTab = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_INITIAL_TAB"] {
+                    AppState.shared.selectedTab = initialTab
+                }
                 self.togglePopover()
                 self.runAcceptanceCycle(at: 0)
             }
