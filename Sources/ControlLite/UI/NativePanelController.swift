@@ -8,12 +8,14 @@ private class DashboardCardView: NSView {
     private static let centerStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .center; return value }()
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
         NSColor.controlBackgroundColor.setFill()
         shape.fill()
         NSColor.separatorColor.withAlphaComponent(0.22).setStroke()
         shape.lineWidth = 0.5
         shape.stroke()
+        }
     }
     func text(_ value: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) {
         (value as NSString).draw(in: rect, withAttributes: [.font: Self.fonts[size] ?? NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color, .paragraphStyle: alignment == .right ? Self.rightStyle : alignment == .center ? Self.centerStyle : Self.leftStyle])
@@ -63,6 +65,7 @@ private final class DashboardMetricView: DashboardCardView {
     init(kind: Int, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         super.draw(dirtyRect)
         let titles = ["CPU 负载", "GPU 负载", "RAM 内存", "SSD 存储"]
         let percent = [metrics.cpuUsage, metrics.gpuAvailable ? metrics.gpuUsage : 0, Double(metrics.ramPercent), Double(metrics.diskPercent)][kind]
@@ -84,6 +87,7 @@ private final class DashboardMetricView: DashboardCardView {
         tint.setFill()
         NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * min(100, max(0, percent)) / 100, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
         text(detail, in: NSRect(x: 11, y: 52, width: bounds.width - 22, height: 16), size: 10, color: .secondaryLabelColor)
+        }
     }
 }
 
@@ -92,6 +96,7 @@ private final class DashboardNetworkView: DashboardCardView {
     init(metrics: SystemMetrics) { self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         super.draw(dirtyRect)
         let half = bounds.width / 2
         text("↓", in: NSRect(x: 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemBlue)
@@ -102,6 +107,7 @@ private final class DashboardNetworkView: DashboardCardView {
         text("↑", in: NSRect(x: half + 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemTeal)
         text("上传速率", in: NSRect(x: half + 40, y: 10, width: half - 48, height: 16), size: 10, color: .secondaryLabelColor)
         text(metrics.menuBarUploadFormatted, in: NSRect(x: half + 40, y: 27, width: half - 48, height: 18), size: 12, weight: .semibold)
+        }
     }
 }
 
@@ -118,6 +124,7 @@ private final class DashboardSwitchView: DashboardCardView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
         super.draw(dirtyRect)
         let titles = ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"]
         let tints: [NSColor] = [.systemOrange, .systemBlue, .systemPurple, .systemIndigo]
@@ -130,6 +137,7 @@ private final class DashboardSwitchView: DashboardCardView {
         icon(index + 4, in: NSRect(x: 12, y: 15, width: 18, height: 18), tint: tints[index])
         text(titles[index], in: NSRect(x: 42, y: 9, width: bounds.width - 110, height: 17), size: 12, weight: .semibold)
         text(active ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: 27, width: bounds.width - 110, height: 14), size: 10, color: .secondaryLabelColor)
+        }
     }
 }
 
