@@ -7,6 +7,11 @@ private class DashboardCardView: NSView {
     private static let rightStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .right; return value }()
     private static let centerStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .center; return value }()
     override var isFlipped: Bool { true }
+    var secondaryTextColor: NSColor {
+        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(calibratedWhite: 0.9, alpha: 1)
+            : NSColor(calibratedWhite: 0.25, alpha: 1)
+    }
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
@@ -80,14 +85,14 @@ private final class DashboardMetricView: DashboardCardView {
         default: detail = String(format: "%.0f / %.0f GB", metrics.diskUsedGB, metrics.diskTotalGB)
         }
         icon(kind, in: NSRect(x: 11, y: 12, width: 15, height: 15), tint: tint)
-        text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 80, height: 17), size: 10, weight: .medium, color: .secondaryLabelColor)
+        text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 80, height: 17), size: 10, weight: .medium, color: secondaryTextColor)
         text(value, in: NSRect(x: bounds.width - 49, y: 10, width: 37, height: 19), size: 12, weight: .semibold, alignment: .right)
         let track = NSRect(x: 11, y: 37, width: bounds.width - 22, height: 5)
         NSColor.labelColor.withAlphaComponent(0.15).setFill()
         NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
         tint.setFill()
         NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * min(100, max(0, percent)) / 100, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-        text(detail, in: NSRect(x: 11, y: 52, width: bounds.width - 22, height: 16), size: 10, color: .secondaryLabelColor)
+        text(detail, in: NSRect(x: 11, y: 52, width: bounds.width - 22, height: 16), size: 10, color: secondaryTextColor)
         }
     }
 }
@@ -101,12 +106,12 @@ private final class DashboardNetworkView: DashboardCardView {
         super.draw(dirtyRect)
         let half = bounds.width / 2
         text("↓", in: NSRect(x: 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemBlue)
-        text("下载速率", in: NSRect(x: 40, y: 10, width: half - 45, height: 16), size: 10, color: .secondaryLabelColor)
+        text("下载速率", in: NSRect(x: 40, y: 10, width: half - 45, height: 16), size: 10, color: secondaryTextColor)
         text(metrics.menuBarDownloadFormatted, in: NSRect(x: 40, y: 27, width: half - 45, height: 18), size: 12, weight: .semibold)
         NSColor.separatorColor.withAlphaComponent(0.25).setStroke()
         let divider = NSBezierPath(); divider.move(to: NSPoint(x: half, y: 12)); divider.line(to: NSPoint(x: half, y: 42)); divider.stroke()
         text("↑", in: NSRect(x: half + 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemTeal)
-        text("上传速率", in: NSRect(x: half + 40, y: 10, width: half - 48, height: 16), size: 10, color: .secondaryLabelColor)
+        text("上传速率", in: NSRect(x: half + 40, y: 10, width: half - 48, height: 16), size: 10, color: secondaryTextColor)
         text(metrics.menuBarUploadFormatted, in: NSRect(x: half + 40, y: 27, width: half - 48, height: 18), size: 12, weight: .semibold)
         }
     }
@@ -137,7 +142,7 @@ private final class DashboardSwitchView: DashboardCardView {
         ]
         icon(index + 4, in: NSRect(x: 12, y: 15, width: 18, height: 18), tint: tints[index])
         text(titles[index], in: NSRect(x: 42, y: 9, width: bounds.width - 110, height: 17), size: 12, weight: .semibold)
-        text(active ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: 27, width: bounds.width - 110, height: 14), size: 10, color: .secondaryLabelColor)
+        text(active ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: 27, width: bounds.width - 110, height: 14), size: 10, color: secondaryTextColor)
         }
     }
 }
@@ -184,13 +189,13 @@ private final class DetailVisualView: DashboardCardView {
             if metrics.gpuAvailable {
                 trio([(metrics.gpuRenderUsage, "渲染"), (metrics.gpuUsage, "GPU"), (metrics.gpuTilerUsage, "Tiler")])
             } else {
-                text("GPU 读数不可用", in: NSRect(x: 12, y: 37, width: width - 24, height: 25), size: 13, color: .secondaryLabelColor, alignment: .center)
+                text("GPU 读数不可用", in: NSRect(x: 12, y: 37, width: width - 24, height: 25), size: 13, color: secondaryTextColor, alignment: .center)
             }
             history(metrics.gpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
         case "ram":
             ring(center: NSPoint(x: width / 2, y: 48), radius: 31, percent: Double(metrics.ramPercent), tint: .systemBlue)
             text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 38, width: 60, height: 24), size: 18, weight: .semibold, alignment: .center)
-            text("内存占用 · 压力\(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: .secondaryLabelColor, alignment: .center)
+            text("内存占用 · 压力\(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: secondaryTextColor, alignment: .center)
             history(metrics.ramHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
         case "disk":
             text("读取  \(metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : "—")", in: NSRect(x: 12, y: 12, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemBlue)
@@ -200,27 +205,27 @@ private final class DetailVisualView: DashboardCardView {
             history(metrics.diskReadHistory, in: diskChart, tint: .systemBlue, maximum: maxRate)
             history(metrics.diskWriteHistory, in: diskChart, tint: .systemRed, maximum: maxRate, background: false)
             bar(percent: Double(metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 47, width: width - 24, height: 8), tint: .systemBlue)
-            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 31, width: width - 24, height: 16), size: 10, color: .secondaryLabelColor)
+            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 31, width: width - 24, height: 16), size: 10, color: secondaryTextColor)
         case "network":
             text("↓ \(metrics.downloadSpeedFormatted)/s", in: NSRect(x: 12, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemBlue)
             text("↑ \(metrics.uploadSpeedFormatted)/s", in: NSRect(x: width / 2, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemRed)
-            text("下载", in: NSRect(x: 12, y: 50, width: width / 2 - 12, height: 16), size: 10, color: .secondaryLabelColor)
-            text("上传", in: NSRect(x: width / 2, y: 50, width: width / 2 - 12, height: 16), size: 10, color: .secondaryLabelColor)
+            text("下载", in: NSRect(x: 12, y: 50, width: width / 2 - 12, height: 16), size: 10, color: secondaryTextColor)
+            text("上传", in: NSRect(x: width / 2, y: 50, width: width / 2 - 12, height: 16), size: 10, color: secondaryTextColor)
             let maxRate = max(1, (downloadHistory + uploadHistory).max() ?? 1)
             let networkChart = NSRect(x: 12, y: 87, width: width - 24, height: 124)
             history(downloadHistory, in: networkChart, tint: .systemBlue, maximum: maxRate)
             history(uploadHistory, in: networkChart, tint: .systemRed, maximum: maxRate, background: false)
-            text("本次面板采样", in: NSRect(x: 12, y: 220, width: width - 24, height: 16), size: 10, color: .secondaryLabelColor)
-            text("下载峰值", in: NSRect(x: 12, y: 242, width: 90, height: 18), size: 11, color: .secondaryLabelColor)
+            text("本次面板采样", in: NSRect(x: 12, y: 220, width: width - 24, height: 16), size: 10, color: secondaryTextColor)
+            text("下载峰值", in: NSRect(x: 12, y: 242, width: 90, height: 18), size: 11, color: secondaryTextColor)
             text(rate(downloadHistory.max() ?? 0), in: NSRect(x: 112, y: 242, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
-            text("上传峰值", in: NSRect(x: 12, y: 268, width: 90, height: 18), size: 11, color: .secondaryLabelColor)
+            text("上传峰值", in: NSRect(x: 12, y: 268, width: 90, height: 18), size: 11, color: secondaryTextColor)
             text(rate(uploadHistory.max() ?? 0), in: NSRect(x: 112, y: 268, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
         default: break
         }
         if kind == "network" {
-            text("传输历史", in: NSRect(x: 12, y: 74, width: width - 24, height: 14), size: 10, color: .secondaryLabelColor)
+            text("传输历史", in: NSRect(x: 12, y: 74, width: width - 24, height: 14), size: 10, color: secondaryTextColor)
         } else if kind != "disk" {
-            text("负载历史", in: NSRect(x: 12, y: 101, width: width - 24, height: 14), size: 10, color: .secondaryLabelColor)
+            text("负载历史", in: NSRect(x: 12, y: 101, width: width - 24, height: 14), size: 10, color: secondaryTextColor)
         }
         }
     }
@@ -231,7 +236,7 @@ private final class DetailVisualView: DashboardCardView {
             let radius: CGFloat = index == 1 ? 27 : 22
             ring(center: NSPoint(x: centers[index], y: 43), radius: radius, percent: values[index].0, tint: .systemBlue)
             text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 34, y: 34, width: 68, height: 20), size: index == 1 ? 13 : 11, weight: .semibold, alignment: .center)
-            text(values[index].1, in: NSRect(x: centers[index] - 38, y: 77, width: 76, height: 15), size: 10, color: .secondaryLabelColor, alignment: .center)
+            text(values[index].1, in: NSRect(x: centers[index] - 38, y: 77, width: 76, height: 15), size: 10, color: secondaryTextColor, alignment: .center)
         }
     }
 
@@ -321,12 +326,12 @@ private final class DetailRowsView: DashboardCardView {
     }
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
-        text("详细信息", in: NSRect(x: 0, y: 0, width: bounds.width, height: 16), size: 10, color: .secondaryLabelColor, alignment: .center)
+        text("详细信息", in: NSRect(x: 0, y: 0, width: bounds.width, height: 16), size: 10, color: secondaryTextColor, alignment: .center)
         NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
         let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 18)); line.line(to: NSPoint(x: bounds.width, y: 18)); line.stroke()
         for (index, entry) in entries.enumerated() {
             let y = CGFloat(index) * 24 + 25
-            text(entry.0, in: NSRect(x: 0, y: y, width: 130, height: 18), size: 12, color: .secondaryLabelColor)
+            text(entry.0, in: NSRect(x: 0, y: y, width: 130, height: 18), size: 12, color: secondaryTextColor)
             text(entry.1, in: NSRect(x: 132, y: y, width: bounds.width - 132, height: 18), size: 12, weight: .semibold, alignment: .right)
         }
         }
