@@ -201,7 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
             let tab = sequence[index]
-            AppState.shared.selectedTab = tab
+            if AppState.shared.selectedTab != tab {
+                AppState.shared.selectedTab = tab
+            }
             let record: [String: Any] = [
                 "tab": tab,
                 "popoverShown": self.popover?.isShown == true,
