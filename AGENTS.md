@@ -65,6 +65,8 @@ swift test
 ./scripts/build_app.sh
 ```
 
+签名构建完成后，对本次 `.app` 执行 `scripts/verify_popover_memory.py`，逐页检查 CPU、GPU、内存、磁盘与网络弹窗，并以进程峰值验证上述物理内存上限。此门禁失败不得发布。
+
 ### 质量验收标准：
 1. **测试用例 100% 绿色**：涵盖指标格式化、边界值、轻量/全量采样调度、常亮断言生命周期管理；
 2. **编译器状态**：Swift 6 模式下零警告（Zero Warnings）；
