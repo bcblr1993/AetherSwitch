@@ -22,9 +22,10 @@ echo "==> 正在创建 DMG 镜像: $DMG_PATH"
 hdiutil create -volname "AetherSwitch" -srcfolder "$TEMP_DMG_DIR" -ov -format UDZO "$DMG_PATH"
 rm -rf "$TEMP_DMG_DIR"
 
-# 签名 DMG
-CERT_NAME="Developer ID Application: YanNan Chen (5984KQD4D7)"
-if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
+# 签名 DMG（找不到 Developer ID 证书时跳过）
+source "$ROOT_DIR/scripts/signing_identity.sh"
+CERT_NAME="$(resolve_signing_identity 2>/dev/null)" || CERT_NAME=""
+if [ -n "$CERT_NAME" ]; then
     echo "使用官方证书签名 DMG..."
     codesign --force --sign "$CERT_NAME" "$DMG_PATH"
 fi
