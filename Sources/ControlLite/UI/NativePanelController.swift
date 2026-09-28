@@ -2,6 +2,9 @@ import AppKit
 import Combine
 
 private class DashboardCardView: NSView {
+    private static let fonts: [CGFloat: NSFont] = [10: .systemFont(ofSize: 10), 11: .systemFont(ofSize: 11, weight: .medium), 12: .systemFont(ofSize: 12, weight: .semibold), 13: .systemFont(ofSize: 13, weight: .bold)]
+    private static let leftStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .left; return value }()
+    private static let rightStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .right; return value }()
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
@@ -12,12 +15,44 @@ private class DashboardCardView: NSView {
         shape.stroke()
     }
     func text(_ value: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) {
-        let style = NSMutableParagraphStyle(); style.alignment = alignment
-        (value as NSString).draw(in: rect, withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color, .paragraphStyle: style])
+        (value as NSString).draw(in: rect, withAttributes: [.font: Self.fonts[size] ?? NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color, .paragraphStyle: alignment == .right ? Self.rightStyle : Self.leftStyle])
     }
-    func icon(_ symbol: String, in rect: NSRect, tint: NSColor) {
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(paletteColors: [tint]))
-        image?.draw(in: rect)
+    func icon(_ kind: Int, in rect: NSRect, tint: NSColor) {
+        tint.setStroke(); tint.setFill()
+        let x = rect.minX, y = rect.minY, w = rect.width, h = rect.height
+        let path = NSBezierPath(); path.lineWidth = 1.4
+        switch kind {
+        case 0, 2:
+            path.appendRoundedRect(NSRect(x: x + 3, y: y + 3, width: w - 6, height: h - 6), xRadius: 2, yRadius: 2)
+            for offset in stride(from: 4.0, through: Double(w - 4), by: 4.0) {
+                let p = CGFloat(offset)
+                path.move(to: NSPoint(x: x + p, y: y)); path.line(to: NSPoint(x: x + p, y: y + 3))
+                path.move(to: NSPoint(x: x + p, y: y + h - 3)); path.line(to: NSPoint(x: x + p, y: y + h))
+            }
+        case 1, 5:
+            path.appendRoundedRect(NSRect(x: x + 1, y: y + 2, width: w - 2, height: h - 5), xRadius: 2, yRadius: 2)
+            path.move(to: NSPoint(x: x + w / 2, y: y + h - 3)); path.line(to: NSPoint(x: x + w / 2, y: y + h))
+            if kind == 1 { path.move(to: NSPoint(x: x + 5, y: y + 7)); path.line(to: NSPoint(x: x + w - 5, y: y + 7)) }
+        case 3:
+            path.appendRoundedRect(NSRect(x: x + 1, y: y + 4, width: w - 2, height: h - 7), xRadius: 2, yRadius: 2)
+            path.move(to: NSPoint(x: x + 3, y: y + h - 6)); path.line(to: NSPoint(x: x + w - 3, y: y + h - 6))
+        case 4:
+            path.appendRoundedRect(NSRect(x: x + 2, y: y + 6, width: w - 6, height: h - 8), xRadius: 3, yRadius: 3)
+            path.appendArc(withCenter: NSPoint(x: x + w - 3, y: y + 10), radius: 3, startAngle: -90, endAngle: 90)
+            path.move(to: NSPoint(x: x + 5, y: y + 3)); path.line(to: NSPoint(x: x + 5, y: y))
+        case 6:
+            path.appendOval(in: NSRect(x: x + 1, y: y + 5, width: w - 2, height: h - 10))
+            path.appendOval(in: NSRect(x: x + w / 2 - 2, y: y + h / 2 - 2, width: 4, height: 4))
+        default:
+            path.appendOval(in: NSRect(x: x + 5, y: y + 5, width: w - 10, height: h - 10))
+            for angle in stride(from: 0.0, to: 360.0, by: 45.0) {
+                let a = angle * .pi / 180
+                let cx = x + w / 2, cy = y + h / 2
+                path.move(to: NSPoint(x: cx + CGFloat(cos(a)) * 7, y: cy + CGFloat(sin(a)) * 7))
+                path.line(to: NSPoint(x: cx + CGFloat(cos(a)) * 9, y: cy + CGFloat(sin(a)) * 9))
+            }
+        }
+        path.stroke()
     }
 }
 
@@ -29,7 +64,6 @@ private final class DashboardMetricView: DashboardCardView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let titles = ["CPU 负载", "GPU 负载", "RAM 内存", "SSD 存储"]
-        let symbols = ["cpu", "sparkles.tv", "memorychip", "internaldrive"]
         let percent = [metrics.cpuUsage, metrics.gpuAvailable ? metrics.gpuUsage : 0, Double(metrics.ramPercent), Double(metrics.diskPercent)][kind]
         let tint: NSColor = kind == 1 ? .systemIndigo : percent >= 85 ? .systemRed : kind == 2 ? .systemRed : .systemGreen
         let value = kind == 1 && !metrics.gpuAvailable ? "—" : "\(Int(percent.rounded()))%"
@@ -40,7 +74,7 @@ private final class DashboardMetricView: DashboardCardView {
         case 2: detail = String(format: "%.1f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)
         default: detail = String(format: "%.0f / %.0f GB", metrics.diskUsedGB, metrics.diskTotalGB)
         }
-        icon(symbols[kind], in: NSRect(x: 11, y: 12, width: 15, height: 15), tint: tint)
+        icon(kind, in: NSRect(x: 11, y: 12, width: 15, height: 15), tint: tint)
         text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 88, height: 17), size: 11, weight: .medium, color: .secondaryLabelColor)
         text(value, in: NSRect(x: bounds.width - 57, y: 10, width: 45, height: 19), size: 13, weight: .bold, alignment: .right)
         let track = NSRect(x: 11, y: 37, width: bounds.width - 22, height: 5)
@@ -85,7 +119,6 @@ private final class DashboardSwitchView: DashboardCardView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let titles = ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"]
-        let symbols = ["cup.and.saucer.fill", "menubar.dock.rectangle", "eye.fill", "sun.max.fill"]
         let tints: [NSColor] = [.systemOrange, .systemBlue, .systemPurple, .systemIndigo]
         let descriptions = [
             ("屏幕保持唤醒", "遵循系统休眠设置"),
@@ -93,7 +126,7 @@ private final class DashboardSwitchView: DashboardCardView {
             ("隐藏文件已显示", "隐藏文件保持收起"),
             ("当前为深色外观", "当前为浅色外观")
         ]
-        icon(symbols[index], in: NSRect(x: 12, y: 15, width: 18, height: 18), tint: tints[index])
+        icon(index + 4, in: NSRect(x: 12, y: 15, width: 18, height: 18), tint: tints[index])
         text(titles[index], in: NSRect(x: 42, y: 9, width: bounds.width - 110, height: 17), size: 12, weight: .semibold)
         text(active ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: 27, width: bounds.width - 110, height: 14), size: 10, color: .secondaryLabelColor)
     }
