@@ -75,8 +75,8 @@ private final class DashboardMetricView: DashboardCardView {
         default: detail = String(format: "%.0f / %.0f GB", metrics.diskUsedGB, metrics.diskTotalGB)
         }
         icon(kind, in: NSRect(x: 11, y: 12, width: 15, height: 15), tint: tint)
-        text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 88, height: 17), size: 11, weight: .medium, color: .secondaryLabelColor)
-        text(value, in: NSRect(x: bounds.width - 57, y: 10, width: 45, height: 19), size: 13, weight: .bold, alignment: .right)
+        text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 80, height: 17), size: 10, weight: .medium, color: .secondaryLabelColor)
+        text(value, in: NSRect(x: bounds.width - 49, y: 10, width: 37, height: 19), size: 12, weight: .semibold, alignment: .right)
         let track = NSRect(x: 11, y: 37, width: bounds.width - 22, height: 5)
         NSColor.separatorColor.withAlphaComponent(0.32).setFill()
         NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
@@ -197,7 +197,7 @@ final class NativePanelController: NSViewController {
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 330), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 300), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
         updateSubscription = UpdateManager.shared.$status.sink { [weak self] status in
             guard let self else { return }
@@ -290,13 +290,13 @@ final class NativePanelController: NSViewController {
                 pair.distribution = .fillEqually
                 content.addArrangedSubview(pair)
                 pair.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                pair.heightAnchor.constraint(equalToConstant: 70).isActive = true
+                pair.heightAnchor.constraint(equalToConstant: 68).isActive = true
             }
             let network = DashboardNetworkView(metrics: state.metrics)
             networkTile = network
             content.addArrangedSubview(network)
             network.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-            network.heightAnchor.constraint(equalToConstant: 48).isActive = true
+            network.heightAnchor.constraint(equalToConstant: 46).isActive = true
             let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
             separator.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
             let current = state.switches
@@ -315,7 +315,7 @@ final class NativePanelController: NSViewController {
                 switchTiles.append(tile)
                 content.addArrangedSubview(tile)
                 tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                tile.heightAnchor.constraint(equalToConstant: 44).isActive = true
+                tile.heightAnchor.constraint(equalToConstant: 42).isActive = true
             }
         }
         for (field, format) in values { field.stringValue = format(state.metrics) }
@@ -332,7 +332,7 @@ final class NativePanelController: NSViewController {
         let height = root.edgeInsets.top + root.edgeInsets.bottom
             + visible.reduce(0) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, visible.count - 1)) * root.spacing
-        let size = NSSize(width: 330, height: height)
+        let size = NSSize(width: 300, height: height)
         preferredContentSize = size
         onPreferredSizeChange?(size)
     }
