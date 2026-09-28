@@ -7,10 +7,7 @@ private class DashboardCardView: NSView {
     private static let rightStyle: NSParagraphStyle = { let value = NSMutableParagraphStyle(); value.alignment = .right; return value }()
     override var isFlipped: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
-        card(in: bounds)
-    }
-    func card(in rect: NSRect) {
-        let shape = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
         NSColor.controlBackgroundColor.setFill()
         shape.fill()
         NSColor.separatorColor.withAlphaComponent(0.22).setStroke()
@@ -59,47 +56,13 @@ private class DashboardCardView: NSView {
     }
 }
 
-private final class DashboardOverviewView: DashboardCardView {
-    static let panelHeight: CGFloat = 457
+private final class DashboardMetricView: DashboardCardView {
+    let kind: Int
     var metrics: SystemMetrics { didSet { needsDisplay = true } }
-    var activeStates: [Bool] { didSet { needsDisplay = true } }
-    let controls: [NSSwitch]
-
-    init(metrics: SystemMetrics, activeStates: [Bool]) {
-        self.metrics = metrics
-        self.activeStates = activeStates
-        self.controls = (0..<4).map { _ in NSSwitch() }
-        super.init(frame: .zero)
-        for control in controls { addSubview(control) }
-    }
+    init(kind: Int, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func layout() {
-        super.layout()
-        for (index, control) in controls.enumerated() {
-            let size = control.fittingSize
-            control.frame = NSRect(x: bounds.width - size.width - 10, y: 241 + CGFloat(index) * 56 + (48 - size.height) / 2, width: size.width, height: size.height)
-        }
-    }
     override func draw(_ dirtyRect: NSRect) {
-        let width = bounds.width
-        let half = (width - 8) / 2
-        for index in 0..<4 {
-            let rect = NSRect(x: index.isMultiple(of: 2) ? 0 : half + 8, y: index < 2 ? 0 : 85, width: half, height: 77)
-            card(in: rect)
-            drawMetric(index, in: rect)
-        }
-        let network = NSRect(x: 0, y: 170, width: width, height: 54)
-        card(in: network)
-        drawNetwork(in: network)
-        NSColor.separatorColor.withAlphaComponent(0.25).setStroke()
-        let separator = NSBezierPath(); separator.move(to: NSPoint(x: 0, y: 232)); separator.line(to: NSPoint(x: width, y: 232)); separator.stroke()
-        for index in 0..<4 {
-            let rect = NSRect(x: 0, y: 241 + CGFloat(index) * 56, width: width, height: 48)
-            card(in: rect)
-            drawSwitch(index, in: rect)
-        }
-    }
-    private func drawMetric(_ kind: Int, in rect: NSRect) {
+        super.draw(dirtyRect)
         let titles = ["CPU 负载", "GPU 负载", "RAM 内存", "SSD 存储"]
         let percent = [metrics.cpuUsage, metrics.gpuAvailable ? metrics.gpuUsage : 0, Double(metrics.ramPercent), Double(metrics.diskPercent)][kind]
         let tint: NSColor = kind == 1 ? .systemIndigo : percent >= 85 ? .systemRed : kind == 2 ? .systemRed : .systemGreen
@@ -111,28 +74,50 @@ private final class DashboardOverviewView: DashboardCardView {
         case 2: detail = String(format: "%.1f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)
         default: detail = String(format: "%.0f / %.0f GB", metrics.diskUsedGB, metrics.diskTotalGB)
         }
-        icon(kind, in: NSRect(x: rect.minX + 11, y: rect.minY + 12, width: 15, height: 15), tint: tint)
-        text(titles[kind], in: NSRect(x: rect.minX + 30, y: rect.minY + 11, width: rect.width - 88, height: 17), size: 11, weight: .medium, color: .secondaryLabelColor)
-        text(value, in: NSRect(x: rect.maxX - 57, y: rect.minY + 10, width: 45, height: 19), size: 13, weight: .bold, alignment: .right)
-        let track = NSRect(x: rect.minX + 11, y: rect.minY + 37, width: rect.width - 22, height: 5)
+        icon(kind, in: NSRect(x: 11, y: 12, width: 15, height: 15), tint: tint)
+        text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 88, height: 17), size: 11, weight: .medium, color: .secondaryLabelColor)
+        text(value, in: NSRect(x: bounds.width - 57, y: 10, width: 45, height: 19), size: 13, weight: .bold, alignment: .right)
+        let track = NSRect(x: 11, y: 37, width: bounds.width - 22, height: 5)
         NSColor.separatorColor.withAlphaComponent(0.32).setFill()
         NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
         tint.setFill()
         NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * min(100, max(0, percent)) / 100, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-        text(detail, in: NSRect(x: rect.minX + 11, y: rect.minY + 52, width: rect.width - 22, height: 16), size: 10, color: .secondaryLabelColor)
+        text(detail, in: NSRect(x: 11, y: 52, width: bounds.width - 22, height: 16), size: 10, color: .secondaryLabelColor)
     }
-    private func drawNetwork(in rect: NSRect) {
-        let half = rect.width / 2
-        text("↓", in: NSRect(x: 12, y: rect.minY + 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemBlue)
-        text("下载速率", in: NSRect(x: 40, y: rect.minY + 10, width: half - 45, height: 16), size: 10, color: .secondaryLabelColor)
-        text(metrics.menuBarDownloadFormatted, in: NSRect(x: 40, y: rect.minY + 27, width: half - 45, height: 18), size: 12, weight: .semibold)
+}
+
+private final class DashboardNetworkView: DashboardCardView {
+    var metrics: SystemMetrics { didSet { needsDisplay = true } }
+    init(metrics: SystemMetrics) { self.metrics = metrics; super.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let half = bounds.width / 2
+        text("↓", in: NSRect(x: 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemBlue)
+        text("下载速率", in: NSRect(x: 40, y: 10, width: half - 45, height: 16), size: 10, color: .secondaryLabelColor)
+        text(metrics.menuBarDownloadFormatted, in: NSRect(x: 40, y: 27, width: half - 45, height: 18), size: 12, weight: .semibold)
         NSColor.separatorColor.withAlphaComponent(0.25).setStroke()
-        let divider = NSBezierPath(); divider.move(to: NSPoint(x: half, y: rect.minY + 12)); divider.line(to: NSPoint(x: half, y: rect.minY + 42)); divider.stroke()
-        text("↑", in: NSRect(x: half + 12, y: rect.minY + 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemTeal)
-        text("上传速率", in: NSRect(x: half + 40, y: rect.minY + 10, width: half - 48, height: 16), size: 10, color: .secondaryLabelColor)
-        text(metrics.menuBarUploadFormatted, in: NSRect(x: half + 40, y: rect.minY + 27, width: half - 48, height: 18), size: 12, weight: .semibold)
+        let divider = NSBezierPath(); divider.move(to: NSPoint(x: half, y: 12)); divider.line(to: NSPoint(x: half, y: 42)); divider.stroke()
+        text("↑", in: NSRect(x: half + 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemTeal)
+        text("上传速率", in: NSRect(x: half + 40, y: 10, width: half - 48, height: 16), size: 10, color: .secondaryLabelColor)
+        text(metrics.menuBarUploadFormatted, in: NSRect(x: half + 40, y: 27, width: half - 48, height: 18), size: 12, weight: .semibold)
     }
-    private func drawSwitch(_ index: Int, in rect: NSRect) {
+}
+
+private final class DashboardSwitchView: DashboardCardView {
+    let index: Int
+    let control = NSSwitch()
+    var active = false { didSet { needsDisplay = true } }
+    init(index: Int) {
+        self.index = index
+        super.init(frame: .zero)
+        addSubview(control)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([control.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10), control.centerYAnchor.constraint(equalTo: centerYAnchor)])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
         let titles = ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"]
         let tints: [NSColor] = [.systemOrange, .systemBlue, .systemPurple, .systemIndigo]
         let descriptions = [
@@ -141,9 +126,9 @@ private final class DashboardOverviewView: DashboardCardView {
             ("隐藏文件已显示", "隐藏文件保持收起"),
             ("当前为深色外观", "当前为浅色外观")
         ]
-        icon(index + 4, in: NSRect(x: 12, y: rect.minY + 15, width: 18, height: 18), tint: tints[index])
-        text(titles[index], in: NSRect(x: 42, y: rect.minY + 9, width: rect.width - 110, height: 17), size: 12, weight: .semibold)
-        text(activeStates[index] ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: rect.minY + 27, width: rect.width - 110, height: 14), size: 10, color: .secondaryLabelColor)
+        icon(index + 4, in: NSRect(x: 12, y: 15, width: 18, height: 18), tint: tints[index])
+        text(titles[index], in: NSRect(x: 42, y: 9, width: bounds.width - 110, height: 17), size: 12, weight: .semibold)
+        text(active ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: 27, width: bounds.width - 110, height: 14), size: 10, color: .secondaryLabelColor)
     }
 }
 
@@ -163,8 +148,10 @@ final class NativePanelController: NSViewController {
     private let updateMessage = NSTextField(wrappingLabelWithString: "")
     private var updateButton: NSButton!
     private var values: [(NSTextField, (SystemMetrics) -> String)] = []
-    private var overview: DashboardOverviewView?
+    private var metricTiles: [DashboardMetricView] = []
+    private var networkTile: DashboardNetworkView?
     private var switches: [NSSwitch] = []
+    private var switchTiles: [DashboardSwitchView] = []
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk"]
 
     override func loadView() {
@@ -239,13 +226,14 @@ final class NativePanelController: NSViewController {
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
             for (field, format) in self.values { field.stringValue = format(m) }
-            self.overview?.metrics = m
+            for tile in self.metricTiles { tile.metrics = m }
+            self.networkTile?.metrics = m
         }
         switchSubscription = state.$switches.sink { [weak self] s in
             guard let self else { return }
             let states = [s.isKeepAwakeActive, s.isDesktopHidden, s.isHiddenFilesVisible, s.isDarkModeActive]
             for (control, active) in zip(self.switches, states) { control.state = active ? .on : .off }
-            self.overview?.activeStates = states
+            for (tile, active) in zip(self.switchTiles, states) { tile.active = active }
         }
         pendingSubscription = state.$pendingSwitches.sink { [weak self] pending in
             for control in self?.switches ?? [] { control.isEnabled = !pending.contains(control.tag) }
@@ -255,8 +243,10 @@ final class NativePanelController: NSViewController {
     private func rebuild(tab requestedTab: String? = nil) {
         content.arrangedSubviews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
         values.removeAll()
-        overview = nil
+        metricTiles.removeAll()
+        networkTile = nil
         switches.removeAll()
+        switchTiles.removeAll()
         let tab = requestedTab ?? state.selectedTab
         switch tab {
         case "cpu":
@@ -291,14 +281,30 @@ final class NativePanelController: NSViewController {
             metric("所有物理磁盘写入") { $0.diskIOAvailable ? $0.diskWriteSpeedFormatted : ($0.diskIOPending ? "采样中…" : "不可用") }
             note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
         default:
+            metricTiles = (0..<4).map { DashboardMetricView(kind: $0, metrics: state.metrics) }
+            let top = NSStackView(views: [metricTiles[0], metricTiles[1]])
+            let bottom = NSStackView(views: [metricTiles[2], metricTiles[3]])
+            for pair in [top, bottom] {
+                pair.orientation = .horizontal
+                pair.spacing = 8
+                pair.distribution = .fillEqually
+                content.addArrangedSubview(pair)
+                pair.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+                pair.heightAnchor.constraint(equalToConstant: 77).isActive = true
+            }
+            let network = DashboardNetworkView(metrics: state.metrics)
+            networkTile = network
+            content.addArrangedSubview(network)
+            network.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+            network.heightAnchor.constraint(equalToConstant: 54).isActive = true
+            let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
+            separator.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
             let current = state.switches
             let active = [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]
-            let dashboard = DashboardOverviewView(metrics: state.metrics, activeStates: active)
-            overview = dashboard
-            content.addArrangedSubview(dashboard)
-            dashboard.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-            dashboard.heightAnchor.constraint(equalToConstant: DashboardOverviewView.panelHeight).isActive = true
-            for (index, control) in dashboard.controls.enumerated() {
+            for index in 0..<4 {
+                let tile = DashboardSwitchView(index: index)
+                tile.active = active[index]
+                let control = tile.control
                 control.controlSize = .small
                 control.tag = index
                 control.isEnabled = !state.pendingSwitches.contains(index)
@@ -306,6 +312,10 @@ final class NativePanelController: NSViewController {
                 control.action = #selector(toggle(_:))
                 control.setAccessibilityLabel(["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"][index])
                 switches.append(control)
+                switchTiles.append(tile)
+                content.addArrangedSubview(tile)
+                tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+                tile.heightAnchor.constraint(equalToConstant: 48).isActive = true
             }
         }
         for (field, format) in values { field.stringValue = format(state.metrics) }
