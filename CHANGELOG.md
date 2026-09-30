@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-30
+
+### Performance
+- 详情页卡片改为在 CPU 位图中绘制，不再触发 AppKit 自动开启的异步（GPU）图层绘制；弹窗切页时的进程物理内存峰值由约 49 MB 降至约 27 MB，概览页常驻内存由约 30 MB 降至约 25 MB，界面保持不变。
+
 ## [1.1.0] - 2026-09-30
 
 ### Added

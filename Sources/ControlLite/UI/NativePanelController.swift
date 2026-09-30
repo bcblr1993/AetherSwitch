@@ -13,6 +13,38 @@ private class DashboardCardView: NSView {
     override var isFlipped: Bool { true }
     /// 详细信息列表等不需要卡片底的视图关闭此项。
     var drawsCard: Bool { true }
+
+    // AppKit 会给较大的图层（详情页图表与列表）自动开启 drawsAsynchronously，
+    // 首次绘制时为此建立 IOSurface/Metal 渲染资源，物理内存峰值瞬间多出 ~12MB。
+    // 这里改为自己在 CPU 位图里执行 draw(_:)，把结果直接作为图层内容。
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        guard let layer else { return }
+        let scale = window?.backingScaleFactor ?? layer.contentsScale
+        let width = Int((bounds.width * scale).rounded(.up))
+        let height = Int((bounds.height * scale).rounded(.up))
+        guard width > 0, height > 0,
+              let space = window?.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { layer.contents = nil; return }
+        context.scaleBy(x: scale, y: -scale)
+        context.translateBy(x: 0, y: -bounds.height)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
+        NSGraphicsContext.restoreGraphicsState()
+        layer.contentsScale = scale
+        layer.contents = context.makeImage()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
     override func draw(_ dirtyRect: NSRect) {
         defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
@@ -415,8 +447,8 @@ final class NativePanelController: NSViewController {
         tabs.action = #selector(selectTab)
         tabs.selectedSegment = state.showAbout ? -1 : tabNames.firstIndex(of: state.selectedTab) ?? 0
         root.addArrangedSubview(tabs)
+        // 不再把子视图压平进 content 的单一大图层：压平后的图层同样会被开启异步绘制。
         content.wantsLayer = true
-        content.canDrawSubviewsIntoLayer = true
         content.layerContentsRedrawPolicy = .onSetNeedsDisplay
         content.orientation = .vertical
         content.alignment = .leading
