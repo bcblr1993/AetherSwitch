@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.2] - 2026-09-30
 
 ### Fixed
+- 详情图表复用固定尺寸的绘制区域，减少 Retina 屏幕切页时的图形缓冲峰值。
 - 菜单栏直接绘制最新采样与样式值，修复指标延迟一轮及样式切换未即时生效。
 
 ### Changed

@@ -570,7 +570,9 @@ final class NativePanelController: NSViewController {
         detailVisual = panel
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        let height: CGFloat = kind == "network" ? 272 : kind == "gpu" ? 232 : kind == "disk" ? 218 : 170
+        // Reuse one backing-store size across tabs instead of allocating a
+        // different Retina surface for every chart transition.
+        let height: CGFloat = 170
         if let detailVisualHeight { detailVisualHeight.constant = height }
         else {
             let constraint = panel.heightAnchor.constraint(equalToConstant: height)
