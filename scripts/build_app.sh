@@ -11,8 +11,8 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.3.0"
-BUILD_NUMBER="2026100101"
+VERSION="1.3.1"
+BUILD_NUMBER="2026100102"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 # 在线更新（Sparkle）：清单地址与更新签名公钥。公钥可公开，对应私钥只存在发布者的登录钥匙串（账户 AetherSwitch）。
 SPARKLE_FEED_URL="https://aethernative.com/apps/aetherswitch/appcast.xml"
@@ -68,6 +68,11 @@ cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
@@ -136,14 +141,17 @@ codesign --verify --deep --strict --verbose=2 "$OUTPUT_DIR/${APP_NAME}.app"
 
 # 在线更新链路自检：任何一项缺失或不匹配，已安装的用户就无法再在线升级，必须在发布前发现。
 APP_BUNDLE="$OUTPUT_DIR/${APP_NAME}.app"
-for KEY in SUFeedURL SUPublicEDKey SURequireSignedFeed SUVerifyUpdateBeforeExtraction; do
+for KEY in SUFeedURL SUPublicEDKey SURequireSignedFeed SUVerifyUpdateBeforeExtraction CFBundleLocalizations; do
     /usr/libexec/PlistBuddy -c "Print :$KEY" "$APP_BUNDLE/Contents/Info.plist" >/dev/null || { echo "Info.plist is missing $KEY"; exit 1; }
 done
+# 应用必须声明支持简体中文，否则系统把整个应用按英文处理，Sparkle 自带的中文翻译不会生效（更新窗口会显示英文）。
+/usr/libexec/PlistBuddy -c "Print :CFBundleLocalizations" "$APP_BUNDLE/Contents/Info.plist" | grep -q "zh-Hans" || { echo "Info.plist does not declare zh-Hans localization"; exit 1; }
+test -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_CN.lproj" || { echo "Sparkle.framework has no zh_CN localization"; exit 1; }
 test -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" || { echo "Sparkle.framework is not embedded"; exit 1; }
 otool -l "$APP_BUNDLE/Contents/MacOS/${APP_NAME}" | grep -q "@executable_path/../Frameworks" || { echo "Executable has no rpath to Contents/Frameworks"; exit 1; }
 KEYCHAIN_PUBLIC_KEY="$("$SPARKLE_DIR/bin/generate_keys" --account AetherSwitch -p 2>/dev/null || true)"
 [ "$KEYCHAIN_PUBLIC_KEY" = "$SPARKLE_PUBLIC_ED_KEY" ] || { echo "SUPublicEDKey does not match the AetherSwitch signing key in the keychain"; exit 1; }
-echo "Update configuration verified (feed, public key, framework, rpath)."
+echo "Update configuration verified (feed, public key, framework, rpath, zh-Hans localization)."
 
 echo "==> [5/5] 生成 DMG 安装包与发布校验清单 SHA256SUMS.txt..."
 cd "$OUTPUT_DIR"
