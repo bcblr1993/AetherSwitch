@@ -4,8 +4,10 @@ import AppKit
 
 final class PaletteTests: XCTestCase {
     func testLoadLevelThresholds() {
-        XCTAssertEqual(LoadLevel(percent: 0), .normal)
-        XCTAssertEqual(LoadLevel(percent: 69.9), .normal)
+        XCTAssertEqual(LoadLevel(percent: 0), .low)
+        XCTAssertEqual(LoadLevel(percent: 49.9), .low)
+        XCTAssertEqual(LoadLevel(percent: 50), .moderate)
+        XCTAssertEqual(LoadLevel(percent: 69.9), .moderate)
         XCTAssertEqual(LoadLevel(percent: 70), .elevated)
         XCTAssertEqual(LoadLevel(percent: 84.9), .elevated)
         XCTAssertEqual(LoadLevel(percent: 85), .critical)
@@ -13,24 +15,44 @@ final class PaletteTests: XCTestCase {
     }
 
     func testLoadLevelHandlesOutOfRangeValues() {
-        XCTAssertEqual(LoadLevel(percent: -5), .normal)
+        XCTAssertEqual(LoadLevel(percent: -5), .low)
         XCTAssertEqual(LoadLevel(percent: 250), .critical)
-        XCTAssertEqual(LoadLevel(percent: .nan), .normal)
+        XCTAssertEqual(LoadLevel(percent: .nan), .low)
     }
 
     @MainActor
-    func testPanelTintFollowsLoadLevel() {
-        XCTAssertEqual(Palette.tint(for: 40), Palette.accent)
-        XCTAssertEqual(Palette.tint(for: 71), NSColor.systemOrange)
-        XCTAssertEqual(Palette.tint(for: 90), NSColor.systemRed)
+    func testTintFollowsLoadLevel() {
+        XCTAssertEqual(Palette.tint(for: 20), Palette.levelLow)
+        XCTAssertEqual(Palette.tint(for: 60), Palette.levelModerate)
+        XCTAssertEqual(Palette.tint(for: 71), Palette.levelElevated)
+        XCTAssertEqual(Palette.tint(for: 90), Palette.levelCritical)
     }
 
     @MainActor
-    func testMenuBarTintKeepsNormalValuesNeutral() {
-        // 常态数值跟随系统文字色，避免彩色数字在彩色壁纸上看不清。
-        XCTAssertEqual(Palette.menuBarTint(for: 40), NSColor.labelColor)
-        XCTAssertEqual(Palette.menuBarTint(for: 71), NSColor.systemOrange)
-        XCTAssertEqual(Palette.menuBarTint(for: 90), NSColor.systemRed)
+    func testLevelColorsAreDistinctAndAdaptToAppearance() {
+        func rgb(_ color: NSColor, _ name: NSAppearance.Name) -> [CGFloat] {
+            var result: [CGFloat] = []
+            NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
+                let c = color.usingColorSpace(.sRGB)!
+                result = [c.redComponent, c.greenComponent, c.blueComponent]
+            }
+            return result
+        }
+        let levels = LoadLevel.allCases.map { Palette.color(for: $0) }
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            XCTAssertEqual(Set(levels.map { rgb($0, appearance).description }).count, 4, "\(appearance) 下 4 档颜色应互不相同")
+        }
+        // 深色外观使用更亮的色值，浅色外观使用偏深的色值。
+        for color in levels {
+            XCTAssertGreaterThan(rgb(color, .darkAqua).reduce(0, +), rgb(color, .aqua).reduce(0, +))
+        }
+    }
+
+    @MainActor
+    func testDrawingAppearanceDropsVibrancy() {
+        XCTAssertEqual(Palette.drawingAppearance(for: NSAppearance(named: .vibrantDark)!).name, .darkAqua)
+        XCTAssertEqual(Palette.drawingAppearance(for: NSAppearance(named: .vibrantLight)!).name, .aqua)
+        XCTAssertEqual(Palette.drawingAppearance(for: NSAppearance(named: .darkAqua)!).name, .darkAqua)
     }
 
     @MainActor

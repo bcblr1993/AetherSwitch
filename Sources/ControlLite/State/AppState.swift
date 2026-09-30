@@ -19,6 +19,23 @@ public enum MenuBarStyle: String, CaseIterable, Codable {
     }
 }
 
+/// Stats 样式菜单栏中可单独开关的指标列（按显示顺序排列）。
+public enum MenuBarMetric: String, CaseIterable, Codable, Sendable {
+    case cpu, gpu, ram, disk, network
+
+    static let defaultsKey = "menuBarMetrics"
+
+    /// 读取保存的列；从未设置过时默认全部显示，未知值忽略。
+    static func decode(_ stored: [String]?) -> Set<MenuBarMetric> {
+        guard let stored else { return Set(allCases) }
+        return Set(stored.compactMap(MenuBarMetric.init(rawValue:)))
+    }
+
+    static func encode(_ metrics: Set<MenuBarMetric>) -> [String] {
+        allCases.filter(metrics.contains).map(\.rawValue)
+    }
+}
+
 /// 全局响应式状态机（支持智能能耗调度与多标签页深度监控）
 @MainActor
 public final class AppState: ObservableObject {
@@ -39,6 +56,18 @@ public final class AppState: ObservableObject {
         didSet {
             UserDefaults.standard.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
         }
+    }
+
+    // Stats 样式菜单栏显示哪些指标列
+    @Published public var menuBarMetrics: Set<MenuBarMetric> = MenuBarMetric.decode(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)) {
+        didSet {
+            guard oldValue != menuBarMetrics else { return }
+            UserDefaults.standard.set(MenuBarMetric.encode(menuBarMetrics), forKey: MenuBarMetric.defaultsKey)
+        }
+    }
+
+    public func setMenuBarMetric(_ metric: MenuBarMetric, visible: Bool) {
+        if visible { menuBarMetrics.insert(metric) } else { menuBarMetrics.remove(metric) }
     }
 
     // 是否展示“关于”面板

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-30
+
+### Added
+- CPU、GPU、内存、磁盘、网络详情页新增「在菜单栏显示」开关，可单独控制每个指标是否出现在菜单栏，设置会被保存。
+- 数字、进度条与环形图按利用率 4 档变色：低于 50% 绿色、50–70% 黄色、70–85% 橙色、85% 以上红色，浅色与深色外观分别调校。
+
+### Changed
+- 菜单栏宽度随显示的指标自动收缩（5 项全开约 226pt，原 324pt）；全部关闭时只显示图标。
+- 菜单栏列标题改用主文字色，彩色壁纸上更清晰。
+
+### Fixed
+- v1.1.1 中弹窗的次要文字（标签、峰值、详细信息等）在毛玻璃背景上几乎看不清。
+- 底部「检查更新」栏会随页面内容高度上下跳动。
+
 ## [1.1.1] - 2026-09-30
 
 ### Performance

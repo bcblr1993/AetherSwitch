@@ -32,7 +32,7 @@ private class DashboardCardView: NSView {
         context.translateBy(x: 0, y: -bounds.height)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
+        Palette.drawingAppearance(for: effectiveAppearance).performAsCurrentDrawingAppearance { draw(bounds) }
         NSGraphicsContext.restoreGraphicsState()
         layer.contentsScale = scale
         layer.contents = context.makeImage()
@@ -115,7 +115,7 @@ private final class DashboardMetricView: DashboardCardView {
         let width = bounds.width
         symbol(Self.symbols[kind], in: NSRect(x: 10, y: 10, width: 18, height: 18), size: 12, tint: tint)
         text(Self.titles[kind], in: NSRect(x: 31, y: 12, width: width - 80, height: 16), font: Palette.captionStrong, color: .secondaryLabelColor)
-        text(unavailable ? "—" : "\(Int(percent.rounded()))%", in: NSRect(x: width - 62, y: 8, width: 50, height: 20), font: Palette.value, alignment: .right)
+        text(unavailable ? "—" : "\(Int(percent.rounded()))%", in: NSRect(x: width - 62, y: 8, width: 50, height: 20), font: Palette.value, color: unavailable ? .secondaryLabelColor : tint, alignment: .right)
         capsuleBar(percent: unavailable ? 0 : percent, in: NSRect(x: 12, y: 35, width: width - 24, height: 5), tint: tint)
         text(detail, in: NSRect(x: 12, y: 47, width: width - 24, height: 15), font: Palette.caption, color: .secondaryLabelColor)
         }
@@ -246,7 +246,7 @@ private final class DetailVisualView: DashboardCardView {
             let percent = Double(metrics.ramPercent)
             let tint = Palette.tint(for: percent)
             ring(center: NSPoint(x: width / 2, y: 42), radius: 30, lineWidth: 7, percent: percent, tint: tint)
-            text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 31, width: 60, height: 24), font: Palette.value, alignment: .center)
+            text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 31, width: 60, height: 24), font: Palette.value, color: tint, alignment: .center)
             text("内存压力 · \(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 80, width: width - 24, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
             sectionLabel("占用历史")
             history(metrics.ramHistory, in: loadChart, tint: tint, maximum: 100)
@@ -295,7 +295,7 @@ private final class DetailVisualView: DashboardCardView {
         for index in 0..<3 {
             let primary = index == 1
             ring(center: NSPoint(x: centers[index], y: 42), radius: primary ? 29 : 23, lineWidth: primary ? 7 : 5, percent: values[index].0, tint: values[index].2)
-            text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, alignment: .center)
+            text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, color: primary ? values[index].2 : .labelColor, alignment: .center)
             text(values[index].1, in: NSRect(x: centers[index] - 38, y: 76, width: 76, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
         }
     }
@@ -427,6 +427,12 @@ final class NativePanelController: NSViewController {
     private var detailVisualHeight: NSLayoutConstraint?
     private var detailRowsHeight: NSLayoutConstraint?
     private var detailNote: NSTextField?
+    private var menuBarRow: NSStackView?
+    private let menuBarSwitch = NSSwitch()
+    private var menuBarMetric: MenuBarMetric?
+    private var menuBarSubscription: AnyCancellable?
+    private var rootHeight: NSLayoutConstraint?
+    private let footerSpacer = NSView()
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network"]
 
     override func loadView() {
@@ -435,6 +441,7 @@ final class NativePanelController: NSViewController {
         root.alignment = .leading
         root.spacing = 8
         root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
+        root.distribution = .fill
         let brand = NSImageView(image: BrandGlyph.templateImage(size: NSSize(width: 17, height: 15)))
         brand.contentTintColor = Palette.accent
         let header = NSStackView(views: [brand, label("AetherSwitch", font: .systemFont(ofSize: 14, weight: .semibold)), spacer(), iconButton("arrow.clockwise", hint: "刷新硬件状态", action: #selector(refresh)), iconButton("info.circle", hint: "关于 AetherSwitch", action: #selector(about))])
@@ -459,6 +466,11 @@ final class NativePanelController: NSViewController {
         version.textColor = .tertiaryLabelColor
         let footer = NSStackView(views: [version, spacer(), updateButton, footerButton("退出", symbol: "power", action: #selector(quit))])
         footer.spacing = 12
+        // 可伸缩空白吸收各页高度差，底部栏始终贴在弹窗底部，不随页面跳动。
+        footerSpacer.setContentHuggingPriority(.init(1), for: .vertical)
+        footerSpacer.setContentCompressionResistancePriority(.init(1), for: .vertical)
+        root.addArrangedSubview(footerSpacer)
+        root.setCustomSpacing(0, after: footerSpacer)
         root.addArrangedSubview(footer)
         updateMessage.font = Palette.caption
         updateMessage.textColor = .secondaryLabelColor
@@ -514,6 +526,10 @@ final class NativePanelController: NSViewController {
             self.tabs.selectedSegment = showing ? -1 : self.tabNames.firstIndex(of: self.state.selectedTab) ?? 0
             self.rebuild(about: showing)
         }
+        menuBarSubscription = state.$menuBarMetrics.sink { [weak self] visible in
+            guard let self, let metric = self.menuBarMetric else { return }
+            self.menuBarSwitch.state = visible.contains(metric) ? .on : .off
+        }
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
             self.detailRows?.metrics = m
@@ -558,22 +574,27 @@ final class NativePanelController: NSViewController {
         switch tab {
         case "cpu":
             visual("cpu")
+            menuBarToggle(.cpu)
             rows("cpu")
             note("进程 CPU 百分比可跨多个核心，系统利用率按全部核心归一化。")
         case "gpu":
             visual("gpu")
+            menuBarToggle(.gpu)
             rows("gpu")
             note("显示系统提供的瞬时利用率；无可用读数时显示不可用。")
         case "ram":
             visual("ram")
+            menuBarToggle(.ram)
             rows("ram")
             note("可回收文件缓存不计入应用内存；内存压力采用系统等级。")
         case "disk":
             visual("disk")
+            menuBarToggle(.disk)
             rows("disk")
             note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
         case "network":
             visual("network")
+            menuBarToggle(.network)
             rows("network")
             note("速率来自系统网络接口计数器，每秒刷新。")
         default:
@@ -622,13 +643,20 @@ final class NativePanelController: NSViewController {
         guard isViewLoaded else { return }
         view.layoutSubtreeIfNeeded()
         guard let root = view as? NSStackView else { return }
-        let visible = root.arrangedSubviews.filter { !$0.isHidden }
+        // 伸缩空白只吸收剩余高度，不参与内容高度计算。
+        let visible = root.arrangedSubviews.filter { !$0.isHidden && $0 !== footerSpacer }
         let height = root.edgeInsets.top + root.edgeInsets.bottom
             + visible.reduce(0) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, visible.count - 1)) * root.spacing
         // A stable popover size prevents AppKit from retaining a new graphics backing store
         // for each tab transition. Each detail chart uses the available vertical space.
         let size = NSSize(width: 294, height: max(509, height))
+        if let rootHeight { rootHeight.constant = size.height }
+        else {
+            let constraint = root.heightAnchor.constraint(equalToConstant: size.height)
+            constraint.isActive = true
+            rootHeight = constraint
+        }
         guard preferredContentSize != size else { return }
         preferredContentSize = size
         onPreferredSizeChange?(size)
@@ -640,7 +668,7 @@ final class NativePanelController: NSViewController {
         panel.metrics = state.metrics
         detailRows = panel
         content.addArrangedSubview(panel)
-        content.setCustomSpacing(14, after: detailVisual ?? panel)
+        content.setCustomSpacing(12, after: menuBarRow ?? panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         if let detailRowsHeight { detailRowsHeight.constant = panel.idealHeight }
         else {
@@ -665,6 +693,28 @@ final class NativePanelController: NSViewController {
             constraint.isActive = true
             detailVisualHeight = constraint
         }
+    }
+    /// 详情页"在菜单栏显示"开关：控制 Stats 样式菜单栏中对应的指标列。
+    private func menuBarToggle(_ metric: MenuBarMetric) {
+        let row: NSStackView
+        if let menuBarRow { row = menuBarRow }
+        else {
+            let title = label("在菜单栏显示", font: Palette.body)
+            title.textColor = .secondaryLabelColor
+            menuBarSwitch.controlSize = .small
+            menuBarSwitch.target = self
+            menuBarSwitch.action = #selector(toggleMenuBarMetric(_:))
+            row = NSStackView(views: [title, spacer(), menuBarSwitch])
+            row.orientation = .horizontal
+            row.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 0)
+            menuBarRow = row
+        }
+        menuBarMetric = metric
+        menuBarSwitch.state = state.menuBarMetrics.contains(metric) ? .on : .off
+        menuBarSwitch.setAccessibilityLabel("在菜单栏显示\(["CPU", "GPU", "内存", "磁盘", "网络"][MenuBarMetric.allCases.firstIndex(of: metric)!])")
+        content.addArrangedSubview(row)
+        content.setCustomSpacing(8, after: detailVisual ?? row)
+        row.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
     }
     private func note(_ text: String) {
         let field = detailNote ?? NSTextField(wrappingLabelWithString: text)
@@ -747,6 +797,10 @@ final class NativePanelController: NSViewController {
         if state.showAbout { state.showAbout = false }
     }
     @objc private func refresh() { state.refreshFull() }
+    @objc private func toggleMenuBarMetric(_ sender: NSSwitch) {
+        guard let metric = menuBarMetric else { return }
+        state.setMenuBarMetric(metric, visible: sender.state == .on)
+    }
     @objc private func toggle(_ sender: NSSwitch) {
         switch sender.tag {
         case 0: state.toggleKeepAwake()
