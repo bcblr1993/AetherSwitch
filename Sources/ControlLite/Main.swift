@@ -93,14 +93,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 监听系统指标与样式变更，自适应动态调整状态栏宽度
         AppState.shared.$metrics
-            .sink { [weak self] _ in
-                self?.updateStatusItemWidth()
+            .sink { [weak self] metrics in
+                self?.updateStatusItemWidth(metrics: metrics)
             }
             .store(in: &cancellables)
 
         AppState.shared.$menuBarStyle
-            .sink { [weak self] _ in
-                self?.updateStatusItemWidth()
+            .sink { [weak self] style in
+                self?.updateStatusItemWidth(style: style)
             }
             .store(in: &cancellables)
 
@@ -245,13 +245,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: - 动态调整状态栏宽度
 
-    private func updateStatusItemWidth() {
+    private func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil) {
         guard let button = statusItem.button else { return }
         let state = AppState.shared
-        let m = state.metrics
-        let styleChanged = appliedMenuBarStyle != state.menuBarStyle
-        if !styleChanged && state.menuBarStyle == .iconOnly { return }
-        switch state.menuBarStyle {
+        // @Published emits before the stored property changes; render the emitted value.
+        let m = metrics ?? state.metrics
+        let style = style ?? state.menuBarStyle
+        let styleChanged = appliedMenuBarStyle != style
+        if !styleChanged && style == .iconOnly { return }
+        switch style {
         case .statsColumns:
             if styleChanged {
                 button.title = ""
@@ -279,14 +281,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             menuBarStatusView?.removeFromSuperview()
             button.title = "\(m.ramPercent)%"
         }
-        if styleChanged && state.menuBarStyle != .statsColumns {
+        if styleChanged && style != .statsColumns {
             button.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
             statusItem.length = NSStatusItem.variableLength
         }
         if styleChanged {
             button.imagePosition = .imageLeading
             button.toolTip = "AetherSwitch · 点击查看系统状态"
-            appliedMenuBarStyle = state.menuBarStyle
+            appliedMenuBarStyle = style
         }
 
     }

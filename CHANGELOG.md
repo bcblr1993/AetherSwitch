@@ -5,14 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2] - 2026-09-28
+## [1.0.2] - 2026-09-30
+
+### Fixed
+- 菜单栏直接绘制最新采样与样式值，修复指标延迟一轮及样式切换未即时生效。
 
 ### Changed
 - 恢复概览指标四宫格、彩色进度条、网络卡片与带状态说明的快捷开关，并保持原生 AppKit 控件和真实采样逻辑。
 - 对齐 Stats 的 CPU、GPU、内存、磁盘和网络弹出详情结构，加入真实历史曲线与系统分项；统一面板高度以避免切页抖动。
 - 改进浅色与深色外观下的卡片排版、字段对比度、图标层级和开关对齐。
 - 菜单栏恢复双行彩色指标列与末尾滑杆图标；磁盘容量明确标为 APFS 共享容器空间。
-- 每次正式构建前清理本项目旧候选包和 SwiftPM 编译产物，保留正在运行的候选包。
+- 正式构建保留旧候选包和校验清单，便于验收与回退；清理 SwiftPM 编译中间产物。
 
 ## [1.0.1] - 2026-09-28
 

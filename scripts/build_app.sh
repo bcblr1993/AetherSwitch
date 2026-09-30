@@ -12,7 +12,7 @@ cd "$PROJECT_DIR"
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.2"
-BUILD_NUMBER="2026092802"
+BUILD_NUMBER="2026093001"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 source "$PROJECT_DIR/scripts/signing_identity.sh"
 CERT_NAME="$(resolve_signing_identity)" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
@@ -27,17 +27,7 @@ test -z "$(git status --porcelain)" || { echo "Release build requires a clean wo
 test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; }
 security find-identity -v -p codesigning | grep -q "$CERT_NAME" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
-# 清除本项目旧构建产物；正在运行的候选包留到进程退出后再清理。
-for PREVIOUS_BUILD in "$PROJECT_DIR"/outputs/build-*; do
-    [ -d "$PREVIOUS_BUILD" ] || continue
-    [ ! -L "$PREVIOUS_BUILD" ] || continue
-    [ "$PREVIOUS_BUILD" != "$OUTPUT_DIR" ] || continue
-    if pgrep -f "$PREVIOUS_BUILD/$APP_NAME.app/Contents/MacOS/$APP_NAME" >/dev/null; then
-        echo "Skipping active build: $PREVIOUS_BUILD"
-        continue
-    fi
-    rm -r -- "$PREVIOUS_BUILD"
-done
+# 保留旧候选包与校验清单，供发布验收和回退使用。
 
 # SwiftPM 的编译中间产物会随反复构建累积；每次从干净的编译目录开始。
 # 仅触碰本项目 .build/out，保留 SwiftPM 的依赖与工作区元数据。
