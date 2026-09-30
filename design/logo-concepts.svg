@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1800" height="1060" viewBox="0 0 1800 1060">
+  <defs>
+    <!-- macOS 图标网格：1024 画布内 824 圆角方块，偏移 100 -->
+    <clipPath id="squircle"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+
+    <!-- ========== 概念 A：开关里的脉搏 ========== -->
+    <linearGradient id="aBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1F2A52"/><stop offset="1" stop-color="#0B1024"/>
+    </linearGradient>
+    <linearGradient id="aKnob" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6CF7D2"/><stop offset="1" stop-color="#1FB5F0"/>
+    </linearGradient>
+    <linearGradient id="aTrack" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.05"/>
+    </linearGradient>
+    <filter id="aGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="28"/>
+    </filter>
+    <symbol id="conceptA" viewBox="0 0 1024 1024">
+      <g clip-path="url(#squircle)">
+        <rect x="100" y="100" width="824" height="824" fill="url(#aBg)"/>
+        <ellipse cx="660" cy="300" rx="360" ry="220" fill="#3A58C8" opacity="0.35" filter="url(#aGlow)"/>
+      </g>
+      <rect x="100.5" y="100.5" width="823" height="823" rx="186" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="3"/>
+      <!-- 开关轨道 -->
+      <rect x="196" y="382" width="632" height="260" rx="130" fill="url(#aTrack)" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="4"/>
+      <!-- 轨道内的负载脉搏 -->
+      <polyline points="252,512 318,512 350,452 392,588 432,420 470,548 500,512 540,512"
+        fill="none" stroke="#6CF7D2" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- 滑块 -->
+      <circle cx="698" cy="512" r="104" fill="#1FB5F0" opacity="0.55" filter="url(#aGlow)"/>
+      <circle cx="698" cy="512" r="100" fill="url(#aKnob)"/>
+      <ellipse cx="682" cy="470" rx="58" ry="30" fill="#FFFFFF" opacity="0.35"/>
+    </symbol>
+    <symbol id="glyphA" viewBox="0 0 64 64">
+      <rect x="4" y="18" width="56" height="28" rx="14" fill="none" stroke="#000" stroke-width="4"/>
+      <polyline points="11,32 16,32 19,26 23,38 27,32" fill="none" stroke="#000" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="46" cy="32" r="9" fill="#000"/>
+    </symbol>
+
+    <!-- ========== 概念 B：叠放滑杆 ========== -->
+    <linearGradient id="bBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7F8FB"/><stop offset="1" stop-color="#D9DDE7"/>
+    </linearGradient>
+    <linearGradient id="bK1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5AC8FA"/><stop offset="1" stop-color="#007AFF"/></linearGradient>
+    <linearGradient id="bK2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A78BFA"/><stop offset="1" stop-color="#6D4AFF"/></linearGradient>
+    <linearGradient id="bK3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFB86B"/><stop offset="1" stop-color="#FF7A1A"/></linearGradient>
+    <filter id="bShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#1B2340" flood-opacity="0.28"/>
+    </filter>
+    <symbol id="conceptB" viewBox="0 0 1024 1024">
+      <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bBg)"/>
+      <rect x="100.5" y="100.5" width="823" height="823" rx="186" fill="none" stroke="#000" stroke-opacity="0.08" stroke-width="3"/>
+      <g stroke-linecap="round">
+        <line x1="250" y1="340" x2="774" y2="340" stroke="#1B2340" stroke-opacity="0.14" stroke-width="44"/>
+        <rect x="228" y="318" width="394" height="44" rx="22" fill="url(#bK1)"/>
+        <line x1="250" y1="512" x2="774" y2="512" stroke="#1B2340" stroke-opacity="0.14" stroke-width="44"/>
+        <rect x="228" y="490" width="214" height="44" rx="22" fill="url(#bK2)"/>
+        <line x1="250" y1="684" x2="774" y2="684" stroke="#1B2340" stroke-opacity="0.14" stroke-width="44"/>
+        <rect x="228" y="662" width="484" height="44" rx="22" fill="url(#bK3)"/>
+      </g>
+      <g filter="url(#bShadow)" fill="#FFFFFF">
+        <circle cx="600" cy="340" r="62"/>
+        <circle cx="420" cy="512" r="62"/>
+        <circle cx="690" cy="684" r="62"/>
+      </g>
+      <circle cx="600" cy="340" r="20" fill="url(#bK1)"/>
+      <circle cx="420" cy="512" r="20" fill="url(#bK2)"/>
+      <circle cx="690" cy="684" r="20" fill="url(#bK3)"/>
+    </symbol>
+    <symbol id="glyphB" viewBox="0 0 64 64">
+      <g stroke="#000" stroke-width="4" stroke-linecap="round">
+        <line x1="8" y1="18" x2="56" y2="18"/><line x1="8" y1="32" x2="56" y2="32"/><line x1="8" y1="46" x2="56" y2="46"/>
+      </g>
+      <circle cx="40" cy="18" r="7" fill="#000"/><circle cx="22" cy="32" r="7" fill="#000"/><circle cx="46" cy="46" r="7" fill="#000"/>
+    </symbol>
+
+    <!-- ========== 概念 C：A 字仪表 ========== -->
+    <linearGradient id="cBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#26262B"/><stop offset="1" stop-color="#0E0E11"/>
+    </linearGradient>
+    <linearGradient id="cArc" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFB547"/><stop offset="0.55" stop-color="#FF5E7A"/><stop offset="1" stop-color="#B45CFF"/>
+    </linearGradient>
+    <symbol id="conceptC" viewBox="0 0 1024 1024">
+      <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#cBg)"/>
+      <rect x="100.5" y="100.5" width="823" height="823" rx="186" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="3"/>
+      <!-- 270° 仪表底轨与读数弧 -->
+      <path d="M 295.7 728.3 A 306 306 0 1 1 728.3 728.3" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="54" stroke-linecap="round"/>
+      <path d="M 295.7 728.3 A 306 306 0 1 1 818 512" fill="none" stroke="url(#cArc)" stroke-width="54" stroke-linecap="round"/>
+      <!-- A 字：两条斜腿 + 指针横梁 -->
+      <g stroke="#FFFFFF" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <polyline points="392,690 512,352 632,690"/>
+      </g>
+      <line x1="430" y1="584" x2="640" y2="532" stroke="#FF5E7A" stroke-width="40" stroke-linecap="round"/>
+      <circle cx="430" cy="584" r="30" fill="#FFFFFF"/>
+    </symbol>
+    <symbol id="glyphC" viewBox="0 0 64 64">
+      <path d="M 16 48 A 22 22 0 1 1 48 48" fill="none" stroke="#000" stroke-width="4.5" stroke-linecap="round"/>
+      <polyline points="24,46 32,22 40,46" fill="none" stroke="#000" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="27" y1="38" x2="40" y2="34" stroke="#000" stroke-width="4" stroke-linecap="round"/>
+    </symbol>
+
+    <!-- 菜单栏模拟条 -->
+    <linearGradient id="barLight" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#E8EAF0"/><stop offset="1" stop-color="#F4F5F8"/></linearGradient>
+  </defs>
+
+  <rect width="1800" height="1060" fill="#FFFFFF"/>
+  <text x="60" y="70" font-family="-apple-system, PingFang SC, sans-serif" font-size="34" font-weight="700" fill="#111">AetherSwitch Logo 概念稿</text>
+  <text x="60" y="108" font-family="-apple-system, PingFang SC, sans-serif" font-size="19" fill="#666">每列：大图 · 128 / 64 / 32 / 16 px 实际尺寸 · 菜单栏单色模板（浅色 / 深色菜单栏）</text>
+
+  <!-- 三列 -->
+  <g font-family="-apple-system, PingFang SC, sans-serif">
+    <!-- A -->
+    <g transform="translate(60,150)">
+      <text x="0" y="20" font-size="26" font-weight="700" fill="#111">A · 开关里的脉搏（推荐）</text>
+      <text x="0" y="50" font-size="17" fill="#666">胶囊开关 + 负载波形：一眼看出"开关 + 监控"</text>
+      <use href="#conceptA" x="-40" y="60" width="560" height="560"/>
+      <use href="#conceptA" x="0" y="640" width="128" height="128"/>
+      <use href="#conceptA" x="150" y="672" width="64" height="64"/>
+      <use href="#conceptA" x="236" y="688" width="32" height="32"/>
+      <use href="#conceptA" x="290" y="696" width="16" height="16"/>
+      <rect x="0" y="800" width="230" height="44" rx="8" fill="url(#barLight)"/>
+      <use href="#glyphA" x="14" y="808" width="28" height="28"/>
+      <text x="52" y="829" font-size="14" fill="#222">48%  12%  68%</text>
+      <rect x="250" y="800" width="230" height="44" rx="8" fill="#2A2B33"/>
+      <g transform="translate(264,808)"><use href="#glyphA" width="28" height="28" style="filter:invert(1)"/></g>
+      <text x="302" y="829" font-size="14" fill="#EEE">48%  12%  68%</text>
+    </g>
+
+    <!-- B -->
+    <g transform="translate(640,150)">
+      <text x="0" y="20" font-size="26" font-weight="700" fill="#111">B · 叠放滑杆</text>
+      <text x="0" y="50" font-size="17" fill="#666">延续现有 slider 意象，浅色玻璃质感</text>
+      <use href="#conceptB" x="-40" y="60" width="560" height="560"/>
+      <use href="#conceptB" x="0" y="640" width="128" height="128"/>
+      <use href="#conceptB" x="150" y="672" width="64" height="64"/>
+      <use href="#conceptB" x="236" y="688" width="32" height="32"/>
+      <use href="#conceptB" x="290" y="696" width="16" height="16"/>
+      <rect x="0" y="800" width="230" height="44" rx="8" fill="url(#barLight)"/>
+      <use href="#glyphB" x="14" y="808" width="28" height="28"/>
+      <text x="52" y="829" font-size="14" fill="#222">48%  12%  68%</text>
+      <rect x="250" y="800" width="230" height="44" rx="8" fill="#2A2B33"/>
+      <g transform="translate(264,808)"><use href="#glyphB" width="28" height="28" style="filter:invert(1)"/></g>
+      <text x="302" y="829" font-size="14" fill="#EEE">48%  12%  68%</text>
+    </g>
+
+    <!-- C -->
+    <g transform="translate(1220,150)">
+      <text x="0" y="20" font-size="26" font-weight="700" fill="#111">C · A 字仪表</text>
+      <text x="0" y="50" font-size="17" fill="#666">品牌首字母 + 仪表弧，品牌感强、功能表达弱</text>
+      <use href="#conceptC" x="-40" y="60" width="560" height="560"/>
+      <use href="#conceptC" x="0" y="640" width="128" height="128"/>
+      <use href="#conceptC" x="150" y="672" width="64" height="64"/>
+      <use href="#conceptC" x="236" y="688" width="32" height="32"/>
+      <use href="#conceptC" x="290" y="696" width="16" height="16"/>
+      <rect x="0" y="800" width="230" height="44" rx="8" fill="url(#barLight)"/>
+      <use href="#glyphC" x="14" y="808" width="28" height="28"/>
+      <text x="52" y="829" font-size="14" fill="#222">48%  12%  68%</text>
+      <rect x="250" y="800" width="230" height="44" rx="8" fill="#2A2B33"/>
+      <g transform="translate(264,808)"><use href="#glyphC" width="28" height="28" style="filter:invert(1)"/></g>
+      <text x="302" y="829" font-size="14" fill="#EEE">48%  12%  68%</text>
+    </g>
+  </g>
+</svg>

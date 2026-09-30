@@ -16,7 +16,6 @@ let package = Package(
         .executableTarget(
             name: "ControlLite",
             path: "Sources/ControlLite",
-            exclude: ["UI/Components", "UI/MenuBarView.swift", "UI/PopoverView.swift", "UI/Theme.swift"],
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("AppKit")

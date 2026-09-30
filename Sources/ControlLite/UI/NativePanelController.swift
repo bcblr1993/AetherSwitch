@@ -2,29 +2,31 @@ import AppKit
 import CoreText
 import Combine
 
+/// 面板内速率统一为"数值 + 空格 + 单位"。
+private func formatRate(_ bytes: Double) -> String {
+    if bytes >= 1_048_576 { return String(format: "%.1f MB/s", bytes / 1_048_576) }
+    if bytes >= 1024 { return String(format: "%.0f KB/s", bytes / 1024) }
+    return String(format: "%.0f B/s", max(0, bytes))
+}
+
 private class DashboardCardView: NSView {
-    private static let fonts: [CGFloat: NSFont] = [10: .systemFont(ofSize: 10), 11: .systemFont(ofSize: 11, weight: .medium), 12: .systemFont(ofSize: 12, weight: .semibold), 13: .systemFont(ofSize: 13, weight: .bold)]
     override var isFlipped: Bool { true }
-    var secondaryTextColor: NSColor {
-        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(calibratedWhite: 0.9, alpha: 1)
-            : NSColor(calibratedWhite: 0.25, alpha: 1)
-    }
+    /// 详细信息列表等不需要卡片底的视图关闭此项。
+    var drawsCard: Bool { true }
     override func draw(_ dirtyRect: NSRect) {
         defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
-        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
-        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        (dark ? NSColor(calibratedWhite: 0.29, alpha: 1) : NSColor(calibratedWhite: 0.98, alpha: 1)).setFill()
+        guard drawsCard else { return }
+        let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        Palette.cardFill.setFill()
         shape.fill()
-        NSColor.separatorColor.withAlphaComponent(0.22).setStroke()
-        shape.lineWidth = 0.5
+        Palette.cardStroke.setStroke()
+        shape.lineWidth = 1
         shape.stroke()
         }
     }
-    func text(_ value: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) {
+    func text(_ value: String, in rect: NSRect, font: NSFont, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        let font = Self.fonts[size] ?? NSFont.systemFont(ofSize: size, weight: weight)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let original = CTLineCreateWithAttributedString(NSAttributedString(string: value, attributes: attributes))
         let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attributes))
@@ -40,46 +42,26 @@ private class DashboardCardView: NSView {
         context.textPosition = .zero
         CTLineDraw(line, context)
     }
-    func icon(_ kind: Int, in rect: NSRect, tint: NSColor) {
-        tint.setStroke(); tint.setFill()
-        let x = rect.minX, y = rect.minY, w = rect.width, h = rect.height
-        let path = NSBezierPath(); path.lineWidth = 1.4
-        switch kind {
-        case 0, 2:
-            path.appendRoundedRect(NSRect(x: x + 3, y: y + 3, width: w - 6, height: h - 6), xRadius: 2, yRadius: 2)
-            for offset in stride(from: 4.0, through: Double(w - 4), by: 4.0) {
-                let p = CGFloat(offset)
-                path.move(to: NSPoint(x: x + p, y: y)); path.line(to: NSPoint(x: x + p, y: y + 3))
-                path.move(to: NSPoint(x: x + p, y: y + h - 3)); path.line(to: NSPoint(x: x + p, y: y + h))
-            }
-        case 1, 5:
-            path.appendRoundedRect(NSRect(x: x + 1, y: y + 2, width: w - 2, height: h - 5), xRadius: 2, yRadius: 2)
-            path.move(to: NSPoint(x: x + w / 2, y: y + h - 3)); path.line(to: NSPoint(x: x + w / 2, y: y + h))
-            if kind == 1 { path.move(to: NSPoint(x: x + 5, y: y + 7)); path.line(to: NSPoint(x: x + w - 5, y: y + 7)) }
-        case 3:
-            path.appendRoundedRect(NSRect(x: x + 1, y: y + 4, width: w - 2, height: h - 7), xRadius: 2, yRadius: 2)
-            path.move(to: NSPoint(x: x + 3, y: y + h - 6)); path.line(to: NSPoint(x: x + w - 3, y: y + h - 6))
-        case 4:
-            path.appendRoundedRect(NSRect(x: x + 2, y: y + 6, width: w - 6, height: h - 8), xRadius: 3, yRadius: 3)
-            path.appendArc(withCenter: NSPoint(x: x + w - 3, y: y + 10), radius: 3, startAngle: -90, endAngle: 90)
-            path.move(to: NSPoint(x: x + 5, y: y + 3)); path.line(to: NSPoint(x: x + 5, y: y))
-        case 6:
-            path.appendOval(in: NSRect(x: x + 1, y: y + 5, width: w - 2, height: h - 10))
-            path.appendOval(in: NSRect(x: x + w / 2 - 2, y: y + h / 2 - 2, width: 4, height: 4))
-        default:
-            path.appendOval(in: NSRect(x: x + 5, y: y + 5, width: w - 10, height: h - 10))
-            for angle in stride(from: 0.0, to: 360.0, by: 45.0) {
-                let a = angle * .pi / 180
-                let cx = x + w / 2, cy = y + h / 2
-                path.move(to: NSPoint(x: cx + CGFloat(cos(a)) * 7, y: cy + CGFloat(sin(a)) * 7))
-                path.line(to: NSPoint(x: cx + CGFloat(cos(a)) * 9, y: cy + CGFloat(sin(a)) * 9))
-            }
-        }
-        path.stroke()
+    /// 在 rect 中居中绘制 SF Symbol。
+    func symbol(_ name: String, in rect: NSRect, size: CGFloat, weight: NSFont.Weight = .semibold, tint: NSColor) {
+        guard let image = Palette.symbol(name, size: size, weight: weight, tint: tint) else { return }
+        let origin = NSPoint(x: rect.midX - image.size.width / 2, y: rect.midY - image.size.height / 2)
+        image.draw(in: NSRect(origin: origin, size: image.size), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+    func capsuleBar(percent: Double, in rect: NSRect, tint: NSColor) {
+        let radius = rect.height / 2
+        Palette.track.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+        let width = rect.width * CGFloat(min(100, max(0, percent))) / 100
+        guard width > 0 else { return }
+        tint.setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY, width: max(rect.height, width), height: rect.height), xRadius: radius, yRadius: radius).fill()
     }
 }
 
 private final class DashboardMetricView: DashboardCardView {
+    private static let titles = ["CPU", "GPU", "内存", "磁盘"]
+    private static let symbols = ["cpu", "square.3.layers.3d", "memorychip", "internaldrive"]
     let kind: Int
     var metrics: SystemMetrics { didSet { needsDisplay = true } }
     init(kind: Int, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
@@ -88,26 +70,22 @@ private final class DashboardMetricView: DashboardCardView {
         defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         super.draw(dirtyRect)
-        let titles = ["CPU 负载", "GPU 负载", "RAM 内存", "SSD 存储"]
-        let percent = [metrics.cpuUsage, metrics.gpuAvailable ? metrics.gpuUsage : 0, Double(metrics.ramPercent), Double(metrics.diskPercent)][kind]
-        let tint: NSColor = kind == 1 ? .systemIndigo : percent >= 85 ? .systemRed : kind == 2 ? .systemRed : .systemGreen
-        let value = kind == 1 && !metrics.gpuAvailable ? "—" : "\(Int(percent.rounded()))%"
+        let unavailable = kind == 1 && !metrics.gpuAvailable
+        let percent = [metrics.cpuUsage, metrics.gpuUsage, Double(metrics.ramPercent), Double(metrics.diskPercent)][kind]
+        let tint = unavailable ? Palette.unavailable : Palette.tint(for: percent)
         let detail: String
         switch kind {
-        case 0: detail = String(format: "%.1f%% 利用率", metrics.cpuUsage)
-        case 1: detail = metrics.gpuAvailable ? "\(metrics.gpuCoreCount) 核心" : "暂无可用读数"
+        case 0: detail = String(format: "用户 %.0f%% · 系统 %.0f%%", metrics.cpuUserUsage, metrics.cpuSystemUsage)
+        case 1: detail = unavailable ? "暂无可用读数" : (metrics.gpuCoreCount > 0 ? "\(metrics.gpuCoreCount) 核心" : metrics.gpuModelName)
         case 2: detail = String(format: "%.1f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)
         default: detail = String(format: "%.0f / %.0f GB", metrics.diskUsedGB, metrics.diskTotalGB)
         }
-        icon(kind, in: NSRect(x: 11, y: 12, width: 15, height: 15), tint: tint)
-        text(titles[kind], in: NSRect(x: 30, y: 11, width: bounds.width - 80, height: 17), size: 10, weight: .medium, color: secondaryTextColor)
-        text(value, in: NSRect(x: bounds.width - 49, y: 10, width: 37, height: 19), size: 12, weight: .semibold, alignment: .right)
-        let track = NSRect(x: 11, y: 35, width: bounds.width - 22, height: 5)
-        NSColor.labelColor.withAlphaComponent(0.15).setFill()
-        NSBezierPath(roundedRect: track, xRadius: 2.5, yRadius: 2.5).fill()
-        tint.setFill()
-        NSBezierPath(roundedRect: NSRect(x: track.minX, y: track.minY, width: track.width * min(100, max(0, percent)) / 100, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-        text(detail, in: NSRect(x: 11, y: 46, width: bounds.width - 22, height: 14), size: 10, color: secondaryTextColor)
+        let width = bounds.width
+        symbol(Self.symbols[kind], in: NSRect(x: 10, y: 10, width: 18, height: 18), size: 12, tint: tint)
+        text(Self.titles[kind], in: NSRect(x: 31, y: 12, width: width - 80, height: 16), font: Palette.captionStrong, color: .secondaryLabelColor)
+        text(unavailable ? "—" : "\(Int(percent.rounded()))%", in: NSRect(x: width - 62, y: 8, width: 50, height: 20), font: Palette.value, alignment: .right)
+        capsuleBar(percent: unavailable ? 0 : percent, in: NSRect(x: 12, y: 35, width: width - 24, height: 5), tint: tint)
+        text(detail, in: NSRect(x: 12, y: 47, width: width - 24, height: 15), font: Palette.caption, color: .secondaryLabelColor)
         }
     }
 }
@@ -121,19 +99,34 @@ private final class DashboardNetworkView: DashboardCardView {
         autoreleasepool {
         super.draw(dirtyRect)
         let half = bounds.width / 2
-        text("↓", in: NSRect(x: 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemBlue)
-        text("下载速率", in: NSRect(x: 40, y: 10, width: half - 45, height: 16), size: 10, color: secondaryTextColor)
-        text(metrics.menuBarDownloadFormatted, in: NSRect(x: 40, y: 27, width: half - 45, height: 18), size: 12, weight: .semibold)
-        NSColor.separatorColor.withAlphaComponent(0.25).setStroke()
-        let divider = NSBezierPath(); divider.move(to: NSPoint(x: half, y: 12)); divider.line(to: NSPoint(x: half, y: 42)); divider.stroke()
-        text("↑", in: NSRect(x: half + 12, y: 14, width: 20, height: 24), size: 18, weight: .medium, color: .systemTeal)
-        text("上传速率", in: NSRect(x: half + 40, y: 10, width: half - 48, height: 16), size: 10, color: secondaryTextColor)
-        text(metrics.menuBarUploadFormatted, in: NSRect(x: half + 40, y: 27, width: half - 48, height: 18), size: 12, weight: .semibold)
+        let channels: [(String, String, String, NSColor)] = [
+            ("arrow.down", "下载", metrics.menuBarDownloadFormatted, Palette.download),
+            ("arrow.up", "上传", metrics.menuBarUploadFormatted, Palette.upload)
+        ]
+        for (index, channel) in channels.enumerated() {
+            let x = CGFloat(index) * half
+            let badge = NSRect(x: x + 10, y: (bounds.height - 26) / 2, width: 26, height: 26)
+            channel.3.withAlphaComponent(0.16).setFill()
+            NSBezierPath(ovalIn: badge).fill()
+            symbol(channel.0, in: badge, size: 11, weight: .bold, tint: channel.3)
+            text(channel.1, in: NSRect(x: x + 40, y: 9, width: half - 46, height: 15), font: Palette.caption, color: .secondaryLabelColor)
+            text(channel.2, in: NSRect(x: x + 40, y: 24, width: half - 46, height: 18), font: Palette.valueSmall)
+        }
+        Palette.cardStroke.setStroke()
+        let divider = NSBezierPath(); divider.move(to: NSPoint(x: half, y: 12)); divider.line(to: NSPoint(x: half, y: bounds.height - 12)); divider.stroke()
         }
     }
 }
 
 private final class DashboardSwitchView: DashboardCardView {
+    private static let titles = ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"]
+    private static let symbols = ["cup.and.saucer.fill", "menubar.dock.rectangle", "eye.fill", "moon.fill"]
+    private static let descriptions = [
+        ("屏幕保持唤醒", "遵循系统休眠设置"),
+        ("桌面图标已隐藏", "桌面图标正常显示"),
+        ("隐藏文件已显示", "隐藏文件保持收起"),
+        ("当前为深色外观", "当前为浅色外观")
+    ]
     let index: Int
     let control = NSSwitch()
     var active = false { didSet { needsDisplay = true } }
@@ -149,17 +142,13 @@ private final class DashboardSwitchView: DashboardCardView {
         defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         super.draw(dirtyRect)
-        let titles = ["保持常亮", "隐藏桌面", "显示隐藏文件", "深色模式"]
-        let tints: [NSColor] = [.systemOrange, .systemBlue, .systemPurple, .systemIndigo]
-        let descriptions = [
-            ("屏幕保持唤醒", "遵循系统休眠设置"),
-            ("桌面图标已隐藏", "桌面图标正常显示"),
-            ("隐藏文件已显示", "隐藏文件保持收起"),
-            ("当前为深色外观", "当前为浅色外观")
-        ]
-        icon(index + 4, in: NSRect(x: 12, y: 15, width: 18, height: 18), tint: tints[index])
-        text(titles[index], in: NSRect(x: 42, y: 7, width: bounds.width - 110, height: 17), size: 12, weight: .semibold)
-        text(active ? descriptions[index].0 : descriptions[index].1, in: NSRect(x: 42, y: 23, width: bounds.width - 110, height: 14), size: 10, color: secondaryTextColor)
+        let badge = NSRect(x: 10, y: (bounds.height - 26) / 2, width: 26, height: 26)
+        (active ? Palette.accent.withAlphaComponent(0.16) : Palette.track).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: 7, yRadius: 7).fill()
+        symbol(Self.symbols[index], in: badge, size: 12, tint: active ? Palette.accent : .secondaryLabelColor)
+        text(Self.titles[index], in: NSRect(x: 46, y: 5, width: bounds.width - 110, height: 17), font: Palette.bodyStrong)
+        let description = active ? Self.descriptions[index].0 : Self.descriptions[index].1
+        text(description, in: NSRect(x: 46, y: 22, width: bounds.width - 110, height: 15), font: Palette.caption, color: .secondaryLabelColor)
         }
     }
 }
@@ -199,83 +188,109 @@ private final class DetailVisualView: DashboardCardView {
         autoreleasepool {
         super.draw(dirtyRect)
         let width = bounds.width
+        let loadChart = NSRect(x: 12, y: 120, width: width - 24, height: bounds.height - 132)
         switch kind {
         case "cpu":
-            trio([(metrics.cpuUserUsage, "用户"), (metrics.cpuUsage, "总负载"), (metrics.cpuSystemUsage, "系统")])
-            history(metrics.cpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
+            trio([
+                (metrics.cpuUserUsage, "用户", Palette.accent),
+                (metrics.cpuUsage, "总负载", Palette.tint(for: metrics.cpuUsage)),
+                (metrics.cpuSystemUsage, "系统", Palette.secondarySeries)
+            ])
+            sectionLabel("负载历史")
+            history(metrics.cpuHistory, in: loadChart, tint: Palette.tint(for: metrics.cpuUsage), maximum: 100)
         case "gpu":
             if metrics.gpuAvailable {
-                trio([(metrics.gpuRenderUsage, "渲染"), (metrics.gpuUsage, "GPU"), (metrics.gpuTilerUsage, "Tiler")])
+                trio([
+                    (metrics.gpuRenderUsage, "渲染", Palette.accent),
+                    (metrics.gpuUsage, "GPU", Palette.tint(for: metrics.gpuUsage)),
+                    (metrics.gpuTilerUsage, "Tiler", Palette.secondarySeries)
+                ])
             } else {
-                text("GPU 读数不可用", in: NSRect(x: 12, y: 37, width: width - 24, height: 25), size: 13, color: secondaryTextColor, alignment: .center)
+                text("GPU 读数不可用", in: NSRect(x: 12, y: 38, width: width - 24, height: 20), font: Palette.bodyStrong, color: .secondaryLabelColor, alignment: .center)
             }
-            history(metrics.gpuHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
+            sectionLabel("负载历史")
+            history(metrics.gpuHistory, in: loadChart, tint: Palette.tint(for: metrics.gpuUsage), maximum: 100)
         case "ram":
-            ring(center: NSPoint(x: width / 2, y: 48), radius: 31, percent: Double(metrics.ramPercent), tint: .systemBlue)
-            text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 38, width: 60, height: 24), size: 18, weight: .semibold, alignment: .center)
-            text("内存占用 · 压力\(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 82, width: width - 24, height: 16), size: 11, color: secondaryTextColor, alignment: .center)
-            history(metrics.ramHistory, in: NSRect(x: 12, y: 113, width: width - 24, height: bounds.height - 125), tint: .systemBlue, maximum: 100)
+            let percent = Double(metrics.ramPercent)
+            let tint = Palette.tint(for: percent)
+            ring(center: NSPoint(x: width / 2, y: 42), radius: 30, lineWidth: 7, percent: percent, tint: tint)
+            text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 31, width: 60, height: 24), font: Palette.value, alignment: .center)
+            text("内存压力 · \(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 80, width: width - 24, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
+            sectionLabel("占用历史")
+            history(metrics.ramHistory, in: loadChart, tint: tint, maximum: 100)
         case "disk":
-            text("读取  \(metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : "—")", in: NSRect(x: 12, y: 12, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemBlue)
-            text("写入  \(metrics.diskIOAvailable ? metrics.diskWriteSpeedFormatted : "—")", in: NSRect(x: 12, y: 34, width: width - 24, height: 20), size: 12, weight: .semibold, color: .systemRed)
+            let read = metrics.diskIOAvailable ? formatRate(metrics.diskReadBytesSec) : "—"
+            let write = metrics.diskIOAvailable ? formatRate(metrics.diskWriteBytesSec) : "—"
+            stats([("读取", read, Palette.accent), ("写入", write, Palette.secondarySeries)])
             let maxRate = max(1, (metrics.diskReadHistory + metrics.diskWriteHistory).max() ?? 1)
-            let diskChart = NSRect(x: 12, y: 65, width: width - 24, height: bounds.height - 128)
-            history(metrics.diskReadHistory, in: diskChart, tint: .systemBlue, maximum: maxRate)
-            history(metrics.diskWriteHistory, in: diskChart, tint: .systemRed, maximum: maxRate, background: false)
-            bar(percent: Double(metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 47, width: width - 24, height: 8), tint: .systemBlue)
-            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 31, width: width - 24, height: 16), size: 10, color: secondaryTextColor)
+            let diskChart = NSRect(x: 12, y: 58, width: width - 24, height: bounds.height - 106)
+            history(metrics.diskReadHistory, in: diskChart, tint: Palette.accent, maximum: maxRate)
+            history(metrics.diskWriteHistory, in: diskChart, tint: Palette.secondarySeries, maximum: maxRate, grid: false)
+            let usage = Double(metrics.diskPercent)
+            capsuleBar(percent: usage, in: NSRect(x: 12, y: bounds.height - 38, width: width - 24, height: 6), tint: Palette.tint(for: usage))
+            text(String(format: "已用 %.1f / %.1f GB · %d%%", metrics.diskUsedGB, metrics.diskTotalGB, metrics.diskPercent), in: NSRect(x: 12, y: bounds.height - 26, width: width - 24, height: 15), font: Palette.caption, color: .secondaryLabelColor)
         case "network":
-            text("↓ \(metrics.downloadSpeedFormatted)/s", in: NSRect(x: 12, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemBlue)
-            text("↑ \(metrics.uploadSpeedFormatted)/s", in: NSRect(x: width / 2, y: 18, width: width / 2 - 12, height: 28), size: 17, weight: .semibold, color: .systemRed)
-            text("下载", in: NSRect(x: 12, y: 50, width: width / 2 - 12, height: 16), size: 10, color: secondaryTextColor)
-            text("上传", in: NSRect(x: width / 2, y: 50, width: width / 2 - 12, height: 16), size: 10, color: secondaryTextColor)
+            stats([("下载", metrics.menuBarDownloadFormatted, Palette.download), ("上传", metrics.menuBarUploadFormatted, Palette.upload)])
             let maxRate = max(1, (downloadHistory + uploadHistory).max() ?? 1)
-            let networkChart = NSRect(x: 12, y: 87, width: width - 24, height: max(18, bounds.height - 147))
-            history(downloadHistory, in: networkChart, tint: .systemBlue, maximum: maxRate)
-            history(uploadHistory, in: networkChart, tint: .systemRed, maximum: maxRate, background: false)
-            text("下载峰值", in: NSRect(x: 12, y: bounds.height - 48, width: 90, height: 18), size: 11, color: secondaryTextColor)
-            text(rate(downloadHistory.max() ?? 0), in: NSRect(x: 112, y: bounds.height - 48, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
-            text("上传峰值", in: NSRect(x: 12, y: bounds.height - 25, width: 90, height: 18), size: 11, color: secondaryTextColor)
-            text(rate(uploadHistory.max() ?? 0), in: NSRect(x: 112, y: bounds.height - 25, width: width - 124, height: 18), size: 11, weight: .semibold, alignment: .right)
+            let networkChart = NSRect(x: 12, y: 58, width: width - 24, height: bounds.height - 106)
+            history(downloadHistory, in: networkChart, tint: Palette.download, maximum: maxRate)
+            history(uploadHistory, in: networkChart, tint: Palette.upload, maximum: maxRate, grid: false)
+            let peaks = "峰值  ↓ \(formatRate(downloadHistory.max() ?? 0))   ↑ \(formatRate(uploadHistory.max() ?? 0))"
+            text(peaks, in: NSRect(x: 12, y: bounds.height - 30, width: width - 24, height: 16), font: Palette.caption, color: .secondaryLabelColor)
         default: break
         }
-        if kind == "network" {
-            text("传输历史", in: NSRect(x: 12, y: 74, width: width - 24, height: 14), size: 10, color: secondaryTextColor)
-        } else if kind != "disk" {
-            text("负载历史", in: NSRect(x: 12, y: 101, width: width - 24, height: 14), size: 10, color: secondaryTextColor)
-        }
         }
     }
 
-    private func trio(_ values: [(Double, String)]) {
-        let centers: [CGFloat] = [49, bounds.width / 2, bounds.width - 49]
+    private func sectionLabel(_ title: String) {
+        text(title, in: NSRect(x: 12, y: 100, width: bounds.width - 24, height: 14), font: Palette.captionStrong, color: .secondaryLabelColor)
+    }
+
+    /// 两列读数：彩色圆点 + 标签，下方大号数值。
+    private func stats(_ values: [(String, String, NSColor)]) {
+        let column = (bounds.width - 24) / CGFloat(values.count)
+        for (index, value) in values.enumerated() {
+            let x = 12 + CGFloat(index) * column
+            value.2.setFill()
+            NSBezierPath(ovalIn: NSRect(x: x, y: 16, width: 7, height: 7)).fill()
+            text(value.0, in: NSRect(x: x + 12, y: 12, width: column - 16, height: 15), font: Palette.caption, color: .secondaryLabelColor)
+            text(value.1, in: NSRect(x: x, y: 28, width: column - 8, height: 22), font: Palette.valueLarge)
+        }
+    }
+
+    private func trio(_ values: [(Double, String, NSColor)]) {
+        let centers: [CGFloat] = [48, bounds.width / 2, bounds.width - 48]
         for index in 0..<3 {
-            let radius: CGFloat = index == 1 ? 27 : 22
-            ring(center: NSPoint(x: centers[index], y: 43), radius: radius, percent: values[index].0, tint: .systemBlue)
-            text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 34, y: 34, width: 68, height: 20), size: index == 1 ? 13 : 11, weight: .semibold, alignment: .center)
-            text(values[index].1, in: NSRect(x: centers[index] - 38, y: 77, width: 76, height: 15), size: 10, color: secondaryTextColor, alignment: .center)
+            let primary = index == 1
+            ring(center: NSPoint(x: centers[index], y: 42), radius: primary ? 29 : 23, lineWidth: primary ? 7 : 5, percent: values[index].0, tint: values[index].2)
+            text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, alignment: .center)
+            text(values[index].1, in: NSRect(x: centers[index] - 38, y: 76, width: 76, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
         }
     }
 
-    private func ring(center: NSPoint, radius: CGFloat, percent: Double, tint: NSColor) {
+    private func ring(center: NSPoint, radius: CGFloat, lineWidth: CGFloat, percent: Double, tint: NSColor) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         defer { context.restoreGState() }
-        context.setLineWidth(8)
+        context.setLineWidth(lineWidth)
         context.setLineCap(.round)
-        context.setStrokeColor(NSColor.labelColor.withAlphaComponent(0.18).cgColor)
+        context.setStrokeColor(Palette.track.cgColor)
         context.strokeEllipse(in: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
         let fraction = min(100, max(0, percent)) / 100
         guard fraction > 0 else { return }
         context.setStrokeColor(tint.cgColor)
-        context.addArc(center: center, radius: radius, startAngle: .pi / 2, endAngle: .pi / 2 - CGFloat(fraction) * 2 * .pi, clockwise: true)
+        context.addArc(center: center, radius: radius, startAngle: -.pi / 2, endAngle: -.pi / 2 + CGFloat(fraction) * 2 * .pi, clockwise: false)
         context.strokePath()
     }
 
-    private func history(_ samples: [Double], in rect: NSRect, tint: NSColor, maximum: Double, background: Bool = true) {
-        if background {
-            NSColor.labelColor.withAlphaComponent(0.08).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+    private func history(_ samples: [Double], in rect: NSRect, tint: NSColor, maximum: Double, grid: Bool = true) {
+        if grid {
+            Palette.gridLine.setStroke()
+            for step in 0...2 {
+                let y = rect.minY + rect.height * CGFloat(step) / 2
+                let line = NSBezierPath(); line.move(to: NSPoint(x: rect.minX, y: y)); line.line(to: NSPoint(x: rect.maxX, y: y))
+                line.lineWidth = 1; line.stroke()
+            }
         }
         guard samples.count > 1 else { return }
         let points = samples.enumerated().map { index, sample in
@@ -286,29 +301,20 @@ private final class DetailVisualView: DashboardCardView {
         points.forEach { area.line(to: $0) }
         area.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
         area.close()
-        tint.withAlphaComponent(0.28).setFill(); area.fill()
+        tint.withAlphaComponent(0.16).setFill(); area.fill()
         let path = NSBezierPath(); path.move(to: points[0]); points.dropFirst().forEach { path.line(to: $0) }
-        path.lineWidth = 1.5; tint.setStroke(); path.stroke()
-    }
-
-    private func bar(percent: Double, in rect: NSRect, tint: NSColor) {
-        NSColor.separatorColor.setFill(); NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
-        tint.setFill(); NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.minY, width: rect.width * CGFloat(min(100, max(0, percent))) / 100, height: rect.height), xRadius: 4, yRadius: 4).fill()
-    }
-    private func rate(_ bytes: Double) -> String {
-        if bytes >= 1_048_576 { return String(format: "%.1f MB/s", bytes / 1_048_576) }
-        if bytes >= 1024 { return String(format: "%.0f KB/s", bytes / 1024) }
-        return String(format: "%.0f B/s", bytes)
+        path.lineWidth = 1.5; path.lineJoinStyle = .round; tint.setStroke(); path.stroke()
     }
 }
 
 private final class DetailRowsView: DashboardCardView {
+    override var drawsCard: Bool { false }
     var kind: String { didSet { updateAccessibility(); needsDisplay = true } }
     var metrics: SystemMetrics { didSet { updateAccessibility(); needsDisplay = true } }
     init(kind: String, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero); updateAccessibility() }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     var rowCount: Int { entries.count }
-    var idealHeight: CGFloat { 24 + CGFloat(rowCount) * 24 }
+    var idealHeight: CGFloat { 24 + CGFloat(rowCount) * 22 }
     private func updateAccessibility() {
         setAccessibilityElement(true)
         setAccessibilityLabel(entries.map { "\($0.0) \($0.1)" }.joined(separator: ", "))
@@ -343,22 +349,22 @@ private final class DetailRowsView: DashboardCardView {
             ("共享容器已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
             ("共享容器总容量", String(format: "%.1f GB", metrics.diskTotalGB)),
             ("可用空间", String(format: "%.1f GB", metrics.diskFreeGB)),
-            ("物理磁盘读取", metrics.diskIOAvailable ? metrics.diskReadSpeedFormatted : (metrics.diskIOPending ? "采样中…" : "不可用")),
-            ("物理磁盘写入", metrics.diskIOAvailable ? metrics.diskWriteSpeedFormatted : (metrics.diskIOPending ? "采样中…" : "不可用"))
+            ("物理磁盘读取", metrics.diskIOAvailable ? formatRate(metrics.diskReadBytesSec) : (metrics.diskIOPending ? "采样中…" : "不可用")),
+            ("物理磁盘写入", metrics.diskIOAvailable ? formatRate(metrics.diskWriteBytesSec) : (metrics.diskIOPending ? "采样中…" : "不可用"))
         ]
-        default: return [("下载速率", "\(metrics.downloadSpeedFormatted)/s"), ("上传速率", "\(metrics.uploadSpeedFormatted)/s")]
+        default: return [("下载速率", metrics.menuBarDownloadFormatted), ("上传速率", metrics.menuBarUploadFormatted)]
         }
     }
     override func draw(_ dirtyRect: NSRect) {
         defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
-        text("详细信息", in: NSRect(x: 0, y: 0, width: bounds.width, height: 16), size: 10, color: secondaryTextColor, alignment: .center)
-        NSColor.separatorColor.withAlphaComponent(0.35).setStroke()
-        let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 18)); line.line(to: NSPoint(x: bounds.width, y: 18)); line.stroke()
+        text("详细信息", in: NSRect(x: 2, y: 0, width: bounds.width - 4, height: 15), font: Palette.captionStrong, color: .secondaryLabelColor)
+        Palette.cardStroke.setStroke()
+        let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 19.5)); line.line(to: NSPoint(x: bounds.width, y: 19.5)); line.stroke()
         for (index, entry) in entries.enumerated() {
-            let y = CGFloat(index) * 24 + 25
-            text(entry.0, in: NSRect(x: 0, y: y, width: 130, height: 18), size: 12, color: secondaryTextColor)
-            text(entry.1, in: NSRect(x: 132, y: y, width: bounds.width - 132, height: 18), size: 12, weight: .semibold, alignment: .right)
+            let y = CGFloat(index) * 22 + 25
+            text(entry.0, in: NSRect(x: 2, y: y, width: 130, height: 17), font: Palette.body, color: .secondaryLabelColor)
+            text(entry.1, in: NSRect(x: 134, y: y, width: bounds.width - 136, height: 17), font: Palette.valueSmall, alignment: .right)
         }
         }
     }
@@ -373,6 +379,7 @@ final class NativePanelController: NSViewController {
     private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘", "网络"], trackingMode: .selectOne, target: nil, action: nil)
     private var subscription: AnyCancellable?
     private var tabSubscription: AnyCancellable?
+    private var aboutSubscription: AnyCancellable?
     private var errorSubscription: AnyCancellable?
     private var switchSubscription: AnyCancellable?
     private var pendingSubscription: AnyCancellable?
@@ -395,36 +402,39 @@ final class NativePanelController: NSViewController {
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 8
-        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
-        let brand = NSImageView(image: NSImage(systemSymbolName: "slider.horizontal.2.square.on.square", accessibilityDescription: nil)!)
-        brand.contentTintColor = .systemIndigo
-        brand.symbolConfiguration = .init(pointSize: 16, weight: .semibold)
-        let header = NSStackView(views: [brand, label("AetherSwitch", size: 15, weight: .semibold), spacer(), iconButton("arrow.clockwise", hint: "刷新硬件状态", action: #selector(refresh)), iconButton("info.circle", hint: "关于 AetherSwitch", action: #selector(about))])
+        root.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 10, right: 12)
+        let brand = NSImageView(image: BrandGlyph.templateImage(size: NSSize(width: 17, height: 15)))
+        brand.contentTintColor = Palette.accent
+        let header = NSStackView(views: [brand, label("AetherSwitch", font: .systemFont(ofSize: 14, weight: .semibold)), spacer(), iconButton("arrow.clockwise", hint: "刷新硬件状态", action: #selector(refresh)), iconButton("info.circle", hint: "关于 AetherSwitch", action: #selector(about))])
         header.orientation = .horizontal
-        header.spacing = 8
+        header.spacing = 6
         root.addArrangedSubview(header)
         tabs.controlSize = .small
+        tabs.segmentDistribution = .fillEqually
         tabs.target = self
         tabs.action = #selector(selectTab)
-        tabs.selectedSegment = tabNames.firstIndex(of: state.selectedTab) ?? 0
+        tabs.selectedSegment = state.showAbout ? -1 : tabNames.firstIndex(of: state.selectedTab) ?? 0
         root.addArrangedSubview(tabs)
         content.wantsLayer = true
         content.canDrawSubviewsIntoLayer = true
         content.layerContentsRedrawPolicy = .onSetNeedsDisplay
         content.orientation = .vertical
         content.alignment = .leading
-        content.spacing = 6
+        content.spacing = 8
         root.addArrangedSubview(content)
-        updateButton = button("检查更新", action: #selector(checkUpdate))
-        let footer = NSStackView(views: [label("v\(UpdateManager.shared.currentVersion)", size: 11), spacer(), updateButton, button("退出", action: #selector(quit))])
+        updateButton = footerButton("检查更新", symbol: "arrow.triangle.2.circlepath", action: #selector(checkUpdate))
+        let version = label("v\(UpdateManager.shared.currentVersion)", font: Palette.caption)
+        version.textColor = .tertiaryLabelColor
+        let footer = NSStackView(views: [version, spacer(), updateButton, footerButton("退出", symbol: "power", action: #selector(quit))])
+        footer.spacing = 12
         root.addArrangedSubview(footer)
-        updateMessage.font = .systemFont(ofSize: 11)
+        updateMessage.font = Palette.caption
         updateMessage.textColor = .secondaryLabelColor
         updateMessage.isHidden = true
         root.addArrangedSubview(updateMessage)
         updateMessage.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         let errorField = NSTextField(wrappingLabelWithString: "")
-        errorField.font = .systemFont(ofSize: 11)
+        errorField.font = Palette.caption
         errorField.textColor = .systemRed
         root.addArrangedSubview(errorField)
         errorField.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
@@ -461,8 +471,16 @@ final class NativePanelController: NSViewController {
         }
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
+            // 关于页显示期间只记录标签，关闭关于页时再重建目标页面。
+            guard !self.state.showAbout else { return }
             self.tabs.selectedSegment = self.tabNames.firstIndex(of: tab) ?? 0
             self.rebuild(tab: tab)
+        }
+        // @Published 在属性写入前发出新值，因此把新值直接传给 rebuild。
+        aboutSubscription = state.$showAbout.dropFirst().removeDuplicates().sink { [weak self] showing in
+            guard let self else { return }
+            self.tabs.selectedSegment = showing ? -1 : self.tabNames.firstIndex(of: self.state.selectedTab) ?? 0
+            self.rebuild(about: showing)
         }
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
@@ -482,7 +500,7 @@ final class NativePanelController: NSViewController {
         }
     }
 
-    private func rebuild(tab requestedTab: String? = nil) {
+    private func rebuild(tab requestedTab: String? = nil, about requestedAbout: Bool? = nil) {
         autoreleasepool {
             let oldViews = content.arrangedSubviews
             let oldObjects = oldViews.map { $0 as AnyObject }
@@ -499,6 +517,11 @@ final class NativePanelController: NSViewController {
         // Return freed overview controls and drawing allocations before building
         // the next page; otherwise malloc keeps both pages resident at the peak.
         malloc_zone_pressure_relief(nil, 0)
+        if requestedAbout ?? state.showAbout {
+            aboutPage()
+            updatePreferredSize()
+            return
+        }
         let tab = requestedTab ?? state.selectedTab
         switch tab {
         case "cpu":
@@ -531,15 +554,14 @@ final class NativePanelController: NSViewController {
                 pair.distribution = .fillEqually
                 content.addArrangedSubview(pair)
                 pair.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                pair.heightAnchor.constraint(equalToConstant: 62).isActive = true
+                pair.heightAnchor.constraint(equalToConstant: 68).isActive = true
             }
             let network = DashboardNetworkView(metrics: state.metrics)
             networkTile = network
             content.addArrangedSubview(network)
             network.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-            network.heightAnchor.constraint(equalToConstant: 46).isActive = true
-            let separator = NSBox(); separator.boxType = .separator; content.addArrangedSubview(separator)
-            separator.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+            network.heightAnchor.constraint(equalToConstant: 50).isActive = true
+            content.setCustomSpacing(14, after: network)
             let current = state.switches
             let active = [current.isKeepAwakeActive, current.isDesktopHidden, current.isHiddenFilesVisible, current.isDarkModeActive]
             for index in 0..<4 {
@@ -556,7 +578,7 @@ final class NativePanelController: NSViewController {
                 switchTiles.append(tile)
                 content.addArrangedSubview(tile)
                 tile.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-                tile.heightAnchor.constraint(equalToConstant: 38).isActive = true
+                tile.heightAnchor.constraint(equalToConstant: 42).isActive = true
             }
         }
         let current = state.switches
@@ -586,6 +608,7 @@ final class NativePanelController: NSViewController {
         panel.metrics = state.metrics
         detailRows = panel
         content.addArrangedSubview(panel)
+        content.setCustomSpacing(14, after: detailVisual ?? panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         if let detailRowsHeight { detailRowsHeight.constant = panel.idealHeight }
         else {
@@ -614,32 +637,83 @@ final class NativePanelController: NSViewController {
     private func note(_ text: String) {
         let field = detailNote ?? NSTextField(wrappingLabelWithString: text)
         if detailNote == nil {
-            field.font = .systemFont(ofSize: 11)
-            field.textColor = .secondaryLabelColor
+            field.font = Palette.caption
+            field.textColor = .tertiaryLabelColor
             detailNote = field
         }
         field.stringValue = text
         content.addArrangedSubview(field)
         field.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
     }
-    private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular) -> NSTextField {
+    /// 面板内的"关于"页，替代阻塞式的 NSAlert。
+    private func aboutPage() {
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 64).isActive = true
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "开发版本"
+        let version = label("版本 \(UpdateManager.shared.currentVersion)（构建 \(build)）", font: Palette.caption)
+        version.textColor = .secondaryLabelColor
+        let summary = NSTextField(wrappingLabelWithString: "菜单栏系统监控与快捷开关。所有指标均在本机采集，不上传到任何服务器。")
+        summary.font = Palette.caption
+        summary.textColor = .secondaryLabelColor
+        summary.alignment = .center
+        let links = NSStackView(views: [
+            linkButton("官方网站", tag: 0), linkButton("GitHub", tag: 1), linkButton("问题反馈", tag: 2)
+        ])
+        links.spacing = 14
+        let back = NSButton(title: "返回", target: self, action: #selector(closeAbout))
+        back.controlSize = .small
+        let stack = NSStackView(views: [icon, label("AetherSwitch", font: .systemFont(ofSize: 15, weight: .semibold)), version, summary, links, back])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.setCustomSpacing(12, after: icon)
+        stack.setCustomSpacing(14, after: summary)
+        stack.setCustomSpacing(16, after: links)
+        stack.edgeInsets = NSEdgeInsets(top: 28, left: 16, bottom: 20, right: 16)
+        content.addArrangedSubview(stack)
+        stack.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        summary.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+    }
+    private func label(_ text: String, font: NSFont) -> NSTextField {
         let field = NSTextField(labelWithString: text)
-        field.font = .systemFont(ofSize: size, weight: weight)
+        field.font = font
         return field
     }
     private func spacer() -> NSView { let v = NSView(); v.setContentHuggingPriority(.defaultLow, for: .horizontal); return v }
-    private func button(_ title: String, action: Selector) -> NSButton {
-        let control = NSButton(title: title, target: self, action: action)
-        control.controlSize = .small
+    private func footerButton(_ title: String, symbol: String, action: Selector) -> NSButton {
+        let control = NSButton(title: title, image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil)!, target: self, action: action)
+        control.isBordered = false
+        control.imagePosition = .imageLeading
+        control.imageHugsTitle = true
+        control.font = Palette.caption
+        control.symbolConfiguration = .init(pointSize: 10, weight: .medium)
+        control.contentTintColor = .secondaryLabelColor
+        return control
+    }
+    private func linkButton(_ title: String, tag: Int) -> NSButton {
+        let control = NSButton(title: title, target: self, action: #selector(openLink(_:)))
+        control.isBordered = false
+        control.font = Palette.captionStrong
+        control.contentTintColor = Palette.accent
+        control.tag = tag
         return control
     }
     private func iconButton(_ symbol: String, hint: String, action: Selector) -> NSButton {
         let control = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: hint)!, target: self, action: action)
         control.isBordered = false
+        control.symbolConfiguration = .init(pointSize: 12, weight: .medium)
+        control.contentTintColor = .secondaryLabelColor
         control.toolTip = hint
         return control
     }
-    @objc private func selectTab() { state.selectedTab = tabNames[tabs.selectedSegment] }
+    @objc private func selectTab() {
+        guard tabs.selectedSegment >= 0 else { return }
+        let tab = tabNames[tabs.selectedSegment]
+        state.selectedTab = tab
+        if state.showAbout { state.showAbout = false }
+    }
     @objc private func refresh() { state.refreshFull() }
     @objc private func toggle(_ sender: NSSwitch) {
         switch sender.tag {
@@ -649,13 +723,11 @@ final class NativePanelController: NSViewController {
         default: state.toggleDarkMode()
         }
     }
-    @objc func about() {
-        let alert = NSAlert()
-        alert.messageText = "AetherSwitch \(UpdateManager.shared.currentVersion)"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "开发版本"
-        alert.informativeText = "系统状态与快捷开关\n构建 \(build)\n\n系统指标在本机采集，不上传到服务器。"
-        alert.addButton(withTitle: "完成")
-        alert.runModal()
+    @objc func about() { state.showAbout.toggle() }
+    @objc private func closeAbout() { state.showAbout = false }
+    @objc private func openLink(_ sender: NSButton) {
+        let urls = ["https://aethernative.com", "https://github.com/bcblr1993/AetherSwitch", "https://github.com/bcblr1993/AetherSwitch/issues"]
+        NSWorkspace.shared.open(URL(string: urls[sender.tag])!)
     }
     @objc func checkUpdate() {
         if case .available = UpdateManager.shared.status {

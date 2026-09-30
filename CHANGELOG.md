@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-09-30
+
+### Added
+- 全新「叠放滑杆」App 图标，菜单栏、按钮图标与面板标题使用同一图形；`scripts/generate_icon.swift` 可重新生成图标。
+- 面板内「关于」页面，提供版本、构建号与官网、GitHub、问题反馈入口，替代阻塞式对话框。
+- 验收日志记录每一步的进程物理内存峰值，便于定位切页峰值。
+
+### Changed
+- 面板与菜单栏统一使用 70% / 85% 负载阈值；红色只表示过载，上传与磁盘写入不再使用告警红。
+- 菜单栏常态数值跟随系统文字色，在任何壁纸下保持清晰。
+- 面板改用 SF Symbols 图标、半透明卡片、等宽数字与统一字号；环形图按负载着色，图表增加网格线。
+- 网络与磁盘速率统一显示为「数值 + 单位」。
+
+### Fixed
+- 内存卡片不论负载都显示红色。
+
+### Removed
+- 未参与编译的 SwiftUI 面板与组件（含写死的假温度读数）。
+
 ## [1.0.2] - 2026-09-30
 
 ### Fixed
