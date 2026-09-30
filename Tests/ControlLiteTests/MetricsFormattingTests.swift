@@ -144,32 +144,31 @@ final class MetricsFormattingTests: XCTestCase {
     }
 
     @MainActor
-    func testNativePanelShowsUpdateResultsAndRetry() throws {
+    func testNativePanelShowsAvailableUpdate() throws {
         let manager = UpdateManager.shared
         let originalVersion = manager.currentVersion
-        let originalStatus = manager.status
-        defer { manager.setVersionForSnapshot(version: originalVersion, status: originalStatus) }
-        manager.setVersionForSnapshot(status: .idle)
+        let originalAvailable = manager.availableVersion
+        defer { manager.setVersionForSnapshot(version: originalVersion, availableVersion: originalAvailable) }
+        manager.setVersionForSnapshot(availableVersion: nil)
         let controller = NativePanelController()
         let root = controller.view
         func descendants(_ view: NSView) -> [NSView] {
             [view] + view.subviews.flatMap { descendants($0) }
         }
-        let initialHeight = controller.preferredContentSize.height
-        manager.setVersionForSnapshot(status: .checking)
-        let fields = descendants(root).compactMap { $0 as? NSTextField }
         let buttons = descendants(root).compactMap { $0 as? NSButton }
-        XCTAssertTrue(fields.contains { !$0.isHidden && $0.stringValue == "正在检查更新…" })
-        XCTAssertFalse(try XCTUnwrap(buttons.first { $0.title == "检查更新" }).isEnabled)
-        manager.setVersionForSnapshot(status: .failed(reason: "网络不可用，请稍后重试"))
-        XCTAssertTrue(fields.contains { !$0.isHidden && $0.stringValue == "网络不可用，请稍后重试" })
-        XCTAssertTrue(try XCTUnwrap(buttons.first { $0.title == "重试" }).isEnabled)
-        XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, initialHeight)
-        XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, root.fittingSize.height)
-        manager.setVersionForSnapshot(status: .available(version: "1.0.2", downloadURL: URL(string: "https://example.com/test.dmg")!))
-        XCTAssertTrue(buttons.contains { $0.title == "下载更新" })
-        manager.setVersionForSnapshot(status: .upToDate)
-        XCTAssertTrue(buttons.contains { $0.title == "已是最新" })
+        let initialHeight = controller.preferredContentSize.height
+        XCTAssertTrue(buttons.contains { $0.title == "检查更新" })
+        XCTAssertEqual(manager.checkTitle, "检查更新")
+
+        // Sparkle 发现新版本后，按钮改为"更新至 x.y.z"，弹窗尺寸不变。
+        manager.setVersionForSnapshot(availableVersion: "1.3.0")
+        XCTAssertTrue(buttons.contains { $0.title == "更新至 1.3.0" })
+        XCTAssertEqual(manager.checkTitle, "更新至 1.3.0")
+        XCTAssertEqual(controller.preferredContentSize.height, initialHeight)
+        XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1)
+
+        manager.setVersionForSnapshot(availableVersion: nil)
+        XCTAssertTrue(buttons.contains { $0.title == "检查更新" })
     }
 
 }

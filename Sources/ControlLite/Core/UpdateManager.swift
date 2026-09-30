@@ -1,98 +1,92 @@
 import Foundation
 import Combine
 import AppKit
+import Sparkle
 
-/// 自动更新状态
-public enum UpdateStatus: Equatable, Sendable {
-    case idle
-    case checking
-    case upToDate
-    case available(version: String, downloadURL: URL)
-    case downloading(progress: Double)
-    case readyToRestart(appPath: URL)
-    case failed(reason: String)
-}
-
-/// 自动检查更新与静默安装管理器
+/// 在线更新：调度、签名清单校验、下载、安装与重启全部交给 Sparkle，
+/// 这里不另设轮询，也不自行下载或执行未经验证的代码。
+/// 本类只负责启动 Sparkle、转发用户操作，并把"有新版本"的提示暴露给面板和菜单。
 @MainActor
-public final class UpdateManager: ObservableObject {
+public final class UpdateManager: NSObject, ObservableObject {
     public static let shared = UpdateManager()
 
-    @Published public private(set) var status: UpdateStatus = .idle
+    /// 开发构建（未打包、没有更新配置）无法使用 Sparkle 时的退路。
+    static let releasesPage = URL(string: "https://github.com/bcblr1993/AetherSwitch/releases/latest")!
+    static let bundleIdentifier = "com.aethernative.aetherswitch"
+
     @Published public private(set) var currentVersion: String = "1.0.0"
+    /// 已发现但尚未安装的新版本；由 Sparkle 的用户驱动回调维护。
+    @Published public private(set) var availableVersion: String?
 
-    private let updateCheckURL = URL(string: "https://api.github.com/repos/bcblr1993/AetherSwitch/releases/latest")!
+    private var controller: SPUStandardUpdaterController?
 
-    private init() {
-        if Bundle.main.bundleIdentifier == "com.aethernative.aetherswitch",
+    private override init() {
+        super.init()
+        if Bundle.main.bundleIdentifier == Self.bundleIdentifier,
            let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-            self.currentVersion = ver
-        } else {
-            self.currentVersion = "1.0.0"
+            currentVersion = ver
         }
     }
 
-    public func setVersionForSnapshot(version: String = "1.0.0", status: UpdateStatus = .upToDate) {
-        self.currentVersion = version
-        self.status = status
+    /// 只有正式打包（带清单地址与公钥）的 App 才启动 Sparkle。
+    public var isConfigured: Bool {
+        Bundle.main.bundleIdentifier == Self.bundleIdentifier
+            && Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
+            && Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") != nil
     }
 
-    /// 检查更新
-    public func checkForUpdates(manual: Bool = false) {
-        guard status != .checking else { return }
-        self.status = .checking
+    public var isRunning: Bool { controller != nil }
 
-        Task {
-            do {
-                var request = URLRequest(url: updateCheckURL)
-                request.timeoutInterval = 8.0
-                request.setValue("AetherSwitch/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpRes = response as? HTTPURLResponse, httpRes.statusCode == 200 else {
-                    // 若 GitHub 仓库未发布 release 或接口返回异常
-                    self.status = manual ? .failed(reason: "暂时无法检查更新，请稍后重试") : .idle
-                    return
-                }
-
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let tagName = json["tag_name"] as? String {
-                    let remoteVer = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
-                    
-                    if isRemoteNewer(current: currentVersion, remote: remoteVer) {
-                        // 寻找 dmg 下载资源
-                        var downloadURL = URL(string: "https://github.com/bcblr1993/AetherSwitch/releases/latest")!
-                        if let assets = json["assets"] as? [[String: Any]] {
-                            for asset in assets {
-                                if let name = asset["name"] as? String, name.hasSuffix(".dmg"),
-                                   let browserUrl = asset["browser_download_url"] as? String,
-                                   let url = URL(string: browserUrl) {
-                                    downloadURL = url
-                                    break
-                                }
-                            }
-                        }
-                        self.status = .available(version: remoteVer, downloadURL: downloadURL)
-                    } else {
-                        self.status = .upToDate
-                    }
-                } else {
-                    self.status = manual ? .failed(reason: "暂时无法检查更新，请稍后重试") : .idle
-                }
-            } catch {
-                self.status = manual ? .failed(reason: "暂时无法检查更新，请稍后重试") : .idle
-            }
+    public var automaticallyChecks: Bool {
+        get { controller?.updater.automaticallyChecksForUpdates ?? false }
+        set {
+            guard let updater = controller?.updater else { return }
+            updater.automaticallyChecksForUpdates = newValue
+            objectWillChange.send()
         }
     }
 
-    /// 触发自动更新安装流程
-    public func downloadAndInstall() {
-        guard case .available(_, let url) = status else { return }
-        // 由系统浏览器下载签名安装包，避免未经验证的脚本覆盖当前应用。
-        NSWorkspace.shared.open(url)
+    /// 面板底部按钮与右键菜单共用的标题。
+    public var checkTitle: String { availableVersion.map { "更新至 \($0)" } ?? "检查更新" }
+
+    public func start() {
+        guard controller == nil, isConfigured else { return }
+        let controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
+        self.controller = controller
+        controller.startUpdater()
     }
 
-    private func isRemoteNewer(current: String, remote: String) -> Bool {
-        return remote.compare(current, options: .numeric) == .orderedDescending
+    /// 用户主动检查：发现新版本后由 Sparkle 引导下载、安装并重启。
+    public func checkForUpdates() {
+        guard let controller else {
+            NSWorkspace.shared.open(Self.releasesPage)
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        controller.checkForUpdates(nil)
+    }
+
+    /// 测试与截图使用：直接设定版本与"有新版本"状态，不触碰真实更新器。
+    public func setVersionForSnapshot(version: String = "1.0.0", availableVersion: String? = nil) {
+        currentVersion = version
+        self.availableVersion = availableVersion
+    }
+}
+
+extension UpdateManager: SPUStandardUserDriverDelegate {
+    nonisolated public var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    /// 定时检查发现新版本时不弹窗打扰，只在面板和菜单里提示。
+    nonisolated public func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
+        false
+    }
+
+    nonisolated public func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem, state: SPUUserUpdateState) {
+        let version = update.displayVersionString
+        Task { @MainActor in self.availableVersion = version }
+    }
+
+    nonisolated public func standardUserDriverWillFinishUpdateSession() {
+        Task { @MainActor in self.availableVersion = nil }
     }
 }

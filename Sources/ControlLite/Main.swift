@@ -100,6 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // 1. 设置为附属模式（隐藏 Dock 栏图标，纯净菜单栏驻留）
         NSApp.setActivationPolicy(.accessory)
 
+        // 在线更新交给 Sparkle：每日静默检查，发现新版本只在面板和菜单里提示。
+        UpdateManager.shared.start()
+
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
         popover.behavior = .transient
@@ -198,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             queue: .main
         ) { _ in
             Task { @MainActor in
-                UpdateManager.shared.checkForUpdates(manual: true)
+                UpdateManager.shared.checkForUpdates()
             }
         }
 
@@ -397,7 +400,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(NSMenuItem(title: "问题反馈与建议 ↗", action: #selector(openIssuesAction), keyEquivalent: ""))
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "检查更新...", action: #selector(checkUpdateAction), keyEquivalent: "u"))
+        menu.addItem(NSMenuItem(title: UpdateManager.shared.checkTitle + "…", action: #selector(checkUpdateAction), keyEquivalent: "u"))
+        let autoCheck = NSMenuItem(title: "自动检查更新", action: #selector(toggleAutoCheckAction), keyEquivalent: "")
+        autoCheck.state = UpdateManager.shared.automaticallyChecks ? .on : .off
+        autoCheck.isEnabled = UpdateManager.shared.isRunning
+        menu.addItem(autoCheck)
         menu.addItem(NSMenuItem(title: "刷新数据", action: #selector(refreshAction), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出 AetherSwitch", action: #selector(quitAction), keyEquivalent: "q"))
@@ -434,8 +441,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func checkUpdateAction() {
-        if popover?.isShown != true { togglePopover() }
-        (popover?.contentViewController as? NativePanelController)?.checkUpdate()
+        UpdateManager.shared.checkForUpdates()
+    }
+
+    @objc private func toggleAutoCheckAction() {
+        UpdateManager.shared.automaticallyChecks.toggle()
     }
 
     @objc private func refreshAction() {
