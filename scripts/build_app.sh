@@ -11,9 +11,13 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.2.0"
-BUILD_NUMBER="2026093007"
+VERSION="1.3.0"
+BUILD_NUMBER="2026100101"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
+# 在线更新（Sparkle）：清单地址与更新签名公钥。公钥可公开，对应私钥只存在发布者的登录钥匙串（账户 AetherSwitch）。
+SPARKLE_FEED_URL="https://aethernative.com/apps/aetherswitch/appcast.xml"
+SPARKLE_PUBLIC_ED_KEY="Ks+dYalMGrthBEP6rSTv8Cjs9Um5R9a5VO6cXH6tDq0="
+SPARKLE_DIR="$PROJECT_DIR/.build/artifacts/sparkle/Sparkle"
 source "$PROJECT_DIR/scripts/signing_identity.sh"
 CERT_NAME="$(resolve_signing_identity)" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
@@ -49,6 +53,13 @@ mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources"
 BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
 cp "$BIN_DIR/ControlLite" "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 
+# 嵌入 Sparkle.framework（可执行文件的 rpath 指向 Contents/Frameworks）与许可证
+SPARKLE_FRAMEWORK="$SPARKLE_DIR/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+test -d "$SPARKLE_FRAMEWORK" || { echo "Sparkle.framework not found: $SPARKLE_FRAMEWORK (run swift package resolve)"; exit 1; }
+mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Frameworks"
+ditto "$SPARKLE_FRAMEWORK" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework"
+cp "$SPARKLE_DIR/LICENSE" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources/Sparkle-LICENSE"
+
 # 生成生产级 Info.plist
 cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -83,6 +94,26 @@ cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
     <string>AetherSwitch 通过系统事件切换 macOS 的浅色与深色外观。</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SUFeedURL</key>
+    <string>${SPARKLE_FEED_URL}</string>
+    <key>SUPublicEDKey</key>
+    <string>${SPARKLE_PUBLIC_ED_KEY}</string>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key>
+    <false/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUEnableSystemProfiling</key>
+    <false/>
+    <key>SUShowReleaseNotes</key>
+    <false/>
 </dict>
 </plist>
 EOF
@@ -93,9 +124,26 @@ fi
 
 echo "==> [4/5] 执行代码签名与完整性校验..."
 echo "使用官方证书签名: $CERT_NAME"
-codesign --force --deep --timestamp --options runtime --entitlements "$PROJECT_DIR/Resources/AetherSwitch.entitlements" --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
+# 由内到外签名：先签 Sparkle 的辅助程序与框架，最后签应用本体（不使用 --deep，避免把应用的权限声明套到内嵌代码上）。
+SPARKLE_EMBEDDED="$OUTPUT_DIR/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework"
+for COMPONENT in XPCServices/Installer.xpc XPCServices/Downloader.xpc Autoupdate Updater.app; do
+    codesign --force --timestamp --options runtime --sign "$CERT_NAME" "$SPARKLE_EMBEDDED/Versions/B/$COMPONENT"
+done
+codesign --force --timestamp --options runtime --sign "$CERT_NAME" "$SPARKLE_EMBEDDED"
+codesign --force --timestamp --options runtime --entitlements "$PROJECT_DIR/Resources/AetherSwitch.entitlements" --sign "$CERT_NAME" "$OUTPUT_DIR/${APP_NAME}.app"
 
 codesign --verify --deep --strict --verbose=2 "$OUTPUT_DIR/${APP_NAME}.app"
+
+# 在线更新链路自检：任何一项缺失或不匹配，已安装的用户就无法再在线升级，必须在发布前发现。
+APP_BUNDLE="$OUTPUT_DIR/${APP_NAME}.app"
+for KEY in SUFeedURL SUPublicEDKey SURequireSignedFeed SUVerifyUpdateBeforeExtraction; do
+    /usr/libexec/PlistBuddy -c "Print :$KEY" "$APP_BUNDLE/Contents/Info.plist" >/dev/null || { echo "Info.plist is missing $KEY"; exit 1; }
+done
+test -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" || { echo "Sparkle.framework is not embedded"; exit 1; }
+otool -l "$APP_BUNDLE/Contents/MacOS/${APP_NAME}" | grep -q "@executable_path/../Frameworks" || { echo "Executable has no rpath to Contents/Frameworks"; exit 1; }
+KEYCHAIN_PUBLIC_KEY="$("$SPARKLE_DIR/bin/generate_keys" --account AetherSwitch -p 2>/dev/null || true)"
+[ "$KEYCHAIN_PUBLIC_KEY" = "$SPARKLE_PUBLIC_ED_KEY" ] || { echo "SUPublicEDKey does not match the AetherSwitch signing key in the keychain"; exit 1; }
+echo "Update configuration verified (feed, public key, framework, rpath)."
 
 echo "==> [5/5] 生成 DMG 安装包与发布校验清单 SHA256SUMS.txt..."
 cd "$OUTPUT_DIR"
