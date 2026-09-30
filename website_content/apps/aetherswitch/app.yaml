@@ -4,7 +4,7 @@ order: 4
 repo: https://github.com/bcblr1993/AetherSwitch
 minimumSystemVersion: "14.0"
 icon: ./media/icon.png
-tech: [Swift 6, SwiftUI, Mach, IOKit, AppKit]
+tech: [Swift 6, AppKit, Mach, IOKit]
 
 tagline:
   zh: 极轻量 macOS 状态监控与高频快捷开关
@@ -44,13 +44,13 @@ showcase:
     zh: 告别臃肿后台常驻，将高频快捷开关与全方位硬件监控汇聚于纯净原生下拉面板。
     en: Strip away bloated background daemons. Essential quick toggles and comprehensive hardware telemetry in one native glassmorphism panel.
   note:
-    zh: 截图采集自 AetherSwitch 原生运行界面，各项监控数据由系统 Mach 内核与 IOKit 原生实时采样。
-    en: Captured directly from the running AetherSwitch native interface, sampled in real time via Darwin Mach kernel and IOKit.
+    zh: 截图由 AetherSwitch 原生视图直接渲染，数据来自本机实时采样；左侧为浅色外观，右侧为深色外观。
+    en: Rendered from AetherSwitch's native views with live local readings; light appearance on the left, dark on the right.
   items:
     - title: { zh: 5 栏等宽菜单栏，防抖对齐, en: 5-Column Monospaced Menu Bar }
       caption:
-        zh: CPU、GPU、RAM、SSD 与上下行网速分栏常驻，数字等宽排版，方便快速扫读。
-        en: CPU, GPU, RAM, SSD and network rates remain visible in aligned, easy-to-scan menu bar columns.
+        zh: CPU、GPU、RAM、SSD 与上下行网速分栏常驻，数字等宽排版；常态跟随系统文字色，负载偏高时才变色提醒。
+        en: CPU, GPU, RAM, SSD and network rates stay in aligned columns with monospaced digits; values follow the system text color and only change color under heavy load.
       image: ./media/menubar-zh.png
     - title: { zh: 4 大高频快捷开关，一触即发, en: 4 Essential Quick Toggles }
       caption:
@@ -77,6 +77,11 @@ showcase:
         zh: 展示已用、应用、联结、压缩和可用内存，以及系统内存压力等级与历史曲线。
         en: Shows used, app, wired, compressed and available memory, plus the system pressure level and usage history.
       image: ./media/ram-zh.png
+    - title: { zh: 磁盘容量与读写速率, en: Disk Capacity & Throughput }
+      caption:
+        zh: 显示物理磁盘读写速率与历史曲线，以及 APFS 共享容器的已用与可用空间。
+        en: Shows physical disk read and write rates with history, plus used and free space in the shared APFS container.
+      image: ./media/disk-zh.png
 
 features:
   eyebrow: { zh: 核心优势, en: Core Strengths }
@@ -100,7 +105,7 @@ features:
         zh: 菜单栏展示 CPU、GPU、RAM、SSD 占比与双向网速，点击后打开适配浅色与深色外观的原生面板。
         en: The menu bar shows CPU, GPU, RAM, SSD and both network rates; clicking opens a native popover for light and dark appearances.
       details:
-        - { zh: "动态变色阈值预警：正常低载青蓝、中载活力暖橙、高载高亮警示红，任何壁纸下均清晰可辨。", en: "Dynamic color thresholds: cyan for normal, amber for moderate, and vivid red for heavy loads." }
+        - { zh: "负载阈值提醒：常态跟随系统文字色，70% 以上橙色、85% 以上红色，任何壁纸下都清晰可辨。", en: "Load thresholds: values follow the system text color, turning orange above 70% and red above 85%, legible on any wallpaper." }
         - { zh: 纯原生系统字体排版，杜绝数字跳动与截断省略号问题。, en: Native system font alignment prevents numeric jitter and truncation ellipsis. }
     - kicker: { zh: 智能能耗调度, en: Adaptive Power Management }
       title: { zh: 折叠深度休眠，后台 CPU 占用 ≤ 0.1%, en: "Deep sleep when collapsed, idle CPU ≤ 0.1%" }
