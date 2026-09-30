@@ -12,7 +12,7 @@ cd "$PROJECT_DIR"
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
 VERSION="1.0.2"
-BUILD_NUMBER="2026093002"
+BUILD_NUMBER="2026093003"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 source "$PROJECT_DIR/scripts/signing_identity.sh"
 CERT_NAME="$(resolve_signing_identity)" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
