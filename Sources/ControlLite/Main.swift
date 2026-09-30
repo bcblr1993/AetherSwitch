@@ -205,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 "popoverShown": self.popover?.isShown == true,
                 "height": self.popover?.contentSize.height ?? 0,
                 "footprintMB": self.physicalFootprintMB() ?? -1,
+                "peakFootprintMB": self.physicalFootprintMB(peak: true) ?? -1,
                 "timestamp": Date().timeIntervalSince1970
             ]
             if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
@@ -221,7 +222,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func physicalFootprintMB() -> Double? {
+    /// peak 为 true 时返回进程生命周期内的物理内存峰值，便于定位是哪一步推高了峰值。
+    private func physicalFootprintMB(peak: Bool = false) -> Double? {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
@@ -229,7 +231,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
             }
         }
-        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : nil
+        guard result == KERN_SUCCESS else { return nil }
+        return Double(peak ? UInt64(info.ledger_phys_footprint_peak) : info.phys_footprint) / 1_048_576
     }
 
     func applicationWillTerminate(_ notification: Notification) {
