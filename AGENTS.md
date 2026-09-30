@@ -83,7 +83,7 @@ swift test
    - 使用钥匙串中的 `Developer ID Application` 证书，由 `scripts/signing_identity.sh` 自动识别；钥匙串里有多张时，用环境变量 `AETHERSWITCH_SIGNING_IDENTITY` 指定；
    - 证书名称（含姓名与 Team ID）不得写入仓库；
    - 启用 Hardened Runtime（`--options runtime`）。
-3. **内嵌 Sparkle 的签名顺序**：`build_app.sh` 先签 `Sparkle.framework` 内的 `Installer.xpc`、`Downloader.xpc`、`Autoupdate`、`Updater.app`，再签框架，最后签应用本体；不得对整个应用使用 `--deep` 签名。打包时会自检 `Info.plist` 更新设置、框架、`rpath`，并核对 `SUPublicEDKey` 与钥匙串私钥一致，任何一项不符立即失败。
+3. **内嵌 Sparkle 的签名顺序**：`build_app.sh` 先签 `Sparkle.framework` 内的 `Installer.xpc`、`Downloader.xpc`、`Autoupdate`、`Updater.app`，再签框架，最后签应用本体；不得对整个应用使用 `--deep` 签名。打包时会自检 `Info.plist` 更新设置、简体中文本地化声明（`CFBundleLocalizations` 含 `zh-Hans`，否则 Sparkle 窗口显示英文）、框架、`rpath`，并核对 `SUPublicEDKey` 与钥匙串私钥一致，任何一项不符立即失败。
 4. **安全分发校验**：
    - 每次打包必须同时产出 `.app`、`.tar.gz` 独立包以及 `SHA256SUMS.txt` 校验清单。
 

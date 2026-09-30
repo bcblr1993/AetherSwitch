@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-10-01
+
+### Fixed
+- 在线更新的窗口（发现新版本、下载进度、安装并重新启动、错误提示）改为跟随系统语言显示简体中文。应用此前只声明了英文，系统按英文处理整个应用，Sparkle 自带的中文翻译没有生效。
+
+### Note
+- 从 1.3.0 升级到 1.3.1 这一步仍由 1.3.0 的英文窗口引导，升级后的更新窗口即为中文。
+
 ## [1.3.0] - 2026-10-01
 
 ### Added
