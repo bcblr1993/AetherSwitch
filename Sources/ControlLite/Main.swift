@@ -2,7 +2,7 @@ import Cocoa
 import Combine
 
 /// 双行指标直接绘制在原生状态栏按钮内，保持截图中的紧凑列宽与彩色数值。
-private final class MenuBarStatusView: NSView {
+final class MenuBarStatusView: NSView {
     private static let titleFont = NSFont.systemFont(ofSize: 8, weight: .medium)
     private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
@@ -14,6 +14,7 @@ private final class MenuBarStatusView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
         let foreground = NSColor.labelColor
+        let secondary = NSColor.secondaryLabelColor
         let columns: [(String, String, Double?)] = [
             ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage),
             ("GPU", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "—", metrics.gpuAvailable ? metrics.gpuUsage : nil),
@@ -23,23 +24,16 @@ private final class MenuBarStatusView: NSView {
         let top = (bounds.height - 23) / 2
         for (index, column) in columns.enumerated() {
             let x = CGFloat(index) * 48
-            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: foreground, .paragraphStyle: Self.centerStyle])
-            let color: NSColor = column.2.map { $0 >= 80 ? .systemRed : ($0 >= 70 ? .systemOrange : .systemBlue) } ?? .secondaryLabelColor
+            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: secondary, .paragraphStyle: Self.centerStyle])
+            let color: NSColor = column.2.map { Palette.menuBarTint(for: $0) } ?? .secondaryLabelColor
             (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
         }
         let rateX: CGFloat = 193
-        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemRed])
+        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.rateFont, .foregroundColor: NSColor.secondaryLabelColor])
         (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
-        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.numberFont, .foregroundColor: NSColor.systemBlue])
+        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.rateFont, .foregroundColor: NSColor.secondaryLabelColor])
         (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
-        let iconX: CGFloat = 299
-        foreground.setStroke()
-        foreground.setFill()
-        for (offset, knob) in [(CGFloat(3), CGFloat(9)), (CGFloat(11), CGFloat(17)), (CGFloat(19), CGFloat(7))] {
-            let y = top + offset
-            let line = NSBezierPath(); line.move(to: NSPoint(x: iconX, y: y)); line.line(to: NSPoint(x: iconX + 22, y: y)); line.lineWidth = 1.5; line.stroke()
-            NSBezierPath(ovalIn: NSRect(x: iconX + knob - 2, y: y - 2, width: 4, height: 4)).fill()
-        }
+        BrandGlyph.draw(in: NSRect(x: 299, y: top + 1, width: 20, height: 21), color: foreground)
         }
     }
 }
@@ -282,7 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             button.title = "\(m.ramPercent)%"
         }
         if styleChanged && style != .statsColumns {
-            button.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "AetherSwitch")
+            button.image = BrandGlyph.templateImage(size: NSSize(width: 18, height: 16))
             statusItem.length = NSStatusItem.variableLength
         }
         if styleChanged {
@@ -369,7 +363,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover?.isShown != true {
             togglePopover()
         }
-        (popover?.contentViewController as? NativePanelController)?.about()
     }
 
     @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {
@@ -412,6 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         AppState.shared.isPopoverOpen = false
+        AppState.shared.showAbout = false
         popover.contentViewController = nil
         popover = nil
         malloc_zone_pressure_relief(nil, 0)
