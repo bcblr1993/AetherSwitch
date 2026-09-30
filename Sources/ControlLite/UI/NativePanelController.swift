@@ -416,7 +416,6 @@ final class NativePanelController: NSViewController {
     private var switchSubscription: AnyCancellable?
     private var pendingSubscription: AnyCancellable?
     private var updateSubscription: AnyCancellable?
-    private let updateMessage = NSTextField(wrappingLabelWithString: "")
     private var updateButton: NSButton!
     private var detailRows: DetailRowsView?
     private var metricTiles: [DashboardMetricView] = []
@@ -472,11 +471,6 @@ final class NativePanelController: NSViewController {
         root.addArrangedSubview(footerSpacer)
         root.setCustomSpacing(0, after: footerSpacer)
         root.addArrangedSubview(footer)
-        updateMessage.font = Palette.caption
-        updateMessage.textColor = .secondaryLabelColor
-        updateMessage.isHidden = true
-        root.addArrangedSubview(updateMessage)
-        updateMessage.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         let errorField = NSTextField(wrappingLabelWithString: "")
         errorField.font = Palette.caption
         errorField.textColor = .systemRed
@@ -492,26 +486,11 @@ final class NativePanelController: NSViewController {
         root.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 294), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
         rebuild()
-        updateSubscription = UpdateManager.shared.$status.sink { [weak self] status in
+        // Sparkle 发现新版本后，底部按钮改为"更新至 x.y.z"并用主题色提示。
+        updateSubscription = UpdateManager.shared.$availableVersion.sink { [weak self] version in
             guard let self else { return }
-            self.updateButton.isEnabled = status != .checking
-            self.updateButton.title = "检查更新"
-            switch status {
-            case .idle: self.updateMessage.stringValue = ""
-            case .checking: self.updateMessage.stringValue = "正在检查更新…"
-            case .upToDate:
-                self.updateMessage.stringValue = ""
-                self.updateButton.title = "已是最新"
-            case .available(let version, _):
-                self.updateMessage.stringValue = "新版本 \(version) 可用。下载后打开安装包更新。"
-                self.updateButton.title = "下载更新"
-            case .failed(let reason):
-                self.updateMessage.stringValue = reason
-                self.updateButton.title = "重试"
-            default: self.updateMessage.stringValue = ""
-            }
-            self.updateMessage.isHidden = self.updateMessage.stringValue.isEmpty
-            self.updatePreferredSize()
+            self.updateButton.title = version.map { "更新至 \($0)" } ?? "检查更新"
+            self.updateButton.contentTintColor = version == nil ? .secondaryLabelColor : Palette.accent
         }
         tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
             guard let self else { return }
@@ -815,12 +794,7 @@ final class NativePanelController: NSViewController {
         let urls = ["https://aethernative.com", "https://github.com/bcblr1993/AetherSwitch", "https://github.com/bcblr1993/AetherSwitch/issues"]
         NSWorkspace.shared.open(URL(string: urls[sender.tag])!)
     }
-    @objc func checkUpdate() {
-        if case .available = UpdateManager.shared.status {
-            UpdateManager.shared.downloadAndInstall()
-        } else {
-            UpdateManager.shared.checkForUpdates(manual: true)
-        }
-    }
+    /// 检查 / 安装更新由 Sparkle 的标准界面引导：发现新版本 → 下载 → 安装并重新启动。
+    @objc func checkUpdate() { UpdateManager.shared.checkForUpdates() }
     @objc private func quit() { NSApp.terminate(nil) }
 }

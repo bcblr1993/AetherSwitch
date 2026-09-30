@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-01
+
+### Added
+- 在线更新：点击面板底部的「检查更新」或右键菜单中的「检查更新」，发现新版本后按提示下载，安装完成自动重新启动，不再需要手动下载覆盖安装。更新清单与更新包均经过 Ed25519 签名校验。
+- 默认每天在后台静默检查一次更新（可在右键菜单关闭「自动检查更新」），发现新版本时底部按钮显示「更新至 x.y.z」，不会弹窗打扰。
+
+### Changed
+- 引入原生更新组件 Sparkle 2.9.6 作为唯一的第三方组件，App 体积增加约 3 MB；物理内存与后台 CPU 门禁重新验收通过。
+- 打包时自检更新配置（清单地址、公钥、框架、库路径），并核对公钥与发布者钥匙串私钥一致。
+- 隐私说明更新：应用每天访问一次官网获取签名更新清单，不附带系统指标或个人信息。
+
+### Note
+- 1.3.0 之前的版本不包含在线更新，需要手动安装 1.3.0 一次。
+
 ## [1.2.0] - 2026-09-30
 
 ### Added

@@ -8,11 +8,12 @@
 
 1. **绝对原生零依赖**：
    - 全项目必须采用纯 Swift 6 + 原生系统框架（Darwin / Mach / IOKit / AppKit / SwiftUI）；
-   - 严禁引入任何重量级第三方开源库或二进制框架（无 CocoaPods，无外部 Carthage/SPM 依赖）；
+   - 严禁引入任何重量级第三方开源库或二进制框架（无 CocoaPods，无 Carthage）；**唯一例外**是原生在线更新组件 Sparkle（SPM 固定 `exact: "2.9.6"`，校验记录在 `Package.resolved`，声明见 `THIRD_PARTY_NOTICES.md`）。升级 Sparkle 版本前必须重新跑全部质量门禁；
+   - 在线更新的调度、更新包与清单的签名校验、下载、安装与重启全部归 Sparkle，不自行下载或执行未经验证的代码，不另设轮询；
    - 所有硬件监控必须通过 POSIX、Mach 内核（`host_processor_info`, `host_statistics64`）及 IOKit（`IOAccelerator`）直接采样；
    - 开关控制必须直接通过 IOKit 电源断言（`IOPMAssertion`）与 macOS defaults API 驱动。
 2. **内存与功耗门禁**：
-   - 生产环境物理内存驻留集（Physical Footprint）必须严格控制在 **≤ 50 MB**，验收时同时检查实时值与进程峰值，保留完整的 Stats 风格详情面板；
+   - 生产环境物理内存驻留集（Physical Footprint）必须严格控制在 **≤ 50 MB**，验收时同时检查实时值与进程峰值（含已启动的 Sparkle），保留完整的 Stats 风格详情面板；
    - 面板折叠状态下，CPU 与 GPU 高阶采样必须彻底休眠，后台空载 CPU 占用 **≤ 0.1%**，按连续监测间隔的内核累计 CPU 时间验证。
 
 ---
@@ -82,7 +83,8 @@ swift test
    - 使用钥匙串中的 `Developer ID Application` 证书，由 `scripts/signing_identity.sh` 自动识别；钥匙串里有多张时，用环境变量 `AETHERSWITCH_SIGNING_IDENTITY` 指定；
    - 证书名称（含姓名与 Team ID）不得写入仓库；
    - 启用 Hardened Runtime（`--options runtime`）。
-3. **安全分发校验**：
+3. **内嵌 Sparkle 的签名顺序**：`build_app.sh` 先签 `Sparkle.framework` 内的 `Installer.xpc`、`Downloader.xpc`、`Autoupdate`、`Updater.app`，再签框架，最后签应用本体；不得对整个应用使用 `--deep` 签名。打包时会自检 `Info.plist` 更新设置、框架、`rpath`，并核对 `SUPublicEDKey` 与钥匙串私钥一致，任何一项不符立即失败。
+4. **安全分发校验**：
    - 每次打包必须同时产出 `.app`、`.tar.gz` 独立包以及 `SHA256SUMS.txt` 校验清单。
 
 ---
@@ -109,3 +111,13 @@ swift test
 
    没写区块时仍会同步版本和下载地址，简介暂用 Release 标题。
 3. **软件介绍**（`website_content/apps/aetherswitch/` 下的 `app.yaml`、`docs/`、`media/`）仍用 `./scripts/sync_to_website.sh` 手动同步；版本记录以官网仓库为准，不再手改 `releases.yaml`。
+
+---
+
+## 🔄 七、在线更新与发版 (Sparkle)
+
+1. **更新链路**：应用订阅 `https://aethernative.com/apps/aetherswitch/appcast.xml`，开启 `SURequireSignedFeed`；每日静默检查一次，不上报系统信息，发现新版本只在面板和右键菜单里提示，下载与安装由用户点击触发，安装后自动重启。
+2. **更新签名密钥**：Ed25519 私钥只存在发布者登录钥匙串的 `AetherSwitch` 账户（`.build/artifacts/sparkle/Sparkle/bin/generate_keys --account AetherSwitch`）；公钥写在 `build_app.sh` 并进入 `Info.plist`。**不得重新生成或替换公钥**——一旦替换，已安装的用户将无法再验证更新；私钥不得导出、上传或写入仓库。
+3. **构建号**：Sparkle 以 `CFBundleVersion`（`YYYYMMDDNN`）判断新旧，必须单调递增。
+4. **发版顺序**：`build_app.sh` → 质量门禁 → 公证并 staple DMG → `./scripts/generate_appcast.sh outputs/build-<构建号>` → 将 DMG、tar.gz、`SHA256SUMS.txt`、**`appcast.xml`** 一并上传 GitHub Release，并确保它是 latest。官网在 `app.yaml` 设置 `appcastMode: mirror`，同步工作流会校验签名后原样镜像清单；**切勿手改已签名清单**，改动后必须重新生成。
+5. **首个含更新器的版本**：更早的版本没有 Sparkle，用户需要手动安装该版本一次。更新链路的端到端验证，使用包含更新器、构建号更低的签名测试副本，从线上真实 HTTPS 清单更新到正式版；不得改写清单或绕过签名来“通过”测试。
