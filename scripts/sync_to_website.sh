@@ -36,7 +36,11 @@ fi
 DEST="$TARGET_DIR/src/content/apps/aetherswitch"
 echo "==> 同步网站资源至: $DEST"
 mkdir -p "$DEST"
-cp -R "$SOURCE_DIR/"* "$DEST/"
+# 版本记录由官网仓库的 Release 同步工作流维护，这里只同步软件介绍，避免用旧的 releases.yaml 覆盖。
+for item in "$SOURCE_DIR"/*; do
+    [ "$(basename "$item")" = "releases.yaml" ] && continue
+    cp -R "$item" "$DEST/"
+done
 
 echo "=============================================================================="
 echo "✅ 同步成功！"
