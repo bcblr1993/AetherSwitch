@@ -258,10 +258,18 @@ private final class DetailVisualView: DashboardCardView {
     }
 
     private func ring(center: NSPoint, radius: CGFloat, percent: Double, tint: NSColor) {
-        let track = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
-        track.lineWidth = 8; track.lineCapStyle = .round; NSColor.labelColor.withAlphaComponent(0.18).setStroke(); track.stroke()
-        let fill = NSBezierPath(); fill.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - CGFloat(min(100, max(0, percent))) * 3.6, clockwise: true)
-        fill.lineWidth = 8; fill.lineCapStyle = .round; tint.setStroke(); fill.stroke()
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineWidth(8)
+        context.setLineCap(.round)
+        context.setStrokeColor(NSColor.labelColor.withAlphaComponent(0.18).cgColor)
+        context.strokeEllipse(in: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        let fraction = min(100, max(0, percent)) / 100
+        guard fraction > 0 else { return }
+        context.setStrokeColor(tint.cgColor)
+        context.addArc(center: center, radius: radius, startAngle: .pi / 2, endAngle: .pi / 2 - CGFloat(fraction) * 2 * .pi, clockwise: true)
+        context.strokePath()
     }
 
     private func history(_ samples: [Double], in rect: NSRect, tint: NSColor, maximum: Double, background: Bool = true) {
@@ -400,6 +408,9 @@ final class NativePanelController: NSViewController {
         tabs.action = #selector(selectTab)
         tabs.selectedSegment = tabNames.firstIndex(of: state.selectedTab) ?? 0
         root.addArrangedSubview(tabs)
+        content.wantsLayer = true
+        content.canDrawSubviewsIntoLayer = true
+        content.layerContentsRedrawPolicy = .onSetNeedsDisplay
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 6
@@ -563,7 +574,7 @@ final class NativePanelController: NSViewController {
             + CGFloat(max(0, visible.count - 1)) * root.spacing
         // A stable popover size prevents AppKit from retaining a new graphics backing store
         // for each tab transition. Each detail chart uses the available vertical space.
-        let size = NSSize(width: 294, height: max(493, height))
+        let size = NSSize(width: 294, height: max(509, height))
         guard preferredContentSize != size else { return }
         preferredContentSize = size
         onPreferredSizeChange?(size)
