@@ -1,16 +1,18 @@
 import AppKit
 
-/// 负载等级：面板与菜单栏共用同一套阈值，颜色只用来表达"是否需要关注"。
-enum LoadLevel: Equatable {
-    case normal, elevated, critical
+/// 负载等级：面板与菜单栏共用同一套阈值，数字、进度条与环形图按等级着色。
+enum LoadLevel: Equatable, CaseIterable {
+    case low, moderate, elevated, critical
 
+    static let moderateThreshold = 50.0
     static let elevatedThreshold = 70.0
     static let criticalThreshold = 85.0
 
     init(percent: Double) {
         if percent >= Self.criticalThreshold { self = .critical }
         else if percent >= Self.elevatedThreshold { self = .elevated }
-        else { self = .normal }
+        else if percent >= Self.moderateThreshold { self = .moderate }
+        else { self = .low }
     }
 }
 
@@ -27,22 +29,35 @@ enum Palette {
     static let upload = NSColor.systemTeal
     static let unavailable = NSColor.tertiaryLabelColor
 
-    /// 面板内指标色：常态用主色，偏高橙色，过高红色。
-    static func tint(for percent: Double) -> NSColor {
-        switch LoadLevel(percent: percent) {
-        case .normal: return accent
-        case .elevated: return .systemOrange
-        case .critical: return .systemRed
+    /// 按负载等级着色：浅色背景用偏深的色值，深色背景用明亮色值，保证数字在两种外观下都清晰。
+    private static func adaptive(light: UInt32, dark: UInt32) -> NSColor {
+        func color(_ hex: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        }
+        let lightColor = color(light), darkColor = color(dark)
+        return NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkColor : lightColor }
+    }
+    static let levelLow = adaptive(light: 0x1E9E48, dark: 0x3DDC68)
+    static let levelModerate = adaptive(light: 0xB27C00, dark: 0xFFD426)
+    static let levelElevated = adaptive(light: 0xD4650A, dark: 0xFFA23A)
+    static let levelCritical = adaptive(light: 0xD70F1E, dark: 0xFF5A4F)
+
+    static func color(for level: LoadLevel) -> NSColor {
+        switch level {
+        case .low: return levelLow
+        case .moderate: return levelModerate
+        case .elevated: return levelElevated
+        case .critical: return levelCritical
         }
     }
 
-    /// 菜单栏数值色：常态跟随系统文字色，保证任何壁纸下都清晰。
-    static func menuBarTint(for percent: Double) -> NSColor {
-        switch LoadLevel(percent: percent) {
-        case .normal: return .labelColor
-        case .elevated: return .systemOrange
-        case .critical: return .systemRed
-        }
+    /// 指标色（数字、进度条、环形图、菜单栏数值共用）。
+    static func tint(for percent: Double) -> NSColor { color(for: LoadLevel(percent: percent)) }
+
+    /// 弹窗使用毛玻璃（vibrant）外观，次要文字色依赖系统实时混合才可见；
+    /// 自绘位图时改按对应的普通深 / 浅色外观解析颜色。
+    static func drawingAppearance(for appearance: NSAppearance) -> NSAppearance {
+        NSAppearance(named: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .darkAqua : .aqua)!
     }
 
     /// 卡片底色：半透明，让弹窗毛玻璃透出来，而不是盖一块实心灰。

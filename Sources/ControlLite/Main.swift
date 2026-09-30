@@ -1,39 +1,74 @@
 import Cocoa
 import Combine
 
-/// 双行指标直接绘制在原生状态栏按钮内，保持截图中的紧凑列宽与彩色数值。
+/// 双行指标直接绘制在原生状态栏按钮内；只绘制用户在面板中打开的指标列。
 final class MenuBarStatusView: NSView {
-    private static let titleFont = NSFont.systemFont(ofSize: 8, weight: .medium)
+    private static let titleFont = NSFont.systemFont(ofSize: 8, weight: .semibold)
     private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
     private static let centerStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()
     private static let leadingStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .left; return style }()
+
+    static let padding: CGFloat = 3
+    static let columnWidth: CGFloat = 36
+    static let gap: CGFloat = 6
+    static let arrowWidth: CGFloat = 10
+    static let glyphWidth: CGFloat = 20
+    /// 网速列按最宽读数（1023 KB/s）固定宽度，数值变化时状态栏不抖动。
+    static let rateWidth: CGFloat = ceil(("1023 KB/s" as NSString).size(withAttributes: [.font: rateFont]).width)
+
+    /// 各可见列在视图中的横向区间；全部关闭时返回空，只显示品牌图标。
+    static func layout(for visible: Set<MenuBarMetric>) -> [(MenuBarMetric, CGFloat, CGFloat)] {
+        var x = padding
+        var frames: [(MenuBarMetric, CGFloat, CGFloat)] = []
+        for metric in MenuBarMetric.allCases where visible.contains(metric) {
+            let width = metric == .network ? arrowWidth + rateWidth : columnWidth
+            if !frames.isEmpty { x += gap }
+            frames.append((metric, x, width))
+            x += width
+        }
+        return frames
+    }
+
+    static func width(for visible: Set<MenuBarMetric>) -> CGFloat {
+        guard let last = layout(for: visible).last else { return glyphWidth + padding * 2 }
+        return ceil(last.1 + last.2 + padding)
+    }
+
     var metrics = SystemMetrics() { didSet { needsDisplay = true } }
+    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
         let foreground = NSColor.labelColor
-        let secondary = NSColor.secondaryLabelColor
-        let columns: [(String, String, Double?)] = [
-            ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage),
-            ("GPU", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "—", metrics.gpuAvailable ? metrics.gpuUsage : nil),
-            ("RAM", "\(metrics.ramPercent)%", Double(metrics.ramPercent)),
-            ("SSD", "\(metrics.diskPercent)%", Double(metrics.diskPercent))
-        ]
         let top = (bounds.height - 23) / 2
-        for (index, column) in columns.enumerated() {
-            let x = CGFloat(index) * 48
-            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: 43, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: secondary, .paragraphStyle: Self.centerStyle])
-            let color: NSColor = column.2.map { Palette.menuBarTint(for: $0) } ?? .secondaryLabelColor
-            (column.1 as NSString).draw(in: NSRect(x: x, y: top + 9, width: 43, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
+        let frames = Self.layout(for: visible)
+        guard !frames.isEmpty else {
+            BrandGlyph.draw(in: NSRect(x: Self.padding, y: top + 1, width: Self.glyphWidth, height: 21), color: foreground)
+            return
         }
-        let rateX: CGFloat = 193
-        ("↑" as NSString).draw(in: NSRect(x: rateX, y: top, width: 12, height: 11), withAttributes: [.font: Self.rateFont, .foregroundColor: NSColor.secondaryLabelColor])
-        (metrics.menuBarUploadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
-        ("↓" as NSString).draw(in: NSRect(x: rateX, y: top + 12, width: 12, height: 11), withAttributes: [.font: Self.rateFont, .foregroundColor: NSColor.secondaryLabelColor])
-        (metrics.menuBarDownloadFormatted as NSString).draw(in: NSRect(x: rateX + 15, y: top + 12, width: 86, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
-        BrandGlyph.draw(in: NSRect(x: 299, y: top + 1, width: 20, height: 21), color: foreground)
+        for (metric, x, width) in frames {
+            if metric == .network {
+                let rows = [("↑", metrics.menuBarUploadFormatted), ("↓", metrics.menuBarDownloadFormatted)]
+                for (index, row) in rows.enumerated() {
+                    let y = top + CGFloat(index) * 12
+                    (row.0 as NSString).draw(in: NSRect(x: x, y: y, width: Self.arrowWidth, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground])
+                    (row.1 as NSString).draw(in: NSRect(x: x + Self.arrowWidth, y: y, width: Self.rateWidth + 2, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
+                }
+                continue
+            }
+            let column: (String, String, Double?)
+            switch metric {
+            case .cpu: column = ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage)
+            case .gpu: column = ("GPU", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "—", metrics.gpuAvailable ? metrics.gpuUsage : nil)
+            case .ram: column = ("RAM", "\(metrics.ramPercent)%", Double(metrics.ramPercent))
+            default: column = ("SSD", "\(metrics.diskPercent)%", Double(metrics.diskPercent))
+            }
+            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: width, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: foreground, .paragraphStyle: Self.centerStyle])
+            let color: NSColor = column.2.map { Palette.tint(for: $0) } ?? .secondaryLabelColor
+            (column.1 as NSString).draw(in: NSRect(x: x - 2, y: top + 9, width: width + 4, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
+        }
         }
     }
 }
@@ -89,6 +124,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         AppState.shared.$metrics
             .sink { [weak self] metrics in
                 self?.updateStatusItemWidth(metrics: metrics)
+            }
+            .store(in: &cancellables)
+
+        AppState.shared.$menuBarMetrics
+            .dropFirst()
+            .sink { [weak self] visible in
+                self?.updateStatusItemWidth(visible: visible)
             }
             .store(in: &cancellables)
 
@@ -242,12 +284,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: - 动态调整状态栏宽度
 
-    private func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil) {
+    private func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil, visible: Set<MenuBarMetric>? = nil) {
         guard let button = statusItem.button else { return }
         let state = AppState.shared
         // @Published emits before the stored property changes; render the emitted value.
         let m = metrics ?? state.metrics
         let style = style ?? state.menuBarStyle
+        let visible = visible ?? state.menuBarMetrics
         let styleChanged = appliedMenuBarStyle != style
         if !styleChanged && style == .iconOnly { return }
         switch style {
@@ -255,8 +298,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             if styleChanged {
                 button.title = ""
                 button.image = nil
-                statusItem.length = 324
             }
+            // 宽度随面板中打开的指标列变化。
+            let width = MenuBarStatusView.width(for: visible)
+            if statusItem.length != width { statusItem.length = width }
             let display = menuBarStatusView ?? MenuBarStatusView(frame: button.bounds)
             if display.superview == nil {
                 display.autoresizingMask = [.width, .height]
@@ -264,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             menuBarStatusView = display
             if styleChanged { display.frame = button.bounds }
+            display.visible = visible
             display.metrics = m
         case .compact:
             menuBarStatusView?.removeFromSuperview()
