@@ -52,6 +52,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
     }
     private struct Target { let identity: BrightnessDDC.Identity; let endpoint: Endpoint? }
     private var targets: [UInt32: Target] = [:]
+    private let blackout = DisplayGammaBlackout.shared
     // Keep loaded framework handles alive for the actor's lifetime.
     private let displayServices = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY)
     private let ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY)
@@ -80,6 +81,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
     func discover() -> [BrightnessDisplay] {
         targets.removeAll()
         let ids = onlineIDs().sorted { CGDisplayIsBuiltin($0) > CGDisplayIsBuiltin($1) }
+        blackout.reconcile(online: ids)
         let endpoints = externalEndpoints()
         return ids.map { id in
             let key = identity(id)
@@ -99,7 +101,10 @@ actor SystemBrightnessHardware: BrightnessHardware {
                 return BrightnessDisplay(id: id, name: name, control: .unavailable, issue: "亮度不可读，请开启显示器的 DDC/CI")
             }
             targets[id] = Target(identity: key, endpoint: endpoint)
-            return BrightnessDisplay(id: id, name: name, control: .ddc, value: Double(reading.current) / Double(reading.maximum))
+            let hardwareValue = Double(reading.current) / Double(reading.maximum)
+            let isBlack = blackout.isBlack(id)
+            return BrightnessDisplay(id: id, name: name, control: .ddc, value: isBlack ? 0 : hardwareValue,
+                                     isSoftwareBlackout: isBlack, hardwareValue: isBlack ? hardwareValue : nil)
         }
     }
 
@@ -111,7 +116,26 @@ actor SystemBrightnessHardware: BrightnessHardware {
             guard value.isFinite, let target = targets[display.id], online.contains(display.id), identity(display.id) == target.identity else {
                 display.issue = "显示器已断开，请刷新"; return display
             }
-            if let endpoint = target.endpoint {
+            if var endpoint = target.endpoint {
+                if value > 0 {
+                    let wasBlack = original.isSoftwareBlackout || blackout.isBlack(display.id)
+                    guard blackout.restore(display.id) else {
+                        display.issue = "无法恢复外屏画面，请退出软件后重试"; return display
+                    }
+                    display.isSoftwareBlackout = false
+                    display.hardwareValue = nil
+                    // ColorSync reconfiguration can invalidate the retained IOAV
+                    // connection. Reopen the uniquely identified screen on recovery.
+                    if wasBlack {
+                        let endpoints = externalEndpoints()
+                        guard BrightnessDDC.uniquelyMatches(target.identity, displays: online.map(identity), endpoints: endpoints.map(\.identity)),
+                              let fresh = endpoints.first(where: { $0.identity == target.identity }) else {
+                            display.issue = "画面已恢复，但无法重新连接亮度接口"; return display
+                        }
+                        endpoint = fresh
+                        targets[display.id] = Target(identity: target.identity, endpoint: fresh)
+                    }
+                }
                 // Use the current maximum, not an assumed 0–100 scale; HDR/picture
                 // modes may reject VCP writes even when I2C reports success.
                 if let before = readBrightness(endpoint) {
@@ -121,6 +145,13 @@ actor SystemBrightnessHardware: BrightnessHardware {
                         if let after = readBrightness(endpoint) {
                             display.value = Double(after.current) / Double(after.maximum)
                             display.issue = abs(Int(after.current) - Int(raw)) <= 1 ? nil : "显示器未接受亮度设置，请检查 HDR 或图像模式"
+                            if value <= 0, display.issue == nil {
+                                if blackout.setBlack(display.id) {
+                                    display.hardwareValue = display.value
+                                    display.value = 0
+                                    display.isSoftwareBlackout = true
+                                } else { display.issue = "已到最低背光亮度，但无法软件全黑" }
+                            }
                             return display
                         }
                     }
@@ -176,12 +207,13 @@ actor SystemBrightnessHardware: BrightnessHardware {
     }
     private func readBrightness(_ endpoint: Endpoint) -> BrightnessDDC.Reading? {
         guard let read = function(ioKit, "IOAVServiceReadI2C", as: AVTransfer.self) else { return nil }
-        for _ in 0..<3 {
-            guard transferWrite(endpoint, packet: BrightnessDDC.request()) else { return nil }
+        for _ in 0..<5 {
+            guard transferWrite(endpoint, packet: BrightnessDDC.request()) else { usleep(20_000); continue }
             usleep(endpoint.chip == 0xB7 ? 100_000 : 50_000)
             var reply = [UInt8](repeating: 0, count: 11)
             if reply.withUnsafeMutableBytes({ read(endpoint.service, endpoint.chip, 0x51, $0.baseAddress!, 11) }) == 0,
                let reading = BrightnessDDC.parse(reply) { return reading }
+            usleep(20_000)
         }
         return nil
     }

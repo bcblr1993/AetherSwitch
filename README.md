@@ -10,6 +10,8 @@ Apple Silicon 上的原生 macOS 系统状态与快捷开关工具，使用 Swif
 
 面板的「屏幕亮度」滑条同步控制内置屏与支持 DDC/CI 的外接显示器，以各屏的亮度范围设置相同百分比。打开面板只读取当前亮度，拖动后才同步；连接变化会重新识别，不做后台轮询。外接屏需要开启 DDC/CI，部分转接器、虚拟屏、HDR/图像模式可能不支持硬件调整，面板会提示具体失败。同一百分比不代表相同的实际亮度（nits）。
 
+外接显示器的最低硬件亮度通常仍有背光。滑条到 0% 时，在最低硬件亮度之上使用系统 Gamma 曲线使外屏画面全黑，并明确显示「软件全黑」；调高滑条或正常退出软件时恢复原色彩曲线。这是画面调暗，不代表显示器已关机或背光断电。内置屏仍使用系统原生亮度；内屏全黑后可用 Mac 的亮度键先亮起内屏，再调高滑条。
+
 内存使用量扣除可回收文件缓存，参考 [Stats 内存采样实现](https://github.com/exelban/stats/blob/master/Modules/RAM/readers.swift)。GPU 为驱动瞬时读数，缺少计数器时显示不可用；磁盘速率汇总已连接的物理设备。网络速率汇总 `en*` 物理接口，不计虚拟隧道流量。
 
 ## 构建
@@ -41,8 +43,9 @@ AetherSwitch.app/Contents/MacOS/AetherSwitch --diagnose
 ```sh
 AetherSwitch.app/Contents/MacOS/AetherSwitch --brightness-status
 AetherSwitch.app/Contents/MacOS/AetherSwitch --acceptance-brightness-cycle
+AetherSwitch.app/Contents/MacOS/AetherSwitch --acceptance-brightness-blackout
 ```
 
-第一条只读取。第二条通过实际滑条同步调整亮度、读回结果，再分别恢复每块屏幕的原亮度，输出 JSON，失败返回非零。需要真实连接的屏幕，虚拟机不能替代外接硬件验收。底层使用系统 DisplayServices 与 IOAVService 接口；系统版本变化导致接口不可用时会停用对应控制，不以软件遮罩冒充硬件亮度。无法唯一识别的同型号同序列号显示器会标为不可用，避免控制错误屏幕。
+第一条只读取。第二条通过实际滑条同步调整亮度、读回结果，再分别恢复每块屏幕的原亮度。第三条额外测试 0% 软件全黑与调高恢复，会短暂使所有屏幕变黑；读回验证仍需结合真机目视验收。验收命令输出 JSON，失败返回非零。需要真实连接的屏幕，虚拟机不能替代外接硬件验收。底层使用系统 DisplayServices 与 IOAVService 接口；系统版本变化导致接口不可用时会停用对应控制，0% 的 Gamma 调暗会明确标注，不作为外屏背光断电的证明。无法唯一识别的同型号同序列号显示器会标为不可用，避免控制错误屏幕。
 
 [MIT License](LICENSE) · [作者](https://github.com/bcblr1993) · [官网](https://aethernative.com)

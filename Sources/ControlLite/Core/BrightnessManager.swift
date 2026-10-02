@@ -8,6 +8,8 @@ struct BrightnessDisplay: Equatable, Sendable, Identifiable {
     let control: Control
     var value: Double?
     var issue: String?
+    var isSoftwareBlackout = false
+    var hardwareValue: Double?
     var isControllable: Bool { control != .unavailable && value != nil }
 }
 
@@ -33,6 +35,9 @@ final class BrightnessManager: ObservableObject {
             let failures = displays.filter { $0.issue != nil }
             if let first = failures.first, let issue = first.issue {
                 return "\(first.name)：\(issue)\(failures.count > 1 ? "（另有 \(failures.count - 1) 块）" : "")"
+            }
+            if displays.contains(where: \.isSoftwareBlackout) {
+                return "外屏已软件全黑 · 调高滑条恢复（背光仍可能亮）"
             }
             let values = displays.compactMap(\.value)
             let differs = (values.max() ?? 0) - (values.min() ?? 0) > 0.015

@@ -26,7 +26,11 @@ private actor BrightnessProbe: BrightnessHardware {
             var display = $0
             guard display.isControllable else { return display }
             if failExternal && display.id == 3 { display.issue = "DDC 失败" }
-            else { display.value = value; display.issue = nil }
+            else {
+                display.value = value; display.issue = nil
+                display.isSoftwareBlackout = display.control == .ddc && value == 0
+                display.hardwareValue = display.isSoftwareBlackout ? 0 : nil
+            }
             return display
         }
     }
@@ -41,6 +45,23 @@ private struct BrightnessLoginFixture: LoginItemService {
 }
 
 final class BrightnessManagerTests: XCTestCase {
+    @MainActor
+    func testZeroBlackoutIsClearlyReportedAndMovingSliderUpRecoversBothScreens() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0); await manager.waitUntilIdle()
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0, 0])
+        XCTAssertFalse(manager.snapshot.displays[0].isSoftwareBlackout)
+        XCTAssertTrue(manager.snapshot.displays[1].isSoftwareBlackout)
+        XCTAssertTrue(manager.snapshot.message.contains("软件全黑"))
+        XCTAssertTrue(manager.snapshot.message.contains("背光仍可能亮"))
+        manager.setBrightness(0.3); await manager.waitUntilIdle()
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.3, 0.3])
+        XCTAssertFalse(manager.snapshot.displays.contains(where: \.isSoftwareBlackout))
+        XCTAssertEqual(manager.snapshot.message, "同步控制 2 块屏幕")
+    }
+
     @MainActor
     func testDiscoveryDoesNotWriteAndOneSliderSynchronizesBothScreens() async {
         let probe = BrightnessProbe()
@@ -156,6 +177,10 @@ final class BrightnessManagerTests: XCTestCase {
         _ = slider.target?.perform(slider.action, with: slider)
         await manager.waitUntilIdle()
         XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.65, 0.65])
+        slider.doubleValue = 0
+        _ = slider.target?.perform(slider.action, with: slider)
+        await manager.waitUntilIdle()
+        XCTAssertTrue(descendants(controller.view).compactMap { $0 as? NSTextField }.contains { $0.stringValue.contains("软件全黑") })
         let base = controller.preferredContentSize
         for tab in ["cpu", "gpu", "ram", "disk", "network", "overview"] {
             state.selectedTab = tab

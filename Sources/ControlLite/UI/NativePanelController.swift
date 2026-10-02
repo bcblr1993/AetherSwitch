@@ -512,7 +512,7 @@ final class NativePanelController: NSViewController {
             self.brightnessSlider.doubleValue = snapshot.value
             brightnessValue.stringValue = snapshot.canAdjust ? "\(Int((snapshot.value * 100).rounded()))%" : "—"
             brightnessMessage.stringValue = snapshot.message
-            brightnessSection.toolTip = snapshot.displays.map { "\($0.name)：\($0.issue ?? $0.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "不可用")" }.joined(separator: "\n")
+            brightnessSection.toolTip = snapshot.displays.map { "\($0.name)：\($0.issue ?? ($0.isSoftwareBlackout ? "软件全黑，背光仍可能亮" : $0.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "不可用"))" }.joined(separator: "\n")
             self.updatePreferredSize()
         }
         brightness.refresh()

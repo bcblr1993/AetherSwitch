@@ -92,13 +92,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                let json = String(data: data, encoding: .utf8) { print(json) }
             return
         }
-        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") {
+        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
             let app = NSApplication.shared
             app.setActivationPolicy(.prohibited)
             Task { @MainActor in
                 let result: [String: Any]
-                if CommandLine.arguments.contains("--acceptance-brightness-cycle") {
-                    result = await BrightnessAcceptance.run()
+                if CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
+                    result = await BrightnessAcceptance.run(includeBlackout: CommandLine.arguments.contains("--acceptance-brightness-blackout"))
                 } else {
                     result = ["displays": BrightnessAcceptance.record(await SystemBrightnessHardware().discover())]
                 }
@@ -364,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        DisplayGammaBlackout.shared.shutdownAndRestore()
         // 退出时彻底释放常亮断言
         SwitchManager.shared.releaseKeepAwake()
     }
