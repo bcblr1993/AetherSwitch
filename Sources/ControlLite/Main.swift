@@ -83,6 +83,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var appliedMenuBarStyle: MenuBarStyle?
 
     static func main() {
+        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") {
+            let app = NSApplication.shared
+            app.setActivationPolicy(.prohibited)
+            Task { @MainActor in
+                let result: [String: Any]
+                if CommandLine.arguments.contains("--acceptance-brightness-cycle") {
+                    result = await BrightnessAcceptance.run()
+                } else {
+                    result = ["displays": BrightnessAcceptance.record(await SystemBrightnessHardware().discover())]
+                }
+                if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]),
+                   let json = String(data: data, encoding: .utf8) { print(json) }
+                exit(result["passed"] as? Bool == false ? 1 : 0)
+            }
+            app.run()
+            return
+        }
         if CommandLine.arguments.contains("--login-item-status") {
             print(LoginItemManager.shared.snapshot.status.rawValue)
             return
@@ -290,7 +307,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let sequence = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_TABS"]?
             .split(separator: ",").map(String.init)
             ?? ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
-        guard index < sequence.count else { return }
+        guard index < sequence.count else {
+            if ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_CLOSE_AFTER_CYCLE"] == "1" {
+                popover?.performClose(nil)
+            }
+            return
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
             let tab = sequence[index]

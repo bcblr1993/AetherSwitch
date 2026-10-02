@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- 面板新增原生「屏幕亮度」滑条，同步调整内置屏与支持 DDC/CI 的外接显示器，显示当前百分比、屏幕数量与控制失败原因。
+- 通过硬件读回校验实际亮度；快速拖动合并请求、屏幕连接变化重新识别，后台不轮询。原生亮度与外接 DDC 均使用系统接口，无新增依赖。
+- 新增只读亮度诊断及可恢复原值的真机同步验收命令。
+
 ## [1.4.0] - 2026-10-02
 
 ### Added

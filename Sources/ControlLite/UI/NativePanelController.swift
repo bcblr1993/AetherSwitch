@@ -436,9 +436,13 @@ final class NativePanelController: NSViewController {
     private let loginItems: LoginItemManager
     private var loginItemSubscription: AnyCancellable?
     private let loginItemSwitch = NSSwitch()
+    private let brightness: BrightnessManager
+    private var brightnessSubscription: AnyCancellable?
+    private let brightnessSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
 
-    init(loginItems: LoginItemManager = .shared) {
+    init(loginItems: LoginItemManager = .shared, brightness: BrightnessManager = .shared) {
         self.loginItems = loginItems
+        self.brightness = brightness
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -479,6 +483,39 @@ final class NativePanelController: NSViewController {
         footerSpacer.setContentHuggingPriority(.init(1), for: .vertical)
         footerSpacer.setContentCompressionResistancePriority(.init(1), for: .vertical)
         root.addArrangedSubview(footerSpacer)
+        let brightnessValue = label("—", font: .monospacedDigitSystemFont(ofSize: 11, weight: .medium))
+        brightnessValue.alignment = .right
+        brightnessValue.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        brightnessSlider.controlSize = .small
+        brightnessSlider.isContinuous = true
+        brightnessSlider.target = self
+        brightnessSlider.action = #selector(adjustBrightness(_:))
+        brightnessSlider.setAccessibilityLabel("同步屏幕亮度")
+        let brightnessRow = NSStackView(views: [label("屏幕亮度", font: Palette.captionStrong), brightnessSlider, brightnessValue])
+        brightnessRow.spacing = 8
+        let brightnessMessage = NSTextField(wrappingLabelWithString: "正在读取显示器…")
+        brightnessMessage.font = Palette.caption
+        brightnessMessage.textColor = .secondaryLabelColor
+        let brightnessSection = NSStackView(views: [brightnessRow, brightnessMessage])
+        brightnessSection.orientation = .vertical
+        brightnessSection.alignment = .leading
+        brightnessSection.spacing = 2
+        root.addArrangedSubview(brightnessSection)
+        NSLayoutConstraint.activate([
+            brightnessSection.widthAnchor.constraint(equalTo: content.widthAnchor),
+            brightnessRow.widthAnchor.constraint(equalTo: brightnessSection.widthAnchor),
+            brightnessMessage.widthAnchor.constraint(equalTo: brightnessSection.widthAnchor)
+        ])
+        brightnessSubscription = brightness.$snapshot.sink { [weak self] snapshot in
+            guard let self else { return }
+            self.brightnessSlider.isEnabled = snapshot.canAdjust
+            self.brightnessSlider.doubleValue = snapshot.value
+            brightnessValue.stringValue = snapshot.canAdjust ? "\(Int((snapshot.value * 100).rounded()))%" : "—"
+            brightnessMessage.stringValue = snapshot.message
+            brightnessSection.toolTip = snapshot.displays.map { "\($0.name)：\($0.issue ?? $0.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "不可用")" }.joined(separator: "\n")
+            self.updatePreferredSize()
+        }
+        brightness.refresh()
         loginItems.refresh()
         loginItemSwitch.controlSize = .mini
         loginItemSwitch.target = self
@@ -664,8 +701,8 @@ final class NativePanelController: NSViewController {
             + CGFloat(max(0, visible.count - 1)) * root.spacing
         // A stable popover size prevents AppKit from retaining a new graphics backing store
         // for each tab transition. Each detail chart uses the available vertical space.
-        // Reserve room for the login-item row and its status without moving the footer between tabs.
-        let size = NSSize(width: 294, height: max(549, height))
+        // Reserve room for synchronized brightness and login-item status on every page.
+        let size = NSSize(width: 294, height: max(611, height))
         if let rootHeight { rootHeight.constant = size.height }
         else {
             let constraint = root.heightAnchor.constraint(equalToConstant: size.height)
@@ -811,7 +848,8 @@ final class NativePanelController: NSViewController {
         state.selectedTab = tab
         if state.showAbout { state.showAbout = false }
     }
-    @objc private func refresh() { state.refreshFull() }
+    @objc private func refresh() { state.refreshFull(); brightness.refresh() }
+    @objc private func adjustBrightness(_ sender: NSSlider) { brightness.setBrightness(sender.doubleValue) }
     @objc private func toggleLoginItem(_ sender: NSSwitch) { loginItems.setEnabled(sender.state == .on) }
     @objc private func openLoginItemSettings() { loginItems.openSystemSettings() }
     @objc private func toggleMenuBarMetric(_ sender: NSSwitch) {
