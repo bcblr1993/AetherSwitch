@@ -496,7 +496,8 @@ final class NativePanelController: NSViewController {
         root.addArrangedSubview(loginSettings)
         loginItemSubscription = loginItems.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
-            self.loginItemSwitch.state = snapshot.status == .requiresApproval ? .mixed : (snapshot.status.isEnabled ? .on : .off)
+            // NSSwitch on macOS 14/15 maps .mixed to .on; approval is not enabled.
+            self.loginItemSwitch.state = snapshot.status.isEnabled ? .on : .off
             self.loginItemSwitch.isEnabled = snapshot.status != .unavailable
             loginMessage.stringValue = snapshot.message ?? ""
             loginMessage.isHidden = snapshot.message == nil
