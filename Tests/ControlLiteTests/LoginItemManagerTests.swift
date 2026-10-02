@@ -101,7 +101,7 @@ final class LoginItemManagerTests: XCTestCase {
         XCTAssertEqual(control.state, .on)
         service.status = .requiresApproval
         manager.refresh()
-        XCTAssertEqual(control.state, .mixed)
+        XCTAssertEqual(control.state, .off, "A pending approval must not look enabled on older macOS")
         XCTAssertTrue(descendants(root).compactMap { $0 as? NSButton }.contains { $0.title == "打开登录项设置" && !$0.isHidden })
         XCTAssertLessThanOrEqual(root.fittingSize.height, panel.preferredContentSize.height + 1)
         control.state = .off
