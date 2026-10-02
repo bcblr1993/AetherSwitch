@@ -221,7 +221,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         if CommandLine.arguments.contains("--acceptance-login-item-cycle") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.togglePopover()
                 self.runLoginItemAcceptance()
             }
         } else if CommandLine.arguments.contains("--acceptance-cycle") {
@@ -256,8 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             NSApp.terminate(nil)
         }
-        guard original == .enabled || original == .disabled,
-              let controller = popover?.contentViewController else { results["error"] = "Login item is unavailable or requires approval"; return }
+        guard original == .enabled || original == .disabled else { results["error"] = "Login item is unavailable or requires approval"; return }
+        // Use the real panel action without taking focus from another app or requiring a display.
+        let controller = NativePanelController()
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         guard let control = descendants(controller.view).compactMap({ $0 as? NSSwitch }).first(where: { $0.accessibilityLabel() == "开机自启动" }) else { results["error"] = "Login switch was not found"; return }
         for enabled in [true, false] {
