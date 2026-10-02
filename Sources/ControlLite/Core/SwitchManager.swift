@@ -18,8 +18,10 @@ public final class SwitchManager: @unchecked Sendable {
 
     private var keepAwakeAssertionID: IOPMAssertionID = 0
     private let lock = NSRecursiveLock()
+    static let keepAwakePreferenceKey = "keepAwakeEnabled"
+    private let defaults: UserDefaults
 
-    private init() {}
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
     deinit {
         releaseKeepAwake()
@@ -46,17 +48,41 @@ public final class SwitchManager: @unchecked Sendable {
 
         if keepAwakeAssertionID != 0 {
             releaseKeepAwake()
+            saveKeepAwake(false)
             return false
         } else {
-            let reason = "ControlLite Keep Awake" as CFString
-            let res = IOPMAssertionCreateWithName(
-                kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
-                IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                reason,
-                &keepAwakeAssertionID
-            )
-            return res == kIOReturnSuccess
+            let active = createKeepAwake()
+            if active { saveKeepAwake(true) }
+            return active
         }
+    }
+
+    /// Recreate the process-owned assertion at launch. Releasing it on exit must
+    /// preserve the user's preference, while an explicit switch-off saves false.
+    @discardableResult
+    func restoreKeepAwakePreference() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard defaults.bool(forKey: Self.keepAwakePreferenceKey) else { return true }
+        return keepAwakeAssertionID != 0 || createKeepAwake()
+    }
+
+    private func createKeepAwake() -> Bool {
+        var assertion: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "AetherSwitch Keep Awake" as CFString, &assertion
+        )
+        guard result == kIOReturnSuccess else { return false }
+        keepAwakeAssertionID = assertion
+        return true
+    }
+
+    private func saveKeepAwake(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Self.keepAwakePreferenceKey)
+        // Flush immediately so a fresh login process reads the last completed action.
+        defaults.synchronize()
     }
 
     public func releaseKeepAwake() {

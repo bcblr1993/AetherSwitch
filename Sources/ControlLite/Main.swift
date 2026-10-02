@@ -83,6 +83,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var appliedMenuBarStyle: MenuBarStyle?
 
     static func main() {
+        if CommandLine.arguments.contains("--keep-awake-status") {
+            let manager = SwitchManager.shared
+            let restored = manager.restoreKeepAwakePreference()
+            let result: [String: Any] = ["saved": UserDefaults.standard.bool(forKey: SwitchManager.keepAwakePreferenceKey),
+                                         "active": manager.getCurrentStates().isKeepAwakeActive, "restored": restored]
+            if let data = try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys),
+               let json = String(data: data, encoding: .utf8) { print(json) }
+            return
+        }
         if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") {
             let app = NSApplication.shared
             app.setActivationPolicy(.prohibited)

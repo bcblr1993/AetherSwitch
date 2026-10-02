@@ -101,6 +101,7 @@ public final class AppState: ObservableObject {
     private let switchMgr = SwitchManager.shared
 
     private init() {
+        let restoredKeepAwake = switchMgr.restoreKeepAwakePreference()
         let savedStyle = UserDefaults.standard.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
         if savedStyle == "iconAndStats" || savedStyle == "statsOnly" {
             self.menuBarStyle = .statsColumns
@@ -109,6 +110,7 @@ public final class AppState: ObservableObject {
         }
         self.metrics = monitor.sample(fullMetrics: false)
         self.switches = switchMgr.getCurrentStates()
+        if !restoredKeepAwake { switchError = "无法恢复保持常亮，请重新开启。" }
         startTimer(interval: 5.0)
     }
 

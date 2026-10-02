@@ -12,7 +12,10 @@ final class SwitchManagerTests: XCTestCase {
     }
 
     func testKeepAwakeAssertionLifecycle() {
-        let manager = SwitchManager.shared
+        let suite = "AetherSwitch.KeepAwakeTest.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let manager = SwitchManager(defaults: defaults)
         
         // 激活常亮
         let activated = manager.toggleKeepAwake()
@@ -27,5 +30,28 @@ final class SwitchManagerTests: XCTestCase {
 
         let finalStates = manager.getCurrentStates()
         XCTAssertFalse(finalStates.isKeepAwakeActive, "断言状态应当为非激活")
+    }
+
+    func testKeepAwakeRemembersOnAndOffAcrossManagerLifetimes() {
+        let suite = "AetherSwitch.KeepAwakeRestore.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let first = SwitchManager(defaults: defaults)
+        XCTAssertTrue(first.restoreKeepAwakePreference())
+        XCTAssertFalse(first.getCurrentStates().isKeepAwakeActive, "A fresh install remains disabled")
+        XCTAssertTrue(first.toggleKeepAwake())
+        first.releaseKeepAwake()
+        XCTAssertTrue(defaults.bool(forKey: SwitchManager.keepAwakePreferenceKey), "Exit must preserve the enabled preference")
+
+        let relaunched = SwitchManager(defaults: UserDefaults(suiteName: suite)!)
+        XCTAssertTrue(relaunched.restoreKeepAwakePreference())
+        XCTAssertTrue(relaunched.getCurrentStates().isKeepAwakeActive)
+        XCTAssertTrue(relaunched.restoreKeepAwakePreference(), "Restoring twice is idempotent")
+        XCTAssertFalse(relaunched.toggleKeepAwake())
+        XCTAssertFalse(defaults.bool(forKey: SwitchManager.keepAwakePreferenceKey))
+
+        let afterSwitchOff = SwitchManager(defaults: UserDefaults(suiteName: suite)!)
+        XCTAssertTrue(afterSwitchOff.restoreKeepAwakePreference())
+        XCTAssertFalse(afterSwitchOff.getCurrentStates().isKeepAwakeActive)
     }
 }
