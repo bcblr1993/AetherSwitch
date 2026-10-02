@@ -433,6 +433,16 @@ final class NativePanelController: NSViewController {
     private var rootHeight: NSLayoutConstraint?
     private let footerSpacer = NSView()
     private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network"]
+    private let loginItems: LoginItemManager
+    private var loginItemSubscription: AnyCancellable?
+    private let loginItemSwitch = NSSwitch()
+
+    init(loginItems: LoginItemManager = .shared) {
+        self.loginItems = loginItems
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
         let root = NSStackView()
@@ -469,6 +479,30 @@ final class NativePanelController: NSViewController {
         footerSpacer.setContentHuggingPriority(.init(1), for: .vertical)
         footerSpacer.setContentCompressionResistancePriority(.init(1), for: .vertical)
         root.addArrangedSubview(footerSpacer)
+        loginItems.refresh()
+        loginItemSwitch.controlSize = .mini
+        loginItemSwitch.target = self
+        loginItemSwitch.action = #selector(toggleLoginItem(_:))
+        loginItemSwitch.setAccessibilityLabel("开机自启动")
+        let loginRow = NSStackView(views: [label("开机自启动", font: Palette.caption), spacer(), loginItemSwitch])
+        root.addArrangedSubview(loginRow)
+        loginRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        let loginMessage = NSTextField(wrappingLabelWithString: "")
+        loginMessage.font = Palette.caption
+        loginMessage.textColor = .secondaryLabelColor
+        root.addArrangedSubview(loginMessage)
+        loginMessage.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        let loginSettings = footerButton("打开登录项设置", symbol: "gearshape", action: #selector(openLoginItemSettings))
+        root.addArrangedSubview(loginSettings)
+        loginItemSubscription = loginItems.$snapshot.sink { [weak self] snapshot in
+            guard let self else { return }
+            self.loginItemSwitch.state = snapshot.status == .requiresApproval ? .mixed : (snapshot.status.isEnabled ? .on : .off)
+            self.loginItemSwitch.isEnabled = snapshot.status != .unavailable
+            loginMessage.stringValue = snapshot.message ?? ""
+            loginMessage.isHidden = snapshot.message == nil
+            loginSettings.isHidden = snapshot.status != .requiresApproval
+            self.updatePreferredSize()
+        }
         root.setCustomSpacing(0, after: footerSpacer)
         root.addArrangedSubview(footer)
         let errorField = NSTextField(wrappingLabelWithString: "")
@@ -629,7 +663,8 @@ final class NativePanelController: NSViewController {
             + CGFloat(max(0, visible.count - 1)) * root.spacing
         // A stable popover size prevents AppKit from retaining a new graphics backing store
         // for each tab transition. Each detail chart uses the available vertical space.
-        let size = NSSize(width: 294, height: max(509, height))
+        // Reserve room for the login-item row and its status without moving the footer between tabs.
+        let size = NSSize(width: 294, height: max(549, height))
         if let rootHeight { rootHeight.constant = size.height }
         else {
             let constraint = root.heightAnchor.constraint(equalToConstant: size.height)
@@ -776,6 +811,8 @@ final class NativePanelController: NSViewController {
         if state.showAbout { state.showAbout = false }
     }
     @objc private func refresh() { state.refreshFull() }
+    @objc private func toggleLoginItem(_ sender: NSSwitch) { loginItems.setEnabled(sender.state == .on) }
+    @objc private func openLoginItemSettings() { loginItems.openSystemSettings() }
     @objc private func toggleMenuBarMetric(_ sender: NSSwitch) {
         guard let metric = menuBarMetric else { return }
         state.setMenuBarMetric(metric, visible: sender.state == .on)

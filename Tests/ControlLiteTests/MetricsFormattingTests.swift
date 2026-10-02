@@ -135,7 +135,7 @@ final class MetricsFormattingTests: XCTestCase {
         func controls(_ view: NSView) -> [NSSwitch] {
             (view as? NSSwitch).map { [$0] } ?? view.subviews.flatMap { controls($0) }
         }
-        let switches = controls(controller.view)
+        let switches = controls(controller.view).filter { $0.accessibilityLabel() != "开机自启动" }
         XCTAssertEqual(switches.count, 4)
         var changed = originalSwitches
         changed.isKeepAwakeActive.toggle()

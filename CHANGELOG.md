@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-02
+
+### Added
+- 面板底部与菜单栏右键菜单新增「开机自启动」选项，默认关闭，开启后在登录 macOS 时自动运行。
+- 使用 macOS 原生登录项管理，无额外依赖；以系统真实状态显示开关，支持系统设置中的外部修改、待审批提示与失败反馈。
+
 ## [1.3.1] - 2026-10-01
 
 ### Fixed

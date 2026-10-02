@@ -83,6 +83,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var appliedMenuBarStyle: MenuBarStyle?
 
     static func main() {
+        if CommandLine.arguments.contains("--login-item-status") {
+            print(LoginItemManager.shared.snapshot.status.rawValue)
+            return
+        }
         if CommandLine.arguments.contains("--diagnose") {
             _ = SystemMonitor.shared.sample(fullMetrics: false)
             Thread.sleep(forTimeInterval: 1)
@@ -215,7 +219,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        if CommandLine.arguments.contains("--acceptance-cycle") {
+        if CommandLine.arguments.contains("--acceptance-login-item-cycle") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.togglePopover()
+                self.runLoginItemAcceptance()
+            }
+        } else if CommandLine.arguments.contains("--acceptance-cycle") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if let initialTab = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_INITIAL_TAB"] {
                     AppState.shared.selectedTab = initialTab
@@ -230,6 +239,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
         }
+    }
+
+    /// Exercise the same switch action as the user, then restore the original registration.
+    private func runLoginItemAcceptance() {
+        let manager = LoginItemManager.shared
+        manager.refresh()
+        let original = manager.snapshot.status
+        var results: [String: Any] = ["original": original.rawValue]
+        defer {
+            manager.setEnabled(original.isEnabled)
+            results["restored"] = manager.snapshot.status.rawValue
+            let path = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_LOG"] ?? "/tmp/AetherSwitch-login-item.json"
+            if let data = try? JSONSerialization.data(withJSONObject: results, options: [.sortedKeys, .prettyPrinted]) {
+                try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            }
+            NSApp.terminate(nil)
+        }
+        guard original == .enabled || original == .disabled,
+              let controller = popover?.contentViewController else { results["error"] = "Login item is unavailable or requires approval"; return }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        guard let control = descendants(controller.view).compactMap({ $0 as? NSSwitch }).first(where: { $0.accessibilityLabel() == "开机自启动" }) else { results["error"] = "Login switch was not found"; return }
+        for enabled in [true, false] {
+            control.state = enabled ? .on : .off
+            _ = control.target?.perform(control.action, with: control)
+            let expected: LoginItemStatus = enabled ? .enabled : .disabled
+            let process = Process()
+            process.executableURL = Bundle.main.executableURL
+            process.arguments = ["--login-item-status"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let freshStatus = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                results[enabled ? "enabled" : "disabled"] = ["system": manager.snapshot.status.rawValue, "freshProcess": freshStatus ?? "missing", "switchOn": control.state == .on]
+                guard process.terminationStatus == 0, manager.snapshot.status == expected, freshStatus == expected.rawValue,
+                      (control.state == .on) == enabled, manager.snapshot.error == nil else {
+                    results["error"] = manager.snapshot.message ?? "System or UI state did not match"
+                    return
+                }
+            } catch { results["error"] = error.localizedDescription; return }
+        }
+        results["passed"] = true
     }
 
     /// Release-gate UI exercise: change tabs on the app's own main thread, without
@@ -377,6 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private func showContextMenu(_ sender: NSStatusBarButton) {
+        LoginItemManager.shared.refresh()
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "AetherSwitch v\(UpdateManager.shared.currentVersion)", action: #selector(showAboutAction), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -405,6 +458,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         autoCheck.state = UpdateManager.shared.automaticallyChecks ? .on : .off
         autoCheck.isEnabled = UpdateManager.shared.isRunning
         menu.addItem(autoCheck)
+        let loginItem = NSMenuItem(title: "开机自启动", action: #selector(toggleLoginItemAction), keyEquivalent: "")
+        let loginStatus = LoginItemManager.shared.snapshot.status
+        loginItem.state = loginStatus == .requiresApproval ? .mixed : (loginStatus.isEnabled ? .on : .off)
+        loginItem.isEnabled = loginStatus != .unavailable
+        menu.addItem(loginItem)
+        if loginStatus == .requiresApproval {
+            menu.addItem(NSMenuItem(title: "在系统设置中允许自启动…", action: #selector(openLoginItemSettingsAction), keyEquivalent: ""))
+        }
         menu.addItem(NSMenuItem(title: "刷新数据", action: #selector(refreshAction), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出 AetherSwitch", action: #selector(quitAction), keyEquivalent: "q"))
@@ -447,6 +508,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func toggleAutoCheckAction() {
         UpdateManager.shared.automaticallyChecks.toggle()
     }
+
+    func applicationDidBecomeActive(_ notification: Notification) { LoginItemManager.shared.refresh() }
+
+    @objc private func toggleLoginItemAction() {
+        let manager = LoginItemManager.shared
+        manager.setEnabled(manager.snapshot.status == .disabled)
+        if let error = manager.snapshot.error {
+            let alert = NSAlert()
+            alert.messageText = "开机自启动设置失败"
+            alert.informativeText = error
+            alert.runModal()
+        }
+    }
+
+    @objc private func openLoginItemSettingsAction() { LoginItemManager.shared.openSystemSettings() }
 
     @objc private func refreshAction() {
         AppState.shared.refreshFull()
