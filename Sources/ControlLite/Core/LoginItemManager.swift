@@ -6,6 +6,17 @@ enum LoginItemStatus: String {
     case disabled, enabled, requiresApproval, unavailable
 
     var isEnabled: Bool { self == .enabled }
+
+    init(systemStatus: SMAppService.Status) {
+        switch systemStatus {
+        // A fresh main app on macOS 27 returns notFound until its first registration.
+        // Unlike a missing helper bundle, the main app can register itself from this state.
+        case .notRegistered, .notFound: self = .disabled
+        case .enabled: self = .enabled
+        case .requiresApproval: self = .requiresApproval
+        @unknown default: self = .unavailable
+        }
+    }
 }
 
 @MainActor
@@ -19,13 +30,7 @@ protocol LoginItemService {
 private struct SystemLoginItemService: LoginItemService {
     var status: LoginItemStatus {
         guard Bundle.main.bundleIdentifier == UpdateManager.bundleIdentifier else { return .unavailable }
-        switch SMAppService.mainApp.status {
-        case .notRegistered: return .disabled
-        case .enabled: return .enabled
-        case .requiresApproval: return .requiresApproval
-        case .notFound: return .unavailable
-        @unknown default: return .unavailable
-        }
+        return LoginItemStatus(systemStatus: SMAppService.mainApp.status)
     }
     func register() throws { try SMAppService.mainApp.register() }
     func unregister() throws { try SMAppService.mainApp.unregister() }

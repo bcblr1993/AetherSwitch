@@ -22,6 +22,13 @@ private final class LoginItemProbe: LoginItemService {
 }
 
 final class LoginItemManagerTests: XCTestCase {
+    func testFreshMainAppServiceCanBeRegistered() {
+        XCTAssertEqual(LoginItemStatus(systemStatus: .notFound), .disabled)
+        XCTAssertEqual(LoginItemStatus(systemStatus: .notRegistered), .disabled)
+        XCTAssertEqual(LoginItemStatus(systemStatus: .enabled), .enabled)
+        XCTAssertEqual(LoginItemStatus(systemStatus: .requiresApproval), .requiresApproval)
+    }
+
     @MainActor
     func testEnablingAndDisablingUsesSystemStateAndIsIdempotent() {
         let service = LoginItemProbe()
