@@ -145,7 +145,7 @@ final class BrightnessManagerTests: XCTestCase {
         let original = state.selectedTab
         let originalVersion = UpdateManager.shared.currentVersion
         defer { state.selectedTab = original; state.showAbout = false; UpdateManager.shared.setVersionForSnapshot(version: originalVersion) }
-        UpdateManager.shared.setVersionForSnapshot(version: "1.4.0")
+        UpdateManager.shared.setVersionForSnapshot(version: "1.5.0")
         state.showAbout = false; state.selectedTab = "overview"
         let controller = NativePanelController(loginItems: LoginItemManager(service: BrightnessLoginFixture()), brightness: manager)
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }

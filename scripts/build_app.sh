@@ -11,8 +11,8 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.4.0"
-BUILD_NUMBER="2026100204"
+VERSION="1.5.0"
+BUILD_NUMBER="2026100205"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 # 在线更新（Sparkle）：清单地址与更新签名公钥。公钥可公开，对应私钥只存在发布者的登录钥匙串（账户 AetherSwitch）。
 SPARKLE_FEED_URL="https://aethernative.com/apps/aetherswitch/appcast.xml"

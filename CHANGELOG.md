@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - 2026-10-02
 
 ### Added
 - 面板新增原生「屏幕亮度」滑条，同步调整内置屏与支持 DDC/CI 的外接显示器，显示当前百分比、屏幕数量与控制失败原因。
