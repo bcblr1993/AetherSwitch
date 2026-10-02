@@ -4,6 +4,8 @@ Apple Silicon 上的原生 macOS 系统状态与快捷开关工具，使用 Swif
 
 提供 CPU、GPU、内存、APFS 共享容器容量、物理磁盘读写速率和网络接口速率，以及保持常亮、隐藏桌面、显示隐藏文件、深色模式开关。菜单栏与面板采用系统原生控件，支持浅色、深色外观和键盘操作。
 
+在面板底部或菜单栏右键菜单开启「开机自启动」，登录 macOS 后自动运行。默认关闭，状态与系统登录项同步；需要系统审批时可直接打开登录项设置。
+
 内存使用量扣除可回收文件缓存，参考 [Stats 内存采样实现](https://github.com/exelban/stats/blob/master/Modules/RAM/readers.swift)。GPU 为驱动瞬时读数，缺少计数器时显示不可用；磁盘速率汇总已连接的物理设备。网络速率汇总 `en*` 物理接口，不计虚拟隧道流量。
 
 ## 构建
@@ -21,6 +23,7 @@ swift test
 
 ```sh
 python3 scripts/verify_popover_memory.py outputs/build-构建号/AetherSwitch.app/Contents/MacOS/AetherSwitch
+python3 scripts/verify_login_item.py outputs/build-构建号/AetherSwitch.app/Contents/MacOS/AetherSwitch
 ```
 
 ```sh
