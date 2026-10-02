@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-10-03
+
+### Fixed
+- 修复外接显示器在 0% 时仍显示画面：最低硬件亮度之上使用系统 Gamma 曲线使画面全黑，面板明确标注「软件全黑」。调高滑条或正常退出应用时恢复每块外屏原有色彩曲线。
+- 修复从全黑调高时亮度接口失效的问题：恢复时重新连接唯一匹配的 DDC 接口，并为临时通信失败增加有限重试。
+- 保留其他软件或系统新设置的色彩曲线，防止屏幕重新连接、退出时的晚到操作覆盖新状态。
+
+### Note
+- 软件全黑不会使外接显示器关机或关闭背光；内置屏继续使用 macOS 原生亮度。新增真机全黑与恢复验收命令，无新增依赖和后台轮询。
+
 ## [1.5.0] - 2026-10-02
 
 ### Added
