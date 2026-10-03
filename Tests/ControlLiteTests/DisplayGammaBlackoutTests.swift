@@ -43,6 +43,50 @@ final class DisplayGammaBlackoutTests: XCTestCase {
         XCTAssertEqual(fixture.read(3), Self.original)
     }
 
+    func testInterruptedFadeRetainsRecoveryCurveAndResumesSmoothly() async {
+        let suite = "AetherSwitch.GammaFade.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = GammaFixture()
+        fixture.state.withLock { $0.tables[3] = Self.original }
+        let dimmer = DisplayGammaBlackout(backend: fixture, defaults: defaults)
+        let transition = BrightnessTransition()
+        let result = await transition.run([.init(from: 1, to: 0, apply: { factor in
+            let success = dimmer.setDimming(factor, on: 3)
+            if factor < 0.6 { transition.cancel() }
+            return success
+        })], token: transition.token(), duration: .zero)
+        XCTAssertTrue(result.cancelled)
+        let partial = dimmer.dimmingFactor(3)
+        XCTAssertGreaterThan(partial, 0)
+        XCTAssertLessThan(partial, 0.6)
+        // A subsequent launch can restore the exact intermediate curve too.
+        let restarted = DisplayGammaBlackout(backend: fixture, defaults: defaults)
+        XCTAssertEqual(fixture.read(3), Self.original)
+        let recovered = await transition.run([.init(from: 1, to: 0.4, apply: {
+            restarted.setDimming($0, on: 3)
+        })], token: transition.token(), duration: .zero)
+        XCTAssertTrue(recovered.failed.isEmpty)
+        XCTAssertEqual(fixture.read(3), Self.original.scaled(by: 0.4))
+        XCTAssertTrue(restarted.shutdownAndRestore())
+        XCTAssertEqual(fixture.read(3), Self.original)
+    }
+
+    func testShutdownDuringFadeRestoresProfileAndBlocksSubsequentFrames() async {
+        let fixture = GammaFixture()
+        fixture.state.withLock { $0.tables[3] = Self.original }
+        let dimmer = DisplayGammaBlackout(backend: fixture)
+        let transition = BrightnessTransition()
+        let result = await transition.run([.init(from: 1, to: 0, apply: { factor in
+            let success = dimmer.setDimming(factor, on: 3)
+            if factor < 0.8 { _ = dimmer.shutdownAndRestore() }
+            return success
+        })], token: transition.token(), duration: .zero)
+        XCTAssertEqual(result.failed, [0])
+        XCTAssertEqual(fixture.read(3), Self.original)
+        XCTAssertFalse(dimmer.isBlack(3))
+    }
+
     func testAbnormalExitRecoveryRestoresOnlyPersistedOwnedCurve() {
         let suite = "AetherSwitch.GammaRecovery.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

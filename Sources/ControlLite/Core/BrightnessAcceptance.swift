@@ -128,13 +128,23 @@ enum BrightnessAcceptance {
                             (display.control != .ddc || (display.hardwareValue == 0 && abs(display.softwareDimming - low / BrightnessScale.softwareRange) < 0.01))
                         }
                     }
-                    dimmingSteps.append(["target": low, "actual": record(actual), "passed": passed])
+                    var step: [String: Any] = ["target": low, "actual": record(actual), "passed": passed]
+                    if let transition = await hardware.lastTransition {
+                        step["transitionFrames"] = transition.frames
+                        step["transitionMilliseconds"] = transition.milliseconds
+                        step["transitionCancelled"] = transition.cancelled
+                    }
+                    dimmingSteps.append(step)
                 }
                 result["dimmingSteps"] = dimmingSteps
                 result["dimmingVerified"] = dimmingSteps.allSatisfy { $0["passed"] as? Bool == true }
                 slider.doubleValue = 0
                 _ = slider.target?.perform(slider.action, with: slider)
                 await manager.waitUntilIdle()
+                if let transition = await hardware.lastTransition {
+                    result["zeroTransition"] = ["frames": transition.frames, "milliseconds": transition.milliseconds,
+                                                "cancelled": transition.cancelled, "failedScreens": transition.failed.count]
+                }
                 result["zeroAfterWrite"] = record(manager.snapshot.displays)
                 let zero = await hardware.discover()
                 result["zero"] = record(zero)

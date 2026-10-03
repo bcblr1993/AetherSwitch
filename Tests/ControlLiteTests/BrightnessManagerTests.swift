@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import os
 @testable import ControlLite
 
 private actor BrightnessProbe: BrightnessHardware {
@@ -11,14 +12,17 @@ private actor BrightnessProbe: BrightnessHardware {
     var writeTargets: [[UInt32]] = []
     var failExternal = false
     var pauseWrite = false
+    var nativeOverride = false
     var resume: CheckedContinuation<Void, Never>?
     func discover() -> [BrightnessDisplay] { displays }
     func readNativeBrightness(displays: [BrightnessDisplay]) -> [BrightnessDisplay] {
         self.displays.filter { original in original.control == .native && displays.contains(where: { $0.id == original.id }) }
+            .map { original in var reading = original; reading.wasInterruptedBySystem = false; return reading }
     }
     func changeNativeBrightness(_ value: Double) { displays[0].value = value }
-    func configure(failure: Bool = false, pause: Bool = false, displays: [BrightnessDisplay]? = nil) {
+    func configure(failure: Bool = false, pause: Bool = false, displays: [BrightnessDisplay]? = nil, nativeOverride: Bool = false) {
         failExternal = failure; pauseWrite = pause
+        self.nativeOverride = nativeOverride
         if let displays { self.displays = displays }
     }
     func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
@@ -31,9 +35,12 @@ private actor BrightnessProbe: BrightnessHardware {
         let updated = displays.map {
             var display = $0
             guard display.isControllable else { return display }
-            if failExternal && display.id == 3 { display.issue = "DDC 失败" }
+            if nativeOverride && display.control == .native {
+                display.value = 0.6; display.wasInterruptedBySystem = true
+            } else if failExternal && display.id == 3 { display.issue = "DDC 失败" }
             else {
                 display.value = value; display.issue = nil
+                display.wasInterruptedBySystem = false
                 display.isBacklightOff = false
                 display.isSoftwareBlackout = display.control == .ddc && value == 0
                 display.hardwareValue = display.isSoftwareBlackout ? 0 : nil
@@ -41,9 +48,45 @@ private actor BrightnessProbe: BrightnessHardware {
             return display
         }
         self.displays = self.displays.map { original in updated.first(where: { $0.id == original.id }) ?? original }
+        nativeOverride = false
         return updated
     }
     func releaseWrite() { resume?.resume(); resume = nil }
+}
+
+private actor TransitionBrightnessProbe: BrightnessHardware {
+    private nonisolated let transition = BrightnessTransition()
+    private let state = OSAllocatedUnfairLock(initialState: (
+        displays: [BrightnessDisplay(id: 1, name: "native", control: .native, value: 0.8),
+                   BrightnessDisplay(id: 3, name: "external", control: .ddc, value: 0.8)],
+        values: [Double]()))
+    var resume: CheckedContinuation<Void, Never>?
+    var pause = true
+    var cancellations = 0
+    nonisolated func cancelPendingTransition() { transition.cancel() }
+    func discover() -> [BrightnessDisplay] { state.withLock { $0.displays } }
+    func readNativeBrightness(displays: [BrightnessDisplay]) -> [BrightnessDisplay] {
+        discover().filter { $0.control == .native }
+    }
+    func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
+        let token = transition.token()
+        if pause { pause = false; await withCheckedContinuation { resume = $0 } }
+        let state = self.state
+        let steps = displays.map { display in
+            BrightnessTransition.Step(from: display.value!, to: value, apply: { level in
+                state.withLock { model in
+                    if let index = model.displays.firstIndex(where: { $0.id == display.id }) { model.displays[index].value = level }
+                    model.values.append(level)
+                }
+                return true
+            })
+        }
+        let result = await transition.run(steps, token: token, duration: .zero)
+        if result.cancelled { cancellations += 1 }
+        return discover()
+    }
+    func release() { resume?.resume(); resume = nil }
+    func reachedZero() -> Bool { state.withLock { $0.values.contains(0) } }
 }
 
 @MainActor
@@ -54,6 +97,36 @@ private struct BrightnessLoginFixture: LoginItemService {
 }
 
 final class BrightnessManagerTests: XCTestCase {
+    @MainActor
+    func testSystemOverrideDuringAppFadeStillSynchronizesFollowers() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.configure(nativeOverride: true)
+        manager.setBrightness(0)
+        await manager.waitUntilIdle()
+        let targets = await probe.writeTargets
+        XCTAssertEqual(targets, [[1, 3], [3]], "Yield to the system source and sync only followers")
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.6, 0.6])
+        XCTAssertEqual(manager.snapshot.value, 0.6)
+    }
+    @MainActor
+    func testNewSliderTargetCancelsQueuedBlackoutInsteadOfFlashingBlack() async {
+        let probe = TransitionBrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0)
+        for _ in 0..<10_000 { if await probe.resume != nil { break }; await Task.yield() }
+        let paused = await probe.resume != nil
+        XCTAssertTrue(paused)
+        manager.setBrightness(0.6)
+        await probe.release(); await manager.waitUntilIdle()
+        let cancellations = await probe.cancellations, reachedZero = await probe.reachedZero()
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertFalse(reachedZero)
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.6, 0.6])
+        XCTAssertEqual(manager.snapshot.value, 0.6)
+    }
     @MainActor
     func testDragReturningToPreviousExternalValueDoesNotDropHardwareAcknowledgement() async {
         let probe = BrightnessProbe()

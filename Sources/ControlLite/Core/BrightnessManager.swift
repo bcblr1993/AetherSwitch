@@ -13,6 +13,7 @@ struct BrightnessDisplay: Equatable, Sendable, Identifiable {
     var softwareDimming: Double = 1
     var isBacklightOff = false
     var supportsBacklightOff = false
+    var wasInterruptedBySystem = false
     var isControllable: Bool { control != .unavailable && value != nil }
 }
 
@@ -20,6 +21,11 @@ protocol BrightnessHardware: Sendable {
     func discover() async -> [BrightnessDisplay]
     func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay]
     func readNativeBrightness(displays: [BrightnessDisplay]) async -> [BrightnessDisplay]
+    func cancelPendingTransition()
+}
+
+extension BrightnessHardware {
+    func cancelPendingTransition() {}
 }
 
 /// No polling while folded. One worker serializes refreshes and coalesces slider events.
@@ -98,6 +104,7 @@ final class BrightnessManager: ObservableObject {
     func setBrightness(_ value: Double) {
         guard value.isFinite, snapshot.canAdjust else { return }
         let value = min(1, max(0, value))
+        hardware.cancelPendingTransition()
         pendingValue = value
         pendingSourceID = nil
         snapshot.value = value
@@ -121,6 +128,7 @@ final class BrightnessManager: ObservableObject {
     }
 
     func stopObservingSystemBrightness() {
+        hardware.cancelPendingTransition()
         systemObservationStopped = true
         needsNativeRead = false
         brightnessSubscription = nil
@@ -179,6 +187,7 @@ final class BrightnessManager: ObservableObject {
                 let updated = targets.isEmpty ? [] : await hardware.setBrightness(value, displays: targets)
                 let displays = snapshot.displays.map { display in updated.first(where: { $0.id == display.id }) ?? display }
                 for display in displays where display.control == .native {
+                    if display.wasInterruptedBySystem { needsNativeRead = true; continue }
                     if let value = display.value { forwardedNativeValues[display.id] = value }
                 }
                 // A late response must not rewind the thumb while the user is still dragging.
@@ -211,6 +220,7 @@ final class BrightnessManager: ObservableObject {
                 }
             }
             if let changed, let value = changed.value {
+                hardware.cancelPendingTransition()
                 forwardedNativeValues[changed.id] = value
                 pendingValue = value
                 pendingSourceID = changed.id
