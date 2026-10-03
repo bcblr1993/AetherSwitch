@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - 2026-10-03
 
 ### Added
 - 外屏亮度下方 25% 使用原始 Gamma 曲线连续调暗，上方使用 DDC 硬件亮度；0% 软件全黑、读数与硬件读回统一换算。
