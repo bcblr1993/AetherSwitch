@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import IOKit
+import os
 
 /// Validate VCP replies, including non-continuous power modes.
 enum BrightnessDDC {
@@ -109,11 +110,15 @@ final class BrightnessDDCTransport: @unchecked Sendable {
             BrightnessDDC.identity(edid) == endpoint.identity
     }
     func write(_ endpoint: BrightnessDDCEndpoint, packet: [UInt8]) -> Bool {
+        write(endpoint, packet: packet, while: { true })
+    }
+    func write(_ endpoint: BrightnessDDCEndpoint, packet: [UInt8], while mayWrite: @Sendable () -> Bool) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let write = function("IOAVServiceWriteI2C") else { return false }
         var bytes = packet
         for _ in 0..<2 {
             usleep(10_000)
+            guard mayWrite() else { return false }
             guard bytes.withUnsafeMutableBytes({ write(endpoint.service, endpoint.chip, 0x51, $0.baseAddress!, UInt32(packet.count)) }) == 0 else { return false }
         }
         return true
@@ -148,7 +153,41 @@ actor SystemBrightnessHardware: BrightnessHardware {
     private let recoverPower: Bool
     private nonisolated let transition = BrightnessTransition()
     private(set) var lastTransition: BrightnessTransition.Result?
-    nonisolated func cancelPendingTransition() { transition.cancel() }
+    private nonisolated let nativeControl = NativeBrightnessControl.shared
+    private nonisolated let runtimes = OSAllocatedUnfairLock(initialState: [UInt32: ExternalBrightnessRuntime]())
+    private nonisolated let requests = OSAllocatedUnfairLock(initialState: [UInt32: Double]())
+    private nonisolated let nativeIdentities = OSAllocatedUnfairLock(initialState: [UInt32: BrightnessDDC.Identity]())
+    private nonisolated let cancellation = OSAllocatedUnfairLock(initialState: UInt64(0))
+    nonisolated func cancelPendingTransition() {
+        cancellation.withLock { $0 &+= 1 }
+        transition.cancel()
+        runtimes.withLock { state in
+            for runtime in state.values { runtime.stop() }
+            state.removeAll()
+        }
+    }
+    @MainActor func updateBrightnessTarget(_ value: Double, displays: [BrightnessDisplay]) -> Set<UInt32> {
+        guard value.isFinite, (0...1).contains(value) else { return [] }
+        let animated = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        var scheduled: Set<UInt32> = []
+        for display in displays where display.isControllable {
+            requests.withLock { $0[display.id] = value }
+            if display.control == .native,
+               let key = nativeIdentities.withLock({ $0[display.id] }),
+               CGDisplayIsOnline(display.id) != 0,
+               CGDisplayVendorNumber(display.id) == key.vendor, CGDisplayModelNumber(display.id) == key.product,
+               CGDisplaySerialNumber(display.id) == key.serial,
+               nativeControl.set(value, on: display.id, animated: animated) {
+                transition.cancel()
+                scheduled.insert(display.id)
+            } else if display.control == .ddc, !DisplayBacklightControl.shared.hasRecovery(display.id),
+                      let runtime = runtimes.withLock({ $0[display.id] }), !runtime.isStopped,
+                      runtime.fade.retarget(value, animated: animated) {
+                scheduled.insert(display.id)
+            }
+        }
+        return scheduled
+    }
 
     init(recoverPower: Bool = true) { self.recoverPower = recoverPower }
     // Keep loaded framework handles alive for the actor's lifetime.
@@ -159,7 +198,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
         guard let handle, let pointer = dlsym(handle, name) else { return nil }
         return unsafeBitCast(pointer, to: type)
     }
-    private func identity(_ id: UInt32) -> BrightnessDDC.Identity {
+    private nonisolated func identity(_ id: UInt32) -> BrightnessDDC.Identity {
         .init(vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id))
     }
     private func onlineIDs() -> [UInt32] {
@@ -184,7 +223,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
         let ids = Array(Set(online + recovering)).sorted { CGDisplayIsBuiltin($0) > CGDisplayIsBuiltin($1) }
         blackout.reconcile(online: online)
         let endpoints = externalEndpoints()
-        return ids.map { id in
+        let displays = ids.map { id in
             let key = online.contains(id) ? identity(id) : previousTargets[id]!.identity
             let name = CGDisplayIsBuiltin(id) != 0 ? "内置屏幕" : endpoints.first(where: { $0.identity == key })?.name ?? "外接屏幕 \(id)"
             if let value = nativeValue(id), function(displayServices, "DisplayServicesSetBrightness", as: NativeSet.self) != nil {
@@ -218,16 +257,32 @@ actor SystemBrightnessHardware: BrightnessHardware {
                 isSoftwareBlackout: software == 0, hardwareValue: hardwareValue, softwareDimming: software,
                 supportsBacklightOff: power.canTurnOff(key) && transport.read(endpoint, command: .powerMode, attempts: 1)?.current == 1)
             lastExternal[id] = display
+            let existing = runtimes.withLock { $0[id] }
+            if existing == nil || existing!.identity != key || !existing!.isRunning {
+                existing?.stop()
+                let runtime = ExternalBrightnessRuntime(id: id, endpoint: endpoint, reading: reading,
+                    software: software, dimmer: blackout, transport: transport)
+                runtimes.withLock { $0[id] = runtime }
+            }
             return display
         }
+        nativeIdentities.withLock { state in
+            state = Dictionary(uniqueKeysWithValues: displays.filter { $0.control == .native }.map { ($0.id, identity($0.id)) })
+        }
+        let externalIDs = Set(displays.filter { $0.control == .ddc }.map(\.id))
+        runtimes.withLock { state in
+            for id in Array(state.keys) where !externalIDs.contains(id) { state.removeValue(forKey: id)?.stop() }
+        }
+        return displays
     }
 
-    func readNativeBrightness(displays: [BrightnessDisplay]) -> [BrightnessDisplay] {
-        let online = onlineIDs()
+    nonisolated func readNativeBrightness(displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
         return displays.compactMap { original in
-            guard original.control == .native, online.contains(original.id),
-                  let target = targets[original.id], identity(original.id) == target.identity,
-                  let value = nativeValue(original.id) else { return nil }
+            guard original.control == .native, CGDisplayIsOnline(original.id) != 0,
+                  let key = nativeIdentities.withLock({ $0[original.id] }),
+                  CGDisplayVendorNumber(original.id) == key.vendor, CGDisplayModelNumber(original.id) == key.product,
+                  CGDisplaySerialNumber(original.id) == key.serial,
+                  let value = nativeControl.read(original.id) else { return nil }
             var display = original
             display.value = value
             display.issue = nil
@@ -236,128 +291,105 @@ actor SystemBrightnessHardware: BrightnessHardware {
         }
     }
 
-    func setBrightness(_ requested: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
+    func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
+        await applyBrightness(value, displays: displays, useLiveTarget: false)
+    }
+    func settleBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
+        await applyBrightness(value, displays: displays, useLiveTarget: true)
+    }
+    private func applyBrightness(_ requested: Double, displays: [BrightnessDisplay], useLiveTarget: Bool) async -> [BrightnessDisplay] {
         guard requested.isFinite else { return displays }
-        let value = min(1, max(0, requested)), revision = transition.token()
-        let online = onlineIDs()
+        let revision = cancellation.withLock { $0 }
+        let animated = await MainActor.run { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
         var result = displays
-        var steps: [BrightnessTransition.Step] = []
-        var stepIndices: [Int: Int] = [:]
-        var nativeTransitions: [Int: NativeBrightnessTransition] = [:]
-        var external: [Int: (identity: BrightnessDDC.Identity, endpoint: Endpoint, software: Double, deferred: Bool)] = [:]
-        let reduceMotion = await MainActor.run { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+        var prepared: [Int: ExternalBrightnessRuntime] = [:]
         for (index, original) in displays.enumerated() where original.isControllable {
-            guard transition.isCurrent(revision) else { break }
+            guard cancellation.withLock({ $0 == revision }) else { break }
             var display = original
+            let id = original.id
             guard let target = targets[display.id],
-                  (online.contains(display.id) && identity(display.id) == target.identity) ||
-                  (power.hasRecovery(display.id) && target.endpoint.map { transport.matches($0) } == true) else {
+                  (CGDisplayIsOnline(display.id) != 0 && identity(display.id) == target.identity) || power.hasRecovery(display.id) else {
                 display.issue = "显示器已断开，请刷新"; result[index] = display; continue
             }
-            let id = display.id, key = target.identity
-            if var endpoint = target.endpoint {
-                let software = blackout.dimmingFactor(id)
-                if value > 0 || !power.enabled {
-                    guard power.restore(id) else {
-                        display.issue = "无法恢复外屏背光，请调高亮度重试"; result[index] = display; continue
-                    }
-                    if software < 1 || original.isBacklightOff || original.isSoftwareBlackout {
-                        guard let fresh = freshEndpoint(key) else {
-                            display.issue = "无法重新连接亮度接口"; result[index] = display; continue
-                        }
-                        endpoint = fresh
-                        targets[id] = Target(identity: key, endpoint: fresh)
-                    }
-                }
-                guard let before = readBrightness(endpoint) else {
-                    display.issue = "亮度设置失败，请检查 DDC/CI 与连接"; result[index] = display; continue
-                }
-                let components = BrightnessScale.components(value)
-                // Fade to black with the existing backlight first. Changing DDC
-                // to its minimum beforehand would create a visible initial jump.
-                let deferred = value == 0 && software > 0
-                let raw = BrightnessDDC.rawValue(components.hardware, maximum: before.maximum)
-                guard transition.isCurrent(revision) else { break }
-                guard let after = deferred ? before : writeHardware(raw, endpoint: endpoint, before: before) else {
-                    display.issue = "亮度设置失败，请检查 DDC/CI 与连接"; result[index] = display; continue
-                }
-                let hardwareValue = Double(after.current) / Double(after.maximum)
-                display.hardwareValue = hardwareValue
-                display.value = BrightnessScale.combined(hardware: hardwareValue, software: software)
-                display.issue = !deferred && abs(Int(after.current) - Int(raw)) > 1 ? "显示器未接受亮度设置，请检查 HDR 或图像模式" : nil
+            let value = min(1, max(0, useLiveTarget ? requests.withLock { $0[id] ?? requested } : requested))
+            guard target.endpoint != nil else {
+                let success = nativeControl.set(value, on: display.id, animated: animated)
+                display.value = nativeControl.read(display.id)
+                display.issue = success ? nil : "系统亮度设置失败"
                 result[index] = display
-                guard display.issue == nil else { continue }
-                external[index] = (key, endpoint, components.software, deferred)
-                stepIndices[index] = steps.count
-                let dimmer = blackout
-                steps.append(.init(from: software, to: components.software, apply: { factor in
-                    dimmer.matchesIdentity(id, key) && dimmer.setDimming(factor, on: id)
-                }))
-            } else if let set = function(displayServices, "DisplayServicesSetBrightness", as: NativeSet.self),
-                      let get = function(displayServices, "DisplayServicesGetBrightness", as: NativeGet.self),
-                      let current = nativeValue(id) {
-                stepIndices[index] = steps.count
-                let transition = self.transition
-                let native = NativeBrightnessTransition(initial: current, read: {
-                    var reading: Float = -1
-                    return get(id, &reading) == 0 && reading.isFinite ? Double(reading) : nil
-                }, write: { level in
-                    let currentIdentity = BrightnessDDC.Identity(vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id))
-                    return currentIdentity == key && set(id, Float(level)) == 0
-                }, cancel: { transition.cancel() })
-                nativeTransitions[index] = native
-                steps.append(.init(from: current, to: value, apply: { native.apply($0) }))
-            } else {
-                display.issue = "系统亮度设置失败"; result[index] = display
+                continue
             }
+            if value > 0 || !power.enabled {
+                guard power.restore(display.id) else {
+                    display.issue = "无法恢复外屏背光，请调高亮度重试"; result[index] = display; continue
+                }
+            }
+            var runtime = runtimes.withLock { $0[id] }
+            if runtime == nil || runtime!.isStopped || runtime!.writer.failed || runtime!.fade.failed || runtime!.identity != target.identity || original.isBacklightOff {
+                guard let current = freshEndpoint(target.identity), let reading = readBrightness(current) else {
+                    display.issue = "无法重新连接亮度接口"; result[index] = display; continue
+                }
+                guard cancellation.withLock({ $0 == revision }) else { break }
+                targets[display.id] = Target(identity: target.identity, endpoint: current)
+                runtime?.stop()
+                let replacement = ExternalBrightnessRuntime(id: display.id, endpoint: current, reading: reading,
+                    software: blackout.dimmingFactor(display.id), dimmer: blackout, transport: transport)
+                runtime = replacement
+                runtimes.withLock { $0[id] = replacement }
+            }
+            guard let runtime else { continue }
+            let latest = min(1, max(0, useLiveTarget ? requests.withLock { $0[id] ?? value } : value))
+            guard runtime.fade.retarget(latest, animated: animated) else {
+                display.issue = "无法软件调暗，请检查 HDR 或色彩设置"; result[index] = display; continue
+            }
+            prepared[index] = runtime
         }
-        var animation = await transition.run(steps, token: revision,
-            duration: reduceMotion ? .zero : .milliseconds(200), frameCount: reduceMotion ? 1 : 12)
-        for (index, step) in stepIndices {
+        for (index, runtime) in prepared {
+            await runtime.waitUntilIdle()
+            guard cancellation.withLock({ $0 == revision }) else { break }
             var display = result[index]
-            guard let target = targets[display.id], identity(display.id) == target.identity else {
+            let id = display.id
+            guard CGDisplayIsOnline(display.id) != 0, identity(display.id) == runtime.identity else {
                 display.issue = "显示器已断开，请刷新"; result[index] = display; continue
             }
-            let cancelled = animation.cancelled || !transition.isCurrent(revision)
-            if let prepared = external[index] {
-                var endpoint = prepared.endpoint
-                if animation.failed.contains(step) { display.issue = "无法软件调暗，请检查 HDR 或色彩设置" }
-                if prepared.deferred && !cancelled {
-                    // Gamma reconfiguration can invalidate IOAV. Reconnect only
-                    // after the fade, while the hardware change remains invisible.
-                    if let fresh = freshEndpoint(prepared.identity) {
-                        endpoint = fresh
-                        targets[display.id] = Target(identity: prepared.identity, endpoint: fresh)
-                    }
-                    if transition.isCurrent(revision), let before = readBrightness(endpoint),
-                       let after = writeHardware(0, endpoint: endpoint, before: before) {
-                        display.hardwareValue = Double(after.current) / Double(after.maximum)
-                        if after.current > 1 { display.issue = "显示器未接受最低亮度设置" }
-                    } else { display.issue = display.issue ?? "亮度设置失败，请检查 DDC/CI 与连接" }
-                }
-                if !cancelled && transition.isCurrent(revision) && value == 0 && power.enabled && power.canTurnOff(prepared.identity) {
-                    if let fresh = freshEndpoint(prepared.identity) { endpoint = fresh }
-                    _ = power.turnOff(display.id, link: powerLink(endpoint))
-                }
-                display.softwareDimming = blackout.dimmingFactor(display.id)
-                display.isSoftwareBlackout = display.softwareDimming == 0
-                display.isBacklightOff = power.isOff(display.id)
-                if display.isBacklightOff { display.issue = nil }
-                else if !cancelled && value == 0 && power.hasRecovery(display.id) {
-                    display.issue = "无法确认背光状态 · 调高亮度恢复"
-                }
-                display.value = display.isBacklightOff ? 0 : BrightnessScale.combined(hardware: display.hardwareValue ?? 0, software: display.softwareDimming)
-                lastExternal[display.id] = display
-            } else if let readback = nativeValue(display.id) {
-                display.value = readback
-                display.wasInterruptedBySystem = nativeTransitions[index]?.wasInterrupted == true
-                display.issue = animation.failed.contains(step) ? "系统亮度设置失败" :
-                    !cancelled && abs(readback - value) >= 0.02 ? "亮度已被系统调整，请检查自动亮度" : nil
-            } else { display.issue = "系统亮度设置失败" }
+            let intended = runtime.fade.target
+            let expectedRaw = BrightnessDDC.rawValue(BrightnessScale.components(intended).hardware, maximum: runtime.maximum)
+            // Gamma changes can rebuild IOAV and restore a monitor's old hardware
+            // value. Reassert the settled value on the freshly identified link,
+            // after the final software frame, never from a stale queued target.
+            if BrightnessScale.components(intended).software < 1, !runtime.isRunning,
+               let fresh = freshEndpoint(runtime.identity) {
+                let requests = self.requests, cancellation = self.cancellation
+                let success = transport.write(fresh, packet: BrightnessDDC.write(expectedRaw), while: {
+                    cancellation.withLock { $0 == revision } &&
+                    (!useLiveTarget || requests.withLock { $0[id] ?? intended } == intended)
+                })
+                if success { BrightnessTrace.shared.record("ddc-settle", display: id, value: Double(expectedRaw)) }
+            }
+            // Verify once after settling, rather than reading back every frame.
+            // Gamma can reconfigure IOAV; use a freshly identified connection.
+            if let fresh = freshEndpoint(runtime.identity), let reading = readBrightness(fresh) {
+                targets[display.id] = Target(identity: runtime.identity, endpoint: fresh)
+                display.hardwareValue = Double(reading.current) / Double(reading.maximum)
+                let raw = BrightnessDDC.rawValue(BrightnessScale.components(intended).hardware, maximum: reading.maximum)
+                display.issue = !runtime.isRunning && abs(Int(reading.current) - Int(raw)) > 1 ? "显示器未接受亮度设置，请检查 HDR 或图像模式" : nil
+            } else { display.issue = "亮度设置失败，请检查 DDC/CI 与连接" }
+            if runtime.fade.failed { display.issue = "无法软件调暗，请检查 HDR 或色彩设置" }
+            if runtime.writer.failed { display.issue = "亮度设置失败，请检查 DDC/CI 与连接" }
+            let latest = useLiveTarget ? requests.withLock { $0[id] ?? intended } : intended
+            if intended == 0, latest == 0, !runtime.isRunning, display.issue == nil,
+               power.enabled, power.canTurnOff(runtime.identity), let fresh = freshEndpoint(runtime.identity) {
+                _ = power.turnOff(display.id, link: powerLink(fresh))
+            }
+            display.softwareDimming = blackout.dimmingFactor(display.id)
+            display.isSoftwareBlackout = display.softwareDimming == 0
+            display.isBacklightOff = power.isOff(display.id)
+            if display.isBacklightOff { display.issue = nil }
+            else if latest == 0, power.hasRecovery(display.id) { display.issue = "无法确认背光状态 · 调高亮度恢复" }
+            display.value = display.isBacklightOff ? 0 : BrightnessScale.combined(hardware: display.hardwareValue ?? 0, software: display.softwareDimming)
+            lastExternal[display.id] = display
             result[index] = display
         }
-        animation.cancelled = animation.cancelled || !transition.isCurrent(revision)
-        lastTransition = animation
         return result
     }
 

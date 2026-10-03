@@ -92,13 +92,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                let json = String(data: data, encoding: .utf8) { print(json) }
             return
         }
-        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") || CommandLine.arguments.contains("--acceptance-brightness-system-sync") || CommandLine.arguments.contains("--acceptance-brightness-restore") {
+        if CommandLine.arguments.contains("--acceptance-brightness-following") || CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") || CommandLine.arguments.contains("--acceptance-brightness-system-sync") || CommandLine.arguments.contains("--acceptance-brightness-restore") {
             let app = NSApplication.shared
             app.setActivationPolicy(.prohibited)
             Task { @MainActor in
                 let result: [String: Any]
                 if let index = CommandLine.arguments.firstIndex(of: "--acceptance-brightness-restore"), index + 1 < CommandLine.arguments.count {
                     result = await BrightnessAcceptance.restore(from: CommandLine.arguments[index + 1])
+                } else if CommandLine.arguments.contains("--acceptance-brightness-following") {
+                    result = await BrightnessAcceptance.runFollowing()
                 } else if CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
                     result = await BrightnessAcceptance.runSystemSync()
                 } else if CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {

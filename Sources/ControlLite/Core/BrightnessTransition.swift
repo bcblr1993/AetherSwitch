@@ -30,7 +30,7 @@ final class BrightnessTransition: Sendable {
         let frames = animated ? count : 1
         let interval = animated ? duration / count : .zero
         for frame in 1...frames {
-            do { try await clock.sleep(until: start + interval * frame) }
+            do { try await clock.sleep(for: interval) }
             catch { result.cancelled = true; break }
             guard isCurrent(token) else { result.cancelled = true; break }
             let progress = Double(frame) / Double(frames)
