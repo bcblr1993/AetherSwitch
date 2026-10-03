@@ -711,7 +711,9 @@ final class NativePanelController: NSViewController {
         // A stable popover size prevents AppKit from retaining a new graphics backing store
         // for each tab transition. Each detail chart uses the available vertical space.
         // Reserve room for synchronized brightness and login-item status on every page.
-        let size = NSSize(width: 294, height: max(611, height))
+        // Older macOS control metrics can make the overview slightly taller.
+        // Retain the measured size when changing tabs or opening About.
+        let size = NSSize(width: 294, height: max(611, max(height, preferredContentSize.height)))
         if let rootHeight { rootHeight.constant = size.height }
         else {
             let constraint = root.heightAnchor.constraint(equalToConstant: size.height)
