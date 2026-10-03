@@ -20,8 +20,16 @@ struct DisplayGammaTable: Equatable, Codable, Sendable {
         Self(red: red.map { $0 * factor }, green: green.map { $0 * factor }, blue: blue.map { $0 * factor })
     }
     func matches(_ other: Self) -> Bool {
-        red.count == other.red.count && green.count == other.green.count && blue.count == other.blue.count &&
-        zip(red + green + blue, other.red + other.green + other.blue).allSatisfy { abs($0 - $1) < 0.0005 }
+        guard red.count == other.red.count, green.count == other.green.count,
+              blue.count == other.blue.count else { return false }
+        func channelMatches(_ left: [Float], _ right: [Float]) -> Bool {
+            let tolerance: Float = 0.0005
+            for (a, b) in zip(left, right) {
+                guard abs(a - b) < tolerance else { return false }
+            }
+            return true
+        }
+        return channelMatches(red, other.red) && channelMatches(green, other.green) && channelMatches(blue, other.blue)
     }
 }
 
