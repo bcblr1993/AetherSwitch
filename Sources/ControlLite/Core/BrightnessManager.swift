@@ -115,14 +115,16 @@ final class BrightnessManager: ObservableObject {
         let scheduled = hardware.updateBrightnessTarget(value, displays: snapshot.displays)
         if scheduled.isEmpty { hardware.cancelPendingTransition() }
         scheduledNativeIDs = Set(snapshot.displays.filter { $0.control == .native && scheduled.contains($0.id) }.map(\.id))
-        for index in snapshot.displays.indices where scheduledNativeIDs.contains(snapshot.displays[index].id) {
-            snapshot.displays[index].value = value
-            snapshot.displays[index].issue = nil
-            forwardedNativeValues[snapshot.displays[index].id] = value
+        var next = snapshot
+        for index in next.displays.indices where scheduledNativeIDs.contains(next.displays[index].id) {
+            next.displays[index].value = value
+            next.displays[index].issue = nil
+            forwardedNativeValues[next.displays[index].id] = value
         }
         pendingValue = value
         pendingSourceID = nil
-        snapshot.value = value
+        next.value = value
+        snapshot = next
         startWorker()
     }
 

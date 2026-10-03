@@ -520,9 +520,13 @@ final class NativePanelController: NSViewController {
             self.backlightSwitch.isEnabled = snapshot.displays.contains { $0.isControllable && $0.supportsBacklightOff }
             self.brightnessSlider.doubleValue = snapshot.value
             brightnessValue.stringValue = snapshot.canAdjust ? "\(Int((snapshot.value * 100).rounded()))%" : "—"
-            brightnessMessage.stringValue = snapshot.message
+            let message = snapshot.message
+            let messageChanged = brightnessMessage.stringValue != message
+            if messageChanged { brightnessMessage.stringValue = message }
             brightnessSection.toolTip = snapshot.displays.map { "\($0.name)：\($0.issue ?? ($0.isBacklightOff ? "背光已关闭" : $0.isSoftwareBlackout ? "软件全黑，背光仍可能亮" : $0.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "不可用"))" }.joined(separator: "\n")
-            self.updatePreferredSize()
+            // The percentage has a fixed width. Re-measuring every detail chart
+            // on each drag can stall input; only message wrapping changes height.
+            if messageChanged { self.updatePreferredSize() }
         }
         brightness.refresh()
         loginItems.refresh()
