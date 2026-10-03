@@ -373,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         BrightnessManager.shared.stopObservingSystemBrightness()
+        BrightnessManager.shared.stopObservingSystemBrightness()
         DisplayBacklightControl.shared.shutdownAndRestore()
         DisplayGammaBlackout.shared.shutdownAndRestore()
         // 退出时彻底释放常亮断言

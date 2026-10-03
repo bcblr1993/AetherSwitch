@@ -20,6 +20,11 @@ protocol BrightnessHardware: Sendable {
     func discover() async -> [BrightnessDisplay]
     func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay]
     func readNativeBrightness(displays: [BrightnessDisplay]) async -> [BrightnessDisplay]
+    func cancelPendingTransition()
+}
+
+extension BrightnessHardware {
+    func cancelPendingTransition() {}
 }
 
 /// No polling while folded. One worker serializes refreshes and coalesces slider events.
@@ -98,6 +103,7 @@ final class BrightnessManager: ObservableObject {
     func setBrightness(_ value: Double) {
         guard value.isFinite, snapshot.canAdjust else { return }
         let value = min(1, max(0, value))
+        hardware.cancelPendingTransition()
         pendingValue = value
         pendingSourceID = nil
         snapshot.value = value
@@ -121,6 +127,7 @@ final class BrightnessManager: ObservableObject {
     }
 
     func stopObservingSystemBrightness() {
+        hardware.cancelPendingTransition()
         systemObservationStopped = true
         needsNativeRead = false
         brightnessSubscription = nil
@@ -211,6 +218,7 @@ final class BrightnessManager: ObservableObject {
                 }
             }
             if let changed, let value = changed.value {
+                hardware.cancelPendingTransition()
                 forwardedNativeValues[changed.id] = value
                 pendingValue = value
                 pendingSourceID = changed.id

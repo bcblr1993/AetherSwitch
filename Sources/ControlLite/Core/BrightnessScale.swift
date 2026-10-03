@@ -10,7 +10,7 @@ enum BrightnessScale {
         return ((value - softwareRange) / (1 - softwareRange), 1)
     }
     static func combined(hardware: Double, software: Double) -> Double {
-        if software < 1 { return min(1, max(0, software)) * softwareRange }
-        return softwareRange + min(1, max(0, hardware)) * (1 - softwareRange)
+        let hardwareLevel = softwareRange + min(1, max(0, hardware)) * (1 - softwareRange)
+        return min(1, max(0, software)) * hardwareLevel
     }
 }

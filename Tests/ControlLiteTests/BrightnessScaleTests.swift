@@ -9,6 +9,11 @@ final class BrightnessScaleTests: XCTestCase {
             if value < 0.25 { XCTAssertEqual(result.hardware, 0) }
         }
     }
+    func testReadoutIncludesGammaWhileBacklightIsHeldDuringFade() {
+        XCTAssertEqual(BrightnessScale.combined(hardware: 0.8, software: 0.5), 0.425, accuracy: 0.000001)
+        XCTAssertEqual(BrightnessScale.combined(hardware: 0.8, software: 0), 0)
+        XCTAssertEqual(BrightnessScale.combined(hardware: 0, software: 0.5), 0.125)
+    }
     func testPowerPacketsValidateCodeChecksumAndDiscretePowerReply() {
         XCTAssertEqual(BrightnessDDC.request(), [0x82, 0x01, 0x10, 0xFD])
         XCTAssertEqual(BrightnessDDC.request(.powerMode), [0x82, 0x01, 0xD6, 0x3B])

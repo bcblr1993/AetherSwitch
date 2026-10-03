@@ -132,6 +132,10 @@ final class DisplayGammaBlackout: @unchecked Sendable {
         dimmingFactor(id) == 0
     }
 
+    func matchesIdentity(_ id: UInt32, _ identity: BrightnessDDC.Identity) -> Bool {
+        backend.identity(id) == identity
+    }
+
     func dimmingFactor(_ id: UInt32) -> Double {
         saved.withLock { state in
             guard let previous = state[id], previous.identity == backend.identity(id),
