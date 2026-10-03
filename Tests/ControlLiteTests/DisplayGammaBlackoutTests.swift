@@ -28,6 +28,47 @@ private final class GammaFixture: DisplayGammaBackend, Sendable {
 final class DisplayGammaBlackoutTests: XCTestCase {
     private static let original = DisplayGammaTable(red: [0, 0.45, 1], green: [0, 0.4, 0.9], blue: [0, 0.3, 0.8])
 
+    func testContinuousDimmingAlwaysUsesOriginalCurveAndRestoresIt() {
+        let fixture = GammaFixture()
+        fixture.state.withLock { $0.tables[3] = Self.original }
+        let dimmer = DisplayGammaBlackout(backend: fixture)
+        XCTAssertTrue(dimmer.setDimming(0.4, on: 3))
+        XCTAssertEqual(fixture.read(3), Self.original.scaled(by: 0.4))
+        XCTAssertEqual(dimmer.dimmingFactor(3), 0.4)
+        XCTAssertTrue(dimmer.setDimming(0.8, on: 3))
+        XCTAssertEqual(fixture.read(3), Self.original.scaled(by: 0.8))
+        XCTAssertFalse(dimmer.isBlack(3))
+        XCTAssertTrue(dimmer.setDimming(0, on: 3))
+        XCTAssertTrue(dimmer.setDimming(1, on: 3))
+        XCTAssertEqual(fixture.read(3), Self.original)
+    }
+
+    func testAbnormalExitRecoveryRestoresOnlyPersistedOwnedCurve() {
+        let suite = "AetherSwitch.GammaRecovery.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = GammaFixture()
+        fixture.state.withLock { $0.tables[3] = Self.original }
+        let first = DisplayGammaBlackout(backend: fixture, defaults: defaults)
+        XCTAssertTrue(first.setDimming(0.2, on: 3))
+        let next = DisplayGammaBlackout(backend: fixture, defaults: defaults)
+        XCTAssertEqual(fixture.read(3), Self.original)
+        XCTAssertEqual(next.dimmingFactor(3), 1)
+    }
+
+    func testSystemProfileChangesDuringPartialDimmingBecomeNewBaseline() {
+        let fixture = GammaFixture()
+        fixture.state.withLock { $0.tables[3] = Self.original }
+        let dimmer = DisplayGammaBlackout(backend: fixture)
+        XCTAssertTrue(dimmer.setDimming(0.4, on: 3))
+        let profile = DisplayGammaTable(red: [0, 0.2, 1], green: [0, 0.3, 0.8], blue: [0, 0.1, 0.4])
+        fixture.state.withLock { $0.tables[3] = profile }
+        XCTAssertEqual(dimmer.dimmingFactor(3), 1)
+        XCTAssertTrue(dimmer.setDimming(0.6, on: 3))
+        XCTAssertTrue(dimmer.restoreAll())
+        XCTAssertEqual(fixture.read(3), profile)
+    }
+
     func testZeroAndRecoveryPreserveSeparateColorProfilesAndRepeatedZeroDoesNotLoseOriginal() {
         let fixture = GammaFixture()
         let second = DisplayGammaTable(red: [0, 0.6, 1], green: [0, 0.5, 1], blue: [0, 0.4, 1])

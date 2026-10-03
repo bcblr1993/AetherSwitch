@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- 外屏亮度下方 25% 使用原始 Gamma 曲线连续调暗，上方使用 DDC 硬件亮度；0% 软件全黑、读数与硬件读回统一换算。
+- 新增「零亮度时关闭外屏背光」选项，默认关闭并记住设置。验证 DPMS 电源读回，调亮、停用选项或退出时恢复；异常退出后按记录恢复本软件拥有的背光与色彩状态。不能可靠恢复的 LG HDR 4K 型号禁用 DDC 关背光。
+
+### Fixed
+- 修复快速拖动回原值时丢弃硬件响应，导致外屏亮度与界面不同的问题。
+- 修复面板刷新吞掉待同步系统亮度变化、连续亮度通知使外屏写入一直延后的问题。
+- 所有 DDC 事务串行执行；背光恢复使用重新识别的连接，Get/Set VCP 使用各自的校验规则，不将 I2C 成功当作背光关闭成功。
+
 ## [1.5.2] - 2026-10-03
 
 ### Fixed

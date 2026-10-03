@@ -439,6 +439,7 @@ final class NativePanelController: NSViewController {
     private let brightness: BrightnessManager
     private var brightnessSubscription: AnyCancellable?
     private let brightnessSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let backlightSwitch = NSButton(checkboxWithTitle: "零亮度时关闭外屏背光", target: nil, action: nil)
 
     init(loginItems: LoginItemManager = .shared, brightness: BrightnessManager = .shared) {
         self.loginItems = loginItems
@@ -496,7 +497,14 @@ final class NativePanelController: NSViewController {
         let brightnessMessage = NSTextField(wrappingLabelWithString: "正在读取显示器…")
         brightnessMessage.font = Palette.caption
         brightnessMessage.textColor = .secondaryLabelColor
-        let brightnessSection = NSStackView(views: [brightnessRow, brightnessMessage])
+        backlightSwitch.controlSize = .mini
+        backlightSwitch.font = Palette.caption
+        backlightSwitch.target = self
+        backlightSwitch.action = #selector(toggleBacklight(_:))
+        backlightSwitch.state = brightness.backlightOffAtZero ? .on : .off
+        backlightSwitch.setAccessibilityLabel("零亮度时关闭外屏背光")
+        backlightSwitch.toolTip = "需要显示器支持可靠的关闭与唤醒；不支持时使用软件全黑。"
+        let brightnessSection = NSStackView(views: [brightnessRow, brightnessMessage, backlightSwitch])
         brightnessSection.orientation = .vertical
         brightnessSection.alignment = .leading
         brightnessSection.spacing = 2
@@ -509,10 +517,11 @@ final class NativePanelController: NSViewController {
         brightnessSubscription = brightness.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             self.brightnessSlider.isEnabled = snapshot.canAdjust
+            self.backlightSwitch.isEnabled = snapshot.displays.contains { $0.isControllable && $0.supportsBacklightOff }
             self.brightnessSlider.doubleValue = snapshot.value
             brightnessValue.stringValue = snapshot.canAdjust ? "\(Int((snapshot.value * 100).rounded()))%" : "—"
             brightnessMessage.stringValue = snapshot.message
-            brightnessSection.toolTip = snapshot.displays.map { "\($0.name)：\($0.issue ?? ($0.isSoftwareBlackout ? "软件全黑，背光仍可能亮" : $0.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "不可用"))" }.joined(separator: "\n")
+            brightnessSection.toolTip = snapshot.displays.map { "\($0.name)：\($0.issue ?? ($0.isBacklightOff ? "背光已关闭" : $0.isSoftwareBlackout ? "软件全黑，背光仍可能亮" : $0.value.map { "\(Int(($0 * 100).rounded()))%" } ?? "不可用"))" }.joined(separator: "\n")
             self.updatePreferredSize()
         }
         brightness.refresh()
@@ -850,6 +859,7 @@ final class NativePanelController: NSViewController {
     }
     @objc private func refresh() { state.refreshFull(); brightness.refresh() }
     @objc private func adjustBrightness(_ sender: NSSlider) { brightness.setBrightness(sender.doubleValue) }
+    @objc private func toggleBacklight(_ sender: NSButton) { brightness.setBacklightOffAtZero(sender.state == .on) }
     @objc private func toggleLoginItem(_ sender: NSSwitch) { loginItems.setEnabled(sender.state == .on) }
     @objc private func openLoginItemSettings() { loginItems.openSystemSettings() }
     @objc private func toggleMenuBarMetric(_ sender: NSSwitch) {

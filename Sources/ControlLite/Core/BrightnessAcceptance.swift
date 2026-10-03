@@ -4,9 +4,29 @@ import AppKit
 /// each screen separately because their initial brightness levels may differ.
 @MainActor
 enum BrightnessAcceptance {
+    static func restore(from path: String) async -> [String: Any] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let before = object["before"] as? [[String: Any]] else {
+            return ["passed": false, "error": "Missing acceptance brightness backup"]
+        }
+        DisplayGammaBlackout.shared.restoreAll()
+        let hardware = SystemBrightnessHardware()
+        let displays = await hardware.discover()
+        var results: [BrightnessDisplay] = []
+        for record in before {
+            if let id = record["id"] as? UInt32, let value = record["brightness"] as? Double,
+               let display = displays.first(where: { $0.id == id && $0.isControllable }) {
+                results += await hardware.setBrightness(value, displays: [display])
+            }
+        }
+        return ["restored": record(await hardware.discover()),
+                "passed": results.count == before.count && results.allSatisfy { $0.issue == nil }]
+    }
     /// Drive only the native display through a separate hardware instance. The
     /// observer must update the real slider and DDC followers without refresh().
     static func runSystemSync() async -> [String: Any] {
+        DisplayGammaBlackout.shared.restoreAll()
         let hardware = SystemBrightnessHardware()
         let manager = BrightnessManager(hardware: hardware)
         manager.refresh(); await manager.waitUntilIdle()
@@ -69,11 +89,14 @@ enum BrightnessAcceptance {
             if let issue = $0.issue { item["issue"] = issue }
             if $0.isSoftwareBlackout { item["softwareBlackout"] = true }
             if let value = $0.hardwareValue { item["hardwareBrightness"] = value }
+            if $0.softwareDimming < 1 { item["softwareDimming"] = $0.softwareDimming }
+            item["backlightOff"] = $0.isBacklightOff
             return item
         }
     }
 
     static func run(includeBlackout: Bool = false) async -> [String: Any] {
+        DisplayGammaBlackout.shared.restoreAll()
         let hardware = SystemBrightnessHardware()
         let manager = BrightnessManager(hardware: hardware, observeScreens: false)
         manager.refresh(); await manager.waitUntilIdle()
@@ -93,6 +116,22 @@ enum BrightnessAcceptance {
         let target = min(0.8, max(0.2, (controlled.first?.value ?? 0.5) + 0.04))
         if let slider {
             if includeBlackout {
+                var dimmingSteps: [[String: Any]] = []
+                for low in [0.2, 0.1, 0.02] {
+                    slider.doubleValue = low
+                    _ = slider.target?.perform(slider.action, with: slider)
+                    await manager.waitUntilIdle()
+                    let actual = await hardware.discover()
+                    let passed = controlled.allSatisfy { prior in
+                        actual.contains { display in
+                            display.id == prior.id && display.issue == nil && abs((display.value ?? -1) - low) < 0.02 &&
+                            (display.control != .ddc || (display.hardwareValue == 0 && abs(display.softwareDimming - low / BrightnessScale.softwareRange) < 0.01))
+                        }
+                    }
+                    dimmingSteps.append(["target": low, "actual": record(actual), "passed": passed])
+                }
+                result["dimmingSteps"] = dimmingSteps
+                result["dimmingVerified"] = dimmingSteps.allSatisfy { $0["passed"] as? Bool == true }
                 slider.doubleValue = 0
                 _ = slider.target?.perform(slider.action, with: slider)
                 await manager.waitUntilIdle()
@@ -101,7 +140,7 @@ enum BrightnessAcceptance {
                 result["zero"] = record(zero)
                 result["zeroVerified"] = controlled.allSatisfy { original in
                     zero.contains { $0.id == original.id && $0.issue == nil && ($0.value ?? -1) <= 0.01 &&
-                        (original.control != .ddc || $0.isSoftwareBlackout) }
+                        (original.control != .ddc || $0.isSoftwareBlackout || $0.isBacklightOff) }
                 }
                 try? await Task.sleep(for: .milliseconds(750))
             }
@@ -130,7 +169,8 @@ enum BrightnessAcceptance {
             restored.contains { $0.id == original.id && abs(($0.value ?? -1) - original.value!) < 0.02 }
         }
         result["restoredOriginalValues"] = restoredAll
-        result["passed"] = (result["synchronized"] as? Bool == true) && restoredAll && (!includeBlackout || result["zeroVerified"] as? Bool == true)
+        result["passed"] = (result["synchronized"] as? Bool == true) && restoredAll &&
+            (!includeBlackout || (result["zeroVerified"] as? Bool == true && result["dimmingVerified"] as? Bool == true))
         return result
     }
 }
