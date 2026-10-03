@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-10-03
+
+### Fixed
+- 修复软件滑条不跟随 macOS 系统亮度的问题：监听原生亮度变化通知，更新读数，并将亮度键、系统亮度滑条或原生自动亮度的变化同步到其余可控显示器；面板关闭时仍可同步，无后台轮询。
+- 合并快速变化，只写入跟随屏幕，避免回写系统源屏幕、重复通知形成反馈循环，以及覆盖用户正在拖动的软件滑条。
+- 系统亮度恢复时同步恢复外屏软件全黑；0% 的进入与恢复绕过微小变化过滤。屏幕连接变化与系统唤醒时重新识别亮度接口。
+- 新增真机系统亮度变化验收，核对软件滑条、DDC 外屏读回及释放面板后的同步，并分别恢复原亮度。
+
 ## [1.5.1] - 2026-10-03
 
 ### Fixed
