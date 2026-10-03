@@ -4,6 +4,68 @@ import AppKit
 /// each screen separately because their initial brightness levels may differ.
 @MainActor
 enum BrightnessAcceptance {
+    static func runFollowing() async -> [String: Any] {
+        DisplayGammaBlackout.shared.restoreAll()
+        let hardware = SystemBrightnessHardware()
+        let manager = BrightnessManager(hardware: hardware, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        let original = manager.snapshot.displays.filter(\.isControllable)
+        guard let native = original.first(where: { $0.control == .native }),
+              original.contains(where: { $0.control == .ddc }) else {
+            return ["passed": false, "error": "Real native and DDC displays required"]
+        }
+        let controller = NativePanelController(brightness: manager)
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        guard let slider = descendants(controller.view).compactMap({ $0 as? NSSlider }).first else {
+            return ["passed": false, "error": "Missing real panel slider"]
+        }
+        await manager.waitUntilIdle()
+        BrightnessTrace.shared.begin()
+        var steps = [[String: Any]]()
+        let targets = [0.6, 0.54, 0.48, 0.42, 0.36, 0.30, 0.24, 0.18, 0.12, 0.06, 0.12, 0.24, 0.36, 0.46]
+        for target in targets {
+            BrightnessTrace.shared.record("input", display: native.id, value: target)
+            let start = ProcessInfo.processInfo.systemUptime
+            slider.doubleValue = target
+            _ = slider.target?.perform(slider.action, with: slider)
+            let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
+            let actual = NativeBrightnessControl.shared.read(native.id) ?? -1
+            steps.append(["target": target, "nativeReadback": actual, "actionMilliseconds": milliseconds,
+                          "passed": abs(actual - target) < 0.005])
+            try? await Task.sleep(for: .milliseconds(60))
+        }
+        await manager.waitUntilIdle()
+        slider.doubleValue = 0; _ = slider.target?.perform(slider.action, with: slider)
+        await manager.waitUntilIdle()
+        let zero = await hardware.discover()
+        let zeroPassed = original.allSatisfy { old in
+            zero.contains { $0.id == old.id && $0.issue == nil && ($0.value ?? 1) < 0.01 &&
+                (old.control != .ddc || $0.isSoftwareBlackout || $0.isBacklightOff) }
+        }
+        slider.doubleValue = 0.46; _ = slider.target?.perform(slider.action, with: slider)
+        await manager.waitUntilIdle()
+        let after = await hardware.discover()
+        let recovered = original.allSatisfy { old in
+            after.contains { $0.id == old.id && $0.issue == nil && abs(($0.value ?? -1) - 0.46) < 0.02 }
+        }
+        let events = BrightnessTrace.shared.finish()
+        let inputs = events.filter { $0.kind == "input" }
+        let external = events.filter { $0.kind == "frame" }
+        let progressedDuringInput = external.contains { $0.milliseconds > (inputs.first?.milliseconds ?? 0) &&
+            $0.milliseconds < (inputs.last?.milliseconds ?? 0) }
+        manager.stopObservingSystemBrightness(); await manager.waitUntilIdle()
+        for display in original { _ = await hardware.setBrightness(display.value!, displays: [display]) }
+        let restored = await hardware.discover()
+        let restoredAll = original.allSatisfy { old in
+            restored.contains { $0.id == old.id && $0.issue == nil && abs(($0.value ?? -1) - old.value!) < 0.02 }
+        }
+        let encoded = (try? JSONEncoder().encode(events)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
+        return ["before": record(original), "steps": steps, "events": encoded,
+                "progressedDuringInput": progressedDuringInput, "zero": record(zero), "zeroVerified": zeroPassed,
+                "recovered": record(after), "restored": record(restored), "restoredOriginalValues": restoredAll,
+                "passed": restoredAll && recovered && zeroPassed && progressedDuringInput && steps.allSatisfy { $0["passed"] as? Bool == true }]
+    }
+
     static func restore(from path: String) async -> [String: Any] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

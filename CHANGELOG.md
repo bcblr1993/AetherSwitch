@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-10-03
+
+### Fixed
+- 修复连续拖动时内屏等待 DDC 操作、动画反复重启的问题。内屏直接使用 macOS 原生平滑亮度接口，外屏持续跟随最新目标。
+- 外屏硬件亮度逐步调节，慢速 DDC 写入只保留最新目标；低亮度软件渐变限制步幅，避免过期动画帧集中执行造成跳变。
+- 系统亮度通知独立处理，外屏过渡期间也能及时接收亮度键或系统滑条的新值；退出后停止待执行写入。
+- 增加连续输入、反向拖动、迟到写入、原生接口参数及减少动态效果的回归测试和真机时序验收。
+
 ## [1.6.0] - 2026-10-03
 
 ### Added

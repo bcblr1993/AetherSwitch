@@ -89,6 +89,46 @@ private actor TransitionBrightnessProbe: BrightnessHardware {
     func reachedZero() -> Bool { state.withLock { $0.values.contains(0) } }
 }
 
+private final class LiveBrightnessProbe: BrightnessHardware, Sendable {
+    private struct Model {
+        var displays = [BrightnessDisplay(id: 1, name: "native", control: .native, value: 0.8),
+                        BrightnessDisplay(id: 3, name: "external", control: .ddc, value: 0.8)]
+        var nativeWrites = [Double]()
+        var externalTargets = [Double]()
+        var resume: CheckedContinuation<Void, Never>?
+        var pause = true
+    }
+    private let model = OSAllocatedUnfairLock(initialState: Model())
+    var isPaused: Bool { model.withLock { $0.resume != nil } }
+    var nativeWrites: [Double] { model.withLock { $0.nativeWrites } }
+    var externalTargets: [Double] { model.withLock { $0.externalTargets } }
+    func discover() async -> [BrightnessDisplay] { model.withLock { $0.displays } }
+    func readNativeBrightness(displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
+        model.withLock { $0.displays.filter { $0.control == .native } }
+    }
+    @MainActor func updateBrightnessTarget(_ value: Double, displays: [BrightnessDisplay]) -> Set<UInt32> {
+        model.withLock { state in
+            for display in displays where display.control == .native {
+                state.displays[0].value = value; state.nativeWrites.append(value)
+            }
+        }
+        return Set(displays.map(\.id))
+    }
+    func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
+        let pause = model.withLock { state in
+            state.externalTargets.append(value)
+            let pause = state.pause; state.pause = false; return pause
+        }
+        if pause { await withCheckedContinuation { continuation in model.withLock { $0.resume = continuation } } }
+        return model.withLock { state in
+            state.displays[1].value = value
+            return state.displays.filter { display in displays.contains { $0.id == display.id } }
+        }
+    }
+    func changeNative(_ value: Double) { model.withLock { $0.displays[0].value = value } }
+    func release() { model.withLock { state in state.resume?.resume(); state.resume = nil } }
+}
+
 @MainActor
 private struct BrightnessLoginFixture: LoginItemService {
     var status: LoginItemStatus { .disabled }
@@ -97,6 +137,52 @@ private struct BrightnessLoginFixture: LoginItemService {
 }
 
 final class BrightnessManagerTests: XCTestCase {
+    @MainActor
+    func testNativeTargetsAreImmediateWhileExternalWriteWaits() async {
+        let hardware = LiveBrightnessProbe()
+        let manager = BrightnessManager(hardware: hardware, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0.2)
+        for _ in 0..<10_000 { if hardware.isPaused { break }; await Task.yield() }
+        XCTAssertTrue(hardware.isPaused)
+        manager.setBrightness(0.4); manager.setBrightness(0.7)
+        XCTAssertEqual(hardware.nativeWrites, [0.2, 0.4, 0.7])
+        XCTAssertEqual(manager.snapshot.displays[0].value, 0.7)
+        hardware.release(); await manager.waitUntilIdle()
+        XCTAssertEqual(hardware.externalTargets, [0.2, 0.7])
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.7, 0.7])
+    }
+
+    @MainActor
+    func testSystemNotificationRetargetsWhileExternalWriteWaits() async {
+        let hardware = LiveBrightnessProbe()
+        let manager = BrightnessManager(hardware: hardware, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0.2)
+        for _ in 0..<10_000 { if hardware.isPaused { break }; await Task.yield() }
+        XCTAssertTrue(hardware.isPaused)
+        hardware.changeNative(0.6); manager.systemBrightnessChanged()
+        for _ in 0..<10_000 { if manager.snapshot.value == 0.6 { break }; await Task.yield() }
+        XCTAssertEqual(manager.snapshot.value, 0.6)
+        hardware.release(); await manager.waitUntilIdle()
+        XCTAssertEqual(hardware.nativeWrites, [0.2], "Do not write the system source back")
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.6, 0.6])
+    }
+
+    @MainActor
+    func testShutdownDropsPendingTarget() async {
+        let hardware = LiveBrightnessProbe()
+        let manager = BrightnessManager(hardware: hardware, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0.2)
+        for _ in 0..<10_000 { if hardware.isPaused { break }; await Task.yield() }
+        manager.setBrightness(0.7); manager.stopObservingSystemBrightness()
+        hardware.release(); await manager.waitUntilIdle()
+        manager.setBrightness(0.4)
+        XCTAssertEqual(hardware.externalTargets, [0.2])
+        XCTAssertEqual(hardware.nativeWrites, [0.2, 0.7])
+    }
+
     @MainActor
     func testSystemOverrideDuringAppFadeStillSynchronizesFollowers() async {
         let probe = BrightnessProbe()
