@@ -108,6 +108,19 @@ actor SystemBrightnessHardware: BrightnessHardware {
         }
     }
 
+    func readNativeBrightness(displays: [BrightnessDisplay]) -> [BrightnessDisplay] {
+        let online = onlineIDs()
+        return displays.compactMap { original in
+            guard original.control == .native, online.contains(original.id),
+                  let target = targets[original.id], identity(original.id) == target.identity,
+                  let value = nativeValue(original.id) else { return nil }
+            var display = original
+            display.value = value
+            display.issue = nil
+            return display
+        }
+    }
+
     func setBrightness(_ value: Double, displays: [BrightnessDisplay]) -> [BrightnessDisplay] {
         let online = onlineIDs()
         return displays.map { original in

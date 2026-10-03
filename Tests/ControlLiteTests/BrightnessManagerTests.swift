@@ -8,21 +8,27 @@ private actor BrightnessProbe: BrightnessHardware {
         BrightnessDisplay(id: 3, name: "外接屏幕", control: .ddc, value: 0.8)
     ]
     var writes: [Double] = []
+    var writeTargets: [[UInt32]] = []
     var failExternal = false
     var pauseWrite = false
     var resume: CheckedContinuation<Void, Never>?
     func discover() -> [BrightnessDisplay] { displays }
+    func readNativeBrightness(displays: [BrightnessDisplay]) -> [BrightnessDisplay] {
+        self.displays.filter { original in original.control == .native && displays.contains(where: { $0.id == original.id }) }
+    }
+    func changeNativeBrightness(_ value: Double) { displays[0].value = value }
     func configure(failure: Bool = false, pause: Bool = false, displays: [BrightnessDisplay]? = nil) {
         failExternal = failure; pauseWrite = pause
         if let displays { self.displays = displays }
     }
     func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] {
         writes.append(value)
+        writeTargets.append(displays.map(\.id))
         if pauseWrite {
             pauseWrite = false
             await withCheckedContinuation { resume = $0 }
         }
-        return displays.map {
+        let updated = displays.map {
             var display = $0
             guard display.isControllable else { return display }
             if failExternal && display.id == 3 { display.issue = "DDC 失败" }
@@ -33,6 +39,8 @@ private actor BrightnessProbe: BrightnessHardware {
             }
             return display
         }
+        self.displays = self.displays.map { original in updated.first(where: { $0.id == original.id }) ?? original }
+        return updated
     }
     func releaseWrite() { resume?.resume(); resume = nil }
 }
@@ -45,6 +53,110 @@ private struct BrightnessLoginFixture: LoginItemService {
 }
 
 final class BrightnessManagerTests: XCTestCase {
+    @MainActor
+    func testSystemBrightnessChangeUpdatesSliderAndWritesOnlyFollowersWithoutLooping() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.changeNativeBrightness(0.6)
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        XCTAssertEqual(manager.snapshot.value, 0.6)
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.6, 0.6])
+        let targets = await probe.writeTargets
+        XCTAssertEqual(targets, [[3]], "macOS must remain the source, never written back")
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        manager.refresh(); await manager.waitUntilIdle()
+        let writes = await probe.writes
+        XCTAssertEqual(writes, [0.6], "Duplicate notifications and panel refresh must not resynchronize")
+    }
+
+    @MainActor
+    func testManualDragNotificationsDoNotCauseFeedbackWrites() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0.7); await manager.waitUntilIdle()
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        let writes = await probe.writes
+        XCTAssertEqual(writes, [0.7])
+        XCTAssertEqual(manager.snapshot.value, 0.7)
+    }
+
+    @MainActor
+    func testSmallNativeChangesUpdateReadoutAndAccumulateBeforeDDCWrites() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        for value in [0.401, 0.402, 0.404] {
+            await probe.changeNativeBrightness(value)
+            manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+            XCTAssertEqual(manager.snapshot.value, value)
+        }
+        let before = await probe.writes
+        XCTAssertTrue(before.isEmpty)
+        await probe.changeNativeBrightness(0.41)
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        let after = await probe.writes
+        XCTAssertEqual(after, [0.41])
+    }
+
+    @MainActor
+    func testSystemBrightnessKeysRecoverExternalBlackout() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        manager.setBrightness(0); await manager.waitUntilIdle()
+        await probe.changeNativeBrightness(0.0625)
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        XCTAssertFalse(manager.snapshot.displays.contains(where: \.isSoftwareBlackout))
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.0625, 0.0625])
+    }
+
+    @MainActor
+    func testSystemZeroStillBlacksOutAnExternalScreenAlreadyAtMinimum() async {
+        let probe = BrightnessProbe()
+        await probe.configure(displays: [
+            BrightnessDisplay(id: 1, name: "内置屏幕", control: .native, value: 0.004),
+            BrightnessDisplay(id: 3, name: "外接屏幕", control: .ddc, value: 0)
+        ])
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.changeNativeBrightness(0)
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        XCTAssertTrue(manager.snapshot.displays[1].isSoftwareBlackout)
+        await probe.changeNativeBrightness(0.001)
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        XCTAssertFalse(manager.snapshot.displays[1].isSoftwareBlackout)
+        manager.stopObservingSystemBrightness()
+        await probe.changeNativeBrightness(0.6)
+        manager.systemBrightnessChanged(); await manager.waitUntilIdle()
+        let writes = await probe.writes
+        XCTAssertEqual(writes, [0, 0.001], "Zero transitions bypass the noise gate; shutdown ignores queued notifications")
+    }
+
+    @MainActor
+    func testSystemChangeDuringDDCWriteKeepsLatestSystemValue() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.configure(pause: true)
+        await probe.changeNativeBrightness(0.5)
+        manager.systemBrightnessChanged()
+        for _ in 0..<10_000 {
+            if await probe.resume != nil { break }
+            await Task.yield()
+        }
+        let suspended = await probe.resume != nil
+        XCTAssertTrue(suspended)
+        await probe.changeNativeBrightness(0.9)
+        manager.systemBrightnessChanged()
+        await probe.releaseWrite()
+        await manager.waitUntilIdle()
+        let writes = await probe.writes
+        XCTAssertEqual(writes, [0.5, 0.9])
+        XCTAssertEqual(manager.snapshot.value, 0.9)
+    }
+
     @MainActor
     func testZeroBlackoutIsClearlyReportedAndMovingSliderUpRecoversBothScreens() async {
         let probe = BrightnessProbe()

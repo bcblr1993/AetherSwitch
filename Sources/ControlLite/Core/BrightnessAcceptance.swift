@@ -4,6 +4,64 @@ import AppKit
 /// each screen separately because their initial brightness levels may differ.
 @MainActor
 enum BrightnessAcceptance {
+    /// Drive only the native display through a separate hardware instance. The
+    /// observer must update the real slider and DDC followers without refresh().
+    static func runSystemSync() async -> [String: Any] {
+        let hardware = SystemBrightnessHardware()
+        let manager = BrightnessManager(hardware: hardware)
+        manager.refresh(); await manager.waitUntilIdle()
+        let original = manager.snapshot.displays
+        guard let source = original.first(where: { $0.control == .native && $0.value != nil }),
+              original.contains(where: { $0.control == .ddc && $0.isControllable }) else {
+            return ["passed": false, "error": "Real native and DDC displays are required"]
+        }
+        var controller: NativePanelController? = NativePanelController(brightness: manager)
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        var slider = descendants(controller!.view).compactMap { $0 as? NSSlider }.first
+        await manager.waitUntilIdle()
+        let driver = SystemBrightnessHardware()
+        _ = await driver.discover()
+        let base = source.value!
+        let first = base >= 0.8 ? base - 0.04 : max(0.2, base + 0.04)
+        let second = first >= 0.8 ? first - 0.04 : first + 0.04
+        var steps: [[String: Any]] = []
+        for (index, target) in [first, second].enumerated() {
+            let nativeWrite = await driver.setBrightness(target, displays: [source])
+            var matched = false
+            for _ in 0..<50 {
+                try? await Task.sleep(for: .milliseconds(100))
+                await manager.waitUntilIdle()
+                matched = manager.snapshot.displays.filter(\.isControllable).allSatisfy {
+                    $0.issue == nil && abs(($0.value ?? -1) - target) < 0.02
+                } && abs(manager.snapshot.value - target) < 0.02
+                if matched { break }
+            }
+            let actual = await driver.discover()
+            let readback = original.filter(\.isControllable).allSatisfy { prior in
+                actual.contains { $0.id == prior.id && $0.issue == nil && abs(($0.value ?? -1) - target) < 0.02 }
+            }
+            let uiMatches = index != 0 || slider.map { abs($0.doubleValue - target) < 0.02 } == true
+            steps.append(["target": target, "nativeWrite": record(nativeWrite), "actual": record(actual),
+                          "slider": manager.snapshot.value, "panelLoaded": controller != nil,
+                          "passed": matched && readback && uiMatches])
+            // The second change must synchronize with no panel/controller alive.
+            slider = nil; controller = nil
+        }
+        // Detach observation before restoring each screen's independent setting.
+        manager.stopObservingSystemBrightness()
+        await manager.waitUntilIdle()
+        for display in original.filter(\.isControllable) {
+            _ = await driver.setBrightness(display.value!, displays: [display])
+        }
+        let restored = await driver.discover()
+        let restoredAll = original.filter(\.isControllable).allSatisfy { prior in
+            restored.contains { $0.id == prior.id && $0.issue == nil && abs(($0.value ?? -1) - prior.value!) < 0.02 }
+        }
+        return ["before": record(original), "steps": steps, "restored": record(restored),
+                "restoredOriginalValues": restoredAll,
+                "passed": restoredAll && steps.allSatisfy { $0["passed"] as? Bool == true }]
+    }
+
     static func record(_ displays: [BrightnessDisplay]) -> [[String: Any]] {
         displays.map {
             var item: [String: Any] = ["id": $0.id, "name": $0.name, "control": $0.control.rawValue]

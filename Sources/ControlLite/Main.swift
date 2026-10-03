@@ -92,12 +92,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                let json = String(data: data, encoding: .utf8) { print(json) }
             return
         }
-        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
+        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") || CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
             let app = NSApplication.shared
             app.setActivationPolicy(.prohibited)
             Task { @MainActor in
                 let result: [String: Any]
-                if CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
+                if CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
+                    result = await BrightnessAcceptance.runSystemSync()
+                } else if CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
                     result = await BrightnessAcceptance.run(includeBlackout: CommandLine.arguments.contains("--acceptance-brightness-blackout"))
                 } else {
                     result = ["displays": BrightnessAcceptance.record(await SystemBrightnessHardware().discover())]
@@ -132,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 在线更新交给 Sparkle：每日静默检查，发现新版本只在面板和菜单里提示。
         UpdateManager.shared.start()
+        // Observe native brightness even while the panel is folded, without polling.
+        BrightnessManager.shared.refresh()
 
         // 2. 初始化 Popover 下拉毛玻璃面板
         let popover = NSPopover()
@@ -364,6 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        BrightnessManager.shared.stopObservingSystemBrightness()
         DisplayGammaBlackout.shared.shutdownAndRestore()
         // 退出时彻底释放常亮断言
         SwitchManager.shared.releaseKeepAwake()
