@@ -8,6 +8,37 @@ private final class TransitionValues: Sendable {
 }
 
 final class BrightnessTransitionTests: XCTestCase {
+    func testNativeBrightnessKeysInterruptFadeWithoutBeingOverwritten() async {
+        let transition = BrightnessTransition()
+        let model = OSAllocatedUnfairLock(initialState: (value: 0.8, writes: [Double]()))
+        let native = NativeBrightnessTransition(initial: 0.8, read: { model.withLock { $0.value } }, write: { value in
+            model.withLock { state in
+                state.writes.append(value)
+                state.value = state.writes.count == 3 ? 0.6 : value
+            }
+            return true
+        }, cancel: { transition.cancel() })
+        let result = await transition.run([.init(from: 0.8, to: 0, apply: { native.apply($0) })],
+            token: transition.token(), duration: .zero)
+        XCTAssertTrue(result.cancelled)
+        XCTAssertTrue(native.wasInterrupted)
+        XCTAssertEqual(model.withLock { $0.writes.count }, 3)
+        XCTAssertEqual(model.withLock { $0.value }, 0.6)
+        XCTAssertFalse(model.withLock { $0.writes.contains(0) })
+    }
+
+    func testOwnNativeFramesDoNotCancelTheirAnimation() async {
+        let transition = BrightnessTransition()
+        let value = OSAllocatedUnfairLock(initialState: 0.8)
+        let native = NativeBrightnessTransition(initial: 0.8, read: { value.withLock { $0 } }, write: { level in
+            value.withLock { $0 = level }; return true
+        }, cancel: { transition.cancel() })
+        let result = await transition.run([.init(from: 0.8, to: 0, apply: { native.apply($0) })],
+            token: transition.token(), duration: .zero)
+        XCTAssertFalse(result.cancelled)
+        XCTAssertFalse(native.wasInterrupted)
+        XCTAssertEqual(value.withLock { $0 }, 0)
+    }
     func testScreensUseOneSmoothTimelineAndReachExactZero() async {
         let transition = BrightnessTransition(), values = TransitionValues()
         let steps = [

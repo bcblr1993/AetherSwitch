@@ -13,6 +13,7 @@ struct BrightnessDisplay: Equatable, Sendable, Identifiable {
     var softwareDimming: Double = 1
     var isBacklightOff = false
     var supportsBacklightOff = false
+    var wasInterruptedBySystem = false
     var isControllable: Bool { control != .unavailable && value != nil }
 }
 
@@ -186,6 +187,7 @@ final class BrightnessManager: ObservableObject {
                 let updated = targets.isEmpty ? [] : await hardware.setBrightness(value, displays: targets)
                 let displays = snapshot.displays.map { display in updated.first(where: { $0.id == display.id }) ?? display }
                 for display in displays where display.control == .native {
+                    if display.wasInterruptedBySystem { needsNativeRead = true; continue }
                     if let value = display.value { forwardedNativeValues[display.id] = value }
                 }
                 // A late response must not rewind the thumb while the user is still dragging.

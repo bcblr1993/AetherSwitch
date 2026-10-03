@@ -136,7 +136,7 @@ final class BrightnessDDCTransport: @unchecked Sendable {
 /// Blocking I2C calls stay on this actor, off the AppKit main thread. CF services live
 /// only here and are released by ARC on rediscovery; all registry ports are balanced.
 actor SystemBrightnessHardware: BrightnessHardware {
-    private typealias NativeGet = @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
+    private typealias NativeGet = @Sendable @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
     private typealias NativeSet = @Sendable @convention(c) (UInt32, Float) -> Int32
     private typealias Endpoint = BrightnessDDCEndpoint
     private struct Target { let identity: BrightnessDDC.Identity; let endpoint: Endpoint? }
@@ -231,6 +231,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
             var display = original
             display.value = value
             display.issue = nil
+            display.wasInterruptedBySystem = false
             return display
         }
     }
@@ -242,6 +243,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
         var result = displays
         var steps: [BrightnessTransition.Step] = []
         var stepIndices: [Int: Int] = [:]
+        var nativeTransitions: [Int: NativeBrightnessTransition] = [:]
         var external: [Int: (identity: BrightnessDDC.Identity, endpoint: Endpoint, software: Double, deferred: Bool)] = [:]
         let reduceMotion = await MainActor.run { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
         for (index, original) in displays.enumerated() where original.isControllable {
@@ -292,12 +294,19 @@ actor SystemBrightnessHardware: BrightnessHardware {
                     dimmer.matchesIdentity(id, key) && dimmer.setDimming(factor, on: id)
                 }))
             } else if let set = function(displayServices, "DisplayServicesSetBrightness", as: NativeSet.self),
+                      let get = function(displayServices, "DisplayServicesGetBrightness", as: NativeGet.self),
                       let current = nativeValue(id) {
                 stepIndices[index] = steps.count
-                steps.append(.init(from: current, to: value, apply: { level in
+                let transition = self.transition
+                let native = NativeBrightnessTransition(initial: current, read: {
+                    var reading: Float = -1
+                    return get(id, &reading) == 0 && reading.isFinite ? Double(reading) : nil
+                }, write: { level in
                     let currentIdentity = BrightnessDDC.Identity(vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id))
                     return currentIdentity == key && set(id, Float(level)) == 0
-                }))
+                }, cancel: { transition.cancel() })
+                nativeTransitions[index] = native
+                steps.append(.init(from: current, to: value, apply: { native.apply($0) }))
             } else {
                 display.issue = "系统亮度设置失败"; result[index] = display
             }
@@ -341,6 +350,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
                 lastExternal[display.id] = display
             } else if let readback = nativeValue(display.id) {
                 display.value = readback
+                display.wasInterruptedBySystem = nativeTransitions[index]?.wasInterrupted == true
                 display.issue = animation.failed.contains(step) ? "系统亮度设置失败" :
                     !cancelled && abs(readback - value) >= 0.02 ? "亮度已被系统调整，请检查自动亮度" : nil
             } else { display.issue = "系统亮度设置失败" }

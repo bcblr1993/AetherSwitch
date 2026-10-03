@@ -53,3 +53,32 @@ final class BrightnessTransition: Sendable {
         return result
     }
 }
+
+/// Yield to brightness keys or automatic brightness instead of overwriting a
+/// native value changed by macOS between our animation frames.
+final class NativeBrightnessTransition: Sendable {
+    private struct State { var expected: Double; var interrupted = false }
+    private let state: OSAllocatedUnfairLock<State>
+    private let read: @Sendable () -> Double?
+    private let write: @Sendable (Double) -> Bool
+    private let cancel: @Sendable () -> Void
+    init(initial: Double, read: @escaping @Sendable () -> Double?, write: @escaping @Sendable (Double) -> Bool,
+         cancel: @escaping @Sendable () -> Void) {
+        state = OSAllocatedUnfairLock(initialState: State(expected: initial))
+        self.read = read; self.write = write; self.cancel = cancel
+    }
+    var wasInterrupted: Bool { state.withLock { $0.interrupted } }
+    func apply(_ value: Double) -> Bool {
+        state.withLock { state in
+            guard let current = read(), current.isFinite else { return false }
+            if abs(current - state.expected) > 0.005 {
+                state.interrupted = true
+                cancel()
+                return true
+            }
+            guard write(value) else { return false }
+            state.expected = value
+            return true
+        }
+    }
+}
