@@ -92,17 +92,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                let json = String(data: data, encoding: .utf8) { print(json) }
             return
         }
-        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") || CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
+        if CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") || CommandLine.arguments.contains("--acceptance-brightness-system-sync") || CommandLine.arguments.contains("--acceptance-brightness-restore") {
             let app = NSApplication.shared
             app.setActivationPolicy(.prohibited)
             Task { @MainActor in
                 let result: [String: Any]
-                if CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
+                if let index = CommandLine.arguments.firstIndex(of: "--acceptance-brightness-restore"), index + 1 < CommandLine.arguments.count {
+                    result = await BrightnessAcceptance.restore(from: CommandLine.arguments[index + 1])
+                } else if CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
                     result = await BrightnessAcceptance.runSystemSync()
                 } else if CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
                     result = await BrightnessAcceptance.run(includeBlackout: CommandLine.arguments.contains("--acceptance-brightness-blackout"))
                 } else {
-                    result = ["displays": BrightnessAcceptance.record(await SystemBrightnessHardware().discover())]
+                    result = ["displays": BrightnessAcceptance.record(await SystemBrightnessHardware(recoverPower: false).discover())]
                 }
                 if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]),
                    let json = String(data: data, encoding: .utf8) { print(json) }
@@ -134,6 +136,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         // 在线更新交给 Sparkle：每日静默检查，发现新版本只在面板和菜单里提示。
         UpdateManager.shared.start()
+        // Repair only our own curves left behind by an abnormal exit.
+        DisplayGammaBlackout.shared.restoreAll()
         // Observe native brightness even while the panel is folded, without polling.
         BrightnessManager.shared.refresh()
 
@@ -369,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         BrightnessManager.shared.stopObservingSystemBrightness()
+        DisplayBacklightControl.shared.shutdownAndRestore()
         DisplayGammaBlackout.shared.shutdownAndRestore()
         // 退出时彻底释放常亮断言
         SwitchManager.shared.releaseKeepAwake()

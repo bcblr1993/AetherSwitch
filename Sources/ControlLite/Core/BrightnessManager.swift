@@ -10,6 +10,9 @@ struct BrightnessDisplay: Equatable, Sendable, Identifiable {
     var issue: String?
     var isSoftwareBlackout = false
     var hardwareValue: Double?
+    var softwareDimming: Double = 1
+    var isBacklightOff = false
+    var supportsBacklightOff = false
     var isControllable: Bool { control != .unavailable && value != nil }
 }
 
@@ -38,6 +41,9 @@ final class BrightnessManager: ObservableObject {
             if let first = failures.first, let issue = first.issue {
                 return "\(first.name)：\(issue)\(failures.count > 1 ? "（另有 \(failures.count - 1) 块）" : "")"
             }
+            if displays.contains(where: \.isBacklightOff) {
+                return "外屏背光已关闭 · 调高亮度恢复"
+            }
             if displays.contains(where: \.isSoftwareBlackout) {
                 return "外屏已软件全黑 · 调高滑条恢复（背光仍可能亮）"
             }
@@ -49,6 +55,7 @@ final class BrightnessManager: ObservableObject {
     }
 
     @Published private(set) var snapshot = Snapshot()
+    @Published private(set) var backlightOffAtZero = DisplayBacklightControl.shared.enabled
     private let hardware: any BrightnessHardware
     private let coalescingDelay: Duration
     private var pendingValue: Double?
@@ -61,6 +68,7 @@ final class BrightnessManager: ObservableObject {
     private var brightnessSubscription: AnyCancellable?
     private var nativeObserver: SystemBrightnessObserver?
     private var systemObservationStopped = false
+    private var forceExternalWrite = false
 
     init(hardware: any BrightnessHardware, coalescingDelay: Duration = .milliseconds(80), observeScreens: Bool = true) {
         self.hardware = hardware
@@ -96,6 +104,15 @@ final class BrightnessManager: ObservableObject {
         startWorker()
     }
 
+    func setBacklightOffAtZero(_ enabled: Bool) {
+        DisplayBacklightControl.shared.enabled = enabled
+        backlightOffAtZero = enabled
+        if snapshot.value == 0 {
+            forceExternalWrite = true
+            setBrightness(0)
+        }
+    }
+
     /// Shared by the native notification path and deterministic acceptance tests.
     func systemBrightnessChanged() {
         guard !systemObservationStopped else { return }
@@ -127,51 +144,36 @@ final class BrightnessManager: ObservableObject {
                 if let nativeObserver {
                     snapshot.systemObservationUnavailable = !nativeObserver.update(displays: displays)
                 }
-                forwardedNativeValues = Dictionary(uniqueKeysWithValues: displays.filter { $0.control == .native }
-                    .compactMap { display in display.value.map { (display.id, $0) } })
+                // Refresh cannot acknowledge changes not yet sent to followers.
+                let nativeIDs = Set(displays.filter { $0.control == .native }.map(\.id))
+                forwardedNativeValues = forwardedNativeValues.filter { nativeIDs.contains($0.key) }
+                for display in displays where display.control == .native && forwardedNativeValues[display.id] == nil {
+                    forwardedNativeValues[display.id] = display.value
+                }
                 snapshot.hasRefreshed = true
                 if pendingValue == nil { snapshot.value = displays.first(where: \.isControllable)?.value ?? 0.5 }
             }
-            if needsNativeRead {
-                needsNativeRead = false
-                let readings = await hardware.readNativeBrightness(displays: snapshot.displays)
-                // An app drag owns the target until it completes. Its own system
-                // notification must neither rewind the thumb nor cause a write loop.
-                if pendingValue == nil || pendingSourceID != nil {
-                    let changed = readings.first { display in
-                        guard let value = display.value, let previous = forwardedNativeValues[display.id] else { return false }
-                        return abs(value - previous) >= 0.005 ||
-                            (value != previous && (value == 0 || previous == 0))
-                    }
-                    for display in readings {
-                        if let index = snapshot.displays.firstIndex(where: { $0.id == display.id }) {
-                            snapshot.displays[index] = display
-                        }
-                    }
-                    if let changed, let value = changed.value {
-                        forwardedNativeValues[changed.id] = value
-                        pendingValue = value
-                        pendingSourceID = changed.id
-                        snapshot.value = value
-                    } else if pendingValue == nil {
-                        snapshot.value = snapshot.displays.first(where: \.isControllable)?.value ?? snapshot.value
-                    }
-                }
-            }
+            if needsNativeRead { await readNativeChanges() }
             if pendingValue != nil {
                 try? await Task.sleep(for: coalescingDelay)
-                if needsRefresh || needsNativeRead { continue }
+                if needsRefresh { continue }
+                // Read the most recent system value once at the deadline; a
+                // stream of duplicate notifications must not postpone writes.
+                if needsNativeRead { await readNativeChanges() }
+                if needsRefresh { continue }
                 guard let value = pendingValue else { continue }
                 let sourceID = pendingSourceID
                 pendingValue = nil
                 pendingSourceID = nil
+                let forceExternal = forceExternalWrite
+                forceExternalWrite = false
                 // Never write the source display back: macOS already set it.
                 let targets = snapshot.displays.filter { display in
                     guard display.id != sourceID, display.isControllable else { return false }
                     let reachingZero = value == 0 && display.value != 0
-                    let recovering = value > 0 && (display.value == 0 || display.isSoftwareBlackout)
-                    let needsBlackout = display.control == .ddc && value == 0 && !display.isSoftwareBlackout
-                    return (sourceID == nil && display.control == .native) || display.issue != nil ||
+                    let recovering = value > 0 && (display.value == 0 || display.isSoftwareBlackout || display.isBacklightOff)
+                    let needsBlackout = display.control == .ddc && value == 0 && !display.isSoftwareBlackout && !display.isBacklightOff
+                    return (forceExternal && display.control == .ddc) || (sourceID == nil && display.control == .native) || display.issue != nil ||
                         abs((display.value ?? -1) - value) >= 0.005 || reachingZero || recovering || needsBlackout
                 }
                 let updated = targets.isEmpty ? [] : await hardware.setBrightness(value, displays: targets)
@@ -180,14 +182,43 @@ final class BrightnessManager: ObservableObject {
                     if let value = display.value { forwardedNativeValues[display.id] = value }
                 }
                 // A late response must not rewind the thumb while the user is still dragging.
-                if pendingValue == nil && !needsRefresh {
+                if !needsRefresh {
                     snapshot.displays = displays
-                    snapshot.value = displays.first(where: \.isControllable)?.value ?? value
+                    if pendingValue == nil && !needsNativeRead {
+                        snapshot.value = displays.first(where: \.isControllable)?.value ?? value
+                    }
                 }
             }
         }
         snapshot.isBusy = false
         worker = nil
+    }
+
+    private func readNativeChanges() async {
+        needsNativeRead = false
+        let readings = await hardware.readNativeBrightness(displays: snapshot.displays)
+        // An app drag owns the target until it completes. Its own system
+        // notification must neither rewind the thumb nor cause a write loop.
+        if pendingValue == nil || pendingSourceID != nil {
+            let changed = readings.first { display in
+                guard let value = display.value, let previous = forwardedNativeValues[display.id] else { return false }
+                return abs(value - previous) >= 0.005 ||
+                    (value != previous && (value == 0 || previous == 0))
+            }
+            for display in readings {
+                if let index = snapshot.displays.firstIndex(where: { $0.id == display.id }) {
+                    snapshot.displays[index] = display
+                }
+            }
+            if let changed, let value = changed.value {
+                forwardedNativeValues[changed.id] = value
+                pendingValue = value
+                pendingSourceID = changed.id
+                snapshot.value = value
+            } else if pendingValue == nil {
+                snapshot.value = snapshot.displays.first(where: \.isControllable)?.value ?? snapshot.value
+            }
+        }
     }
 
     /// Used by native acceptance checks; waits for the final coalesced hardware operation.

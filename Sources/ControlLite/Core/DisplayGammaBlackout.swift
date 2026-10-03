@@ -1,7 +1,8 @@
 import CoreGraphics
+import Foundation
 import os
 
-struct DisplayGammaTable: Equatable, Sendable {
+struct DisplayGammaTable: Equatable, Codable, Sendable {
     let red: [Float]
     let green: [Float]
     let blue: [Float]
@@ -14,6 +15,21 @@ struct DisplayGammaTable: Equatable, Sendable {
     var black: Self {
         let zeros = [Float](repeating: 0, count: red.count)
         return Self(red: zeros, green: zeros, blue: zeros)
+    }
+    func scaled(by factor: Float) -> Self {
+        Self(red: red.map { $0 * factor }, green: green.map { $0 * factor }, blue: blue.map { $0 * factor })
+    }
+    func matches(_ other: Self) -> Bool {
+        guard red.count == other.red.count, green.count == other.green.count,
+              blue.count == other.blue.count else { return false }
+        func channelMatches(_ left: [Float], _ right: [Float]) -> Bool {
+            let tolerance: Float = 0.0005
+            for (a, b) in zip(left, right) {
+                guard abs(a - b) < tolerance else { return false }
+            }
+            return true
+        }
+        return channelMatches(red, other.red) && channelMatches(green, other.green) && channelMatches(blue, other.blue)
     }
 }
 
@@ -41,30 +57,62 @@ private struct CoreGraphicsGammaBackend: DisplayGammaBackend {
     }
 }
 
-/// Only the zero endpoint uses software blackout. Keep each screen's existing
+/// Software dimming below the hardware minimum. Keep each screen's existing
 /// ColorSync curve, and restore only curves that we still own. The lock also lets
 /// AppKit restore synchronously during termination, without waiting for an actor.
-final class DisplayGammaBlackout: Sendable {
-    static let shared = DisplayGammaBlackout(backend: CoreGraphicsGammaBackend())
-    private struct Saved: Sendable { let identity: BrightnessDDC.Identity; let table: DisplayGammaTable }
-    private let saved = OSAllocatedUnfairLock(initialState: [UInt32: Saved]())
+final class DisplayGammaBlackout: @unchecked Sendable {
+    static let shared = DisplayGammaBlackout(backend: CoreGraphicsGammaBackend(), defaults: .standard, recoverOnInit: false)
+    private struct Saved: Codable, Sendable {
+        let identity: BrightnessDDC.Identity
+        let table: DisplayGammaTable
+        let applied: DisplayGammaTable
+        let factor: Double
+    }
+    private let saved: OSAllocatedUnfairLock<[UInt32: Saved]>
     private let ending = OSAllocatedUnfairLock(initialState: false)
     private let backend: any DisplayGammaBackend
+    private let defaults: UserDefaults?
+    private static let defaultsKey = "displayGammaRecovery"
 
-    init(backend: any DisplayGammaBackend) { self.backend = backend }
+    init(backend: any DisplayGammaBackend, defaults: UserDefaults? = nil, recoverOnInit: Bool = true) {
+        self.backend = backend
+        self.defaults = defaults
+        let stored = defaults?.data(forKey: Self.defaultsKey).flatMap { try? JSONDecoder().decode([UInt32: Saved].self, from: $0) } ?? [:]
+        saved = OSAllocatedUnfairLock(initialState: stored.filter { $0.value.table.isValid && $0.value.applied.isValid })
+        // Recover only curves we still own after a previous abnormal exit.
+        if defaults != nil && recoverOnInit { _ = restoreAll() }
+    }
+
+    private func persist(_ state: [UInt32: Saved]) {
+        guard let defaults else { return }
+        defaults.set(try? JSONEncoder().encode(state), forKey: Self.defaultsKey)
+        defaults.synchronize()
+    }
 
     func setBlack(_ id: UInt32) -> Bool {
+        setDimming(0, on: id)
+    }
+
+    func setDimming(_ factor: Double, on id: UInt32) -> Bool {
         ending.withLock { stopped in
-            guard !stopped else { return false }
+            guard !stopped, factor.isFinite, (0...1).contains(factor) else { return false }
             return saved.withLock { state in
+                if factor == 1 { return restore(id, state: &state) }
                 let identity = backend.identity(id)
                 guard let current = backend.read(id), current.isValid else { return false }
-                if let previous = state[id], previous.identity == identity, current.isBlack { return true }
+                let previous = state[id].flatMap { $0.identity == identity && current.matches($0.applied) ? $0 : nil }
+                if previous?.factor == factor { return true }
+                let original = previous?.table ?? current
                 // Another dimmer's already-black curve cannot be used as a recovery curve.
-                guard !current.isBlack else { return false }
-                state[id] = Saved(identity: identity, table: current)
-                guard backend.write(id, table: current.black), backend.read(id)?.isBlack == true else {
-                    if backend.write(id, table: current) { state.removeValue(forKey: id) }
+                guard !original.isBlack else { return false }
+                let applied = original.scaled(by: Float(factor))
+                state[id] = Saved(identity: identity, table: original, applied: applied, factor: factor)
+                persist(state)
+                guard backend.write(id, table: applied), backend.read(id)?.matches(applied) == true else {
+                    if backend.write(id, table: current), backend.read(id)?.matches(current) == true {
+                        state[id] = previous
+                        persist(state)
+                    }
                     return false
                 }
                 return true
@@ -81,9 +129,14 @@ final class DisplayGammaBlackout: Sendable {
     }
 
     func isBlack(_ id: UInt32) -> Bool {
+        dimmingFactor(id) == 0
+    }
+
+    func dimmingFactor(_ id: UInt32) -> Double {
         saved.withLock { state in
-            guard let previous = state[id], previous.identity == backend.identity(id) else { return false }
-            return backend.read(id)?.isBlack == true
+            guard let previous = state[id], previous.identity == backend.identity(id),
+                  backend.read(id)?.matches(previous.applied) == true else { return 1 }
+            return previous.factor
         }
     }
 
@@ -94,11 +147,12 @@ final class DisplayGammaBlackout: Sendable {
 
     private func restore(_ id: UInt32, state: inout [UInt32: Saved]) -> Bool {
         guard let previous = state[id] else { return true }
-        guard previous.identity == backend.identity(id) else { state.removeValue(forKey: id); return true }
+        guard previous.identity == backend.identity(id) else { state.removeValue(forKey: id); persist(state); return true }
         // A system/profile change or another dimmer takes ownership; preserve it.
-        if let current = backend.read(id), !current.isBlack { state.removeValue(forKey: id); return true }
-        guard backend.write(id, table: previous.table), backend.read(id)?.isBlack == false else { return false }
+        if let current = backend.read(id), !current.matches(previous.applied) { state.removeValue(forKey: id); persist(state); return true }
+        guard backend.write(id, table: previous.table), backend.read(id)?.matches(previous.table) == true else { return false }
         state.removeValue(forKey: id)
+        persist(state)
         return true
     }
 
@@ -113,9 +167,11 @@ final class DisplayGammaBlackout: Sendable {
 
     func reconcile(online: [UInt32]) {
         saved.withLock { state in
+            let previousCount = state.count
             for id in Array(state.keys) where !online.contains(id) || state[id]?.identity != backend.identity(id) {
                 state.removeValue(forKey: id)
             }
+            if state.count != previousCount { persist(state) }
         }
     }
 }

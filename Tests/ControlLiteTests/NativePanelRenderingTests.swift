@@ -2,8 +2,47 @@ import XCTest
 import AppKit
 @testable import ControlLite
 
+private actor RenderingBrightnessHardware: BrightnessHardware {
+    func discover() -> [BrightnessDisplay] {
+        [BrightnessDisplay(id: 1, name: "native", control: .native, value: 0.5),
+         BrightnessDisplay(id: 3, name: "external", control: .ddc, value: 0.5, supportsBacklightOff: true)]
+    }
+    func setBrightness(_ value: Double, displays: [BrightnessDisplay]) -> [BrightnessDisplay] { displays }
+    func readNativeBrightness(displays: [BrightnessDisplay]) -> [BrightnessDisplay] { displays.filter { $0.control == .native } }
+}
+
 /// 详情页图表若交给 AppKit 异步绘制，会建立 IOSurface/Metal 资源并把内存峰值推高约 12MB。
 final class NativePanelRenderingTests: XCTestCase {
+    @MainActor
+    func testBrightnessPowerOptionFitsEveryPageInBothAppearances() async throws {
+        let state = AppState.shared
+        let originalTab = state.selectedTab, originalAbout = state.showAbout
+        defer { state.selectedTab = originalTab; state.showAbout = originalAbout }
+        state.showAbout = false
+        let brightness = BrightnessManager(hardware: RenderingBrightnessHardware(), observeScreens: false)
+        let controller = NativePanelController(brightness: brightness)
+        _ = controller.view
+        await brightness.waitUntilIdle()
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: controller.preferredContentSize), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentViewController = nil; window.close() }
+        window.contentViewController = controller
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let option = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSButton }
+            .first { $0.accessibilityLabel() == "零亮度时关闭外屏背光" })
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network"] {
+                state.selectedTab = tab
+                window.setContentSize(controller.preferredContentSize)
+                _ = render(window, appearance: appearance)
+                XCTAssertTrue(option.isEnabled)
+                XCTAssertFalse(option.isHidden)
+                let frame = option.convert(option.bounds, to: controller.view)
+                XCTAssertGreaterThan(frame.height, 0)
+                XCTAssertTrue(controller.view.bounds.contains(frame), "Backlight option clipped on \(tab) / \(appearance)")
+            }
+        }
+    }
     @MainActor
     private func layers(_ layer: CALayer) -> [CALayer] {
         [layer] + (layer.sublayers ?? []).flatMap { layers($0) }

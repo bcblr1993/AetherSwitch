@@ -34,6 +34,7 @@ private actor BrightnessProbe: BrightnessHardware {
             if failExternal && display.id == 3 { display.issue = "DDC 失败" }
             else {
                 display.value = value; display.issue = nil
+                display.isBacklightOff = false
                 display.isSoftwareBlackout = display.control == .ddc && value == 0
                 display.hardwareValue = display.isSoftwareBlackout ? 0 : nil
             }
@@ -53,6 +54,73 @@ private struct BrightnessLoginFixture: LoginItemService {
 }
 
 final class BrightnessManagerTests: XCTestCase {
+    @MainActor
+    func testDragReturningToPreviousExternalValueDoesNotDropHardwareAcknowledgement() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.configure(pause: true)
+        manager.setBrightness(0.2)
+        for _ in 0..<10_000 { if await probe.resume != nil { break }; await Task.yield() }
+        let suspended = await probe.resume != nil
+        XCTAssertTrue(suspended)
+        manager.setBrightness(0.8)
+        await probe.releaseWrite(); await manager.waitUntilIdle()
+        let physical = await probe.displays
+        let targets = await probe.writeTargets
+        XCTAssertEqual(physical.compactMap(\.value), [0.8, 0.8])
+        XCTAssertEqual(manager.snapshot.displays.compactMap(\.value), [0.8, 0.8])
+        XCTAssertEqual(targets, [[1, 3], [1, 3]])
+    }
+
+    @MainActor
+    func testPanelRefreshDoesNotConsumePendingSystemChange() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.changeNativeBrightness(0.6)
+        manager.systemBrightnessChanged(); manager.refresh()
+        await manager.waitUntilIdle()
+        let physical = await probe.displays
+        let targets = await probe.writeTargets
+        XCTAssertEqual(physical.compactMap(\.value), [0.6, 0.6])
+        XCTAssertEqual(targets, [[3]])
+    }
+
+    @MainActor
+    func testDuplicateNotificationStreamDoesNotStarveExternalWrites() async {
+        let probe = BrightnessProbe()
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .milliseconds(20), observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        await probe.changeNativeBrightness(0.6)
+        for _ in 0..<40 {
+            manager.systemBrightnessChanged()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        let writesBeforeStreamEnds = await probe.writes
+        XCTAssertEqual(writesBeforeStreamEnds, [0.6])
+        await manager.waitUntilIdle()
+        let physical = await probe.displays
+        XCTAssertEqual(physical.compactMap(\.value), [0.6, 0.6])
+    }
+
+    @MainActor
+    func testConfirmedBacklightOffIsTruthfullyReportedAndRecovered() async {
+        let probe = BrightnessProbe()
+        await probe.configure(displays: [
+            BrightnessDisplay(id: 1, name: "native", control: .native, value: 0),
+            BrightnessDisplay(id: 3, name: "external", control: .ddc, value: 0, isBacklightOff: true)
+        ])
+        let manager = BrightnessManager(hardware: probe, coalescingDelay: .zero, observeScreens: false)
+        manager.refresh(); await manager.waitUntilIdle()
+        XCTAssertEqual(manager.snapshot.message, "外屏背光已关闭 · 调高亮度恢复")
+        manager.setBrightness(0); await manager.waitUntilIdle()
+        let zeroTargets = await probe.writeTargets
+        XCTAssertEqual(zeroTargets, [[1]], "Do not repeat a confirmed power-off request")
+        manager.setBrightness(0.1); await manager.waitUntilIdle()
+        let lastTargets = await probe.writeTargets.last
+        XCTAssertEqual(lastTargets, [1, 3])
+    }
     @MainActor
     func testSystemBrightnessChangeUpdatesSliderAndWritesOnlyFollowersWithoutLooping() async {
         let probe = BrightnessProbe()
