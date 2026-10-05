@@ -269,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard index < sequence.count else {
             if ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_CLOSE_AFTER_CYCLE"] == "1" {
                 popover?.performClose(nil)
+                menuBarSettings?.close()
             }
             return
         }
@@ -276,6 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let interval = requested.isFinite ? min(15, max(1.5, requested)) : 1.5
         DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
             guard let self else { return }
+            if index == 0 && ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_MENU_BAR_SETTINGS"] == "1" {
+                self.showMenuBarSettings()
+            }
             let tab = sequence[index]
             if AppState.shared.selectedTab != tab {
                 AppState.shared.selectedTab = tab
@@ -287,6 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 "footprintMB": self.physicalFootprintMB() ?? -1,
                 "peakFootprintMB": self.physicalFootprintMB(peak: true) ?? -1,
                 "updaterRunning": UpdateManager.shared.isRunning,
+                "menuBarSettingsShown": self.menuBarSettings?.window?.isVisible == true,
                 "timestamp": Date().timeIntervalSince1970
             ]
             if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
