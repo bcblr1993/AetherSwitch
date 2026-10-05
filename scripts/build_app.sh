@@ -11,8 +11,8 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.6.1"
-BUILD_NUMBER="2026100306"
+VERSION="1.7.0"
+BUILD_NUMBER="2026100501"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 # 在线更新（Sparkle）：清单地址与更新签名公钥。公钥可公开，对应私钥只存在发布者的登录钥匙串（账户 AetherSwitch）。
 SPARKLE_FEED_URL="https://aethernative.com/apps/aetherswitch/appcast.xml"
@@ -59,6 +59,7 @@ test -d "$SPARKLE_FRAMEWORK" || { echo "Sparkle.framework not found: $SPARKLE_FR
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Frameworks"
 ditto "$SPARKLE_FRAMEWORK" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework"
 cp "$SPARKLE_DIR/LICENSE" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources/Sparkle-LICENSE"
+cp "$PROJECT_DIR/LICENSES/Stats-MIT.txt" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources/Stats-MIT.txt"
 
 # 生成生产级 Info.plist
 cat <<EOF > "$OUTPUT_DIR/${APP_NAME}.app/Contents/Info.plist"
