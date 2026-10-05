@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-10-05
+
+### Added
+- CPU、GPU、内存和磁盘详情面板对齐 Stats 的主要指标与信息结构，保留最近 60 次采样历史、分段仪表和主要进程榜单。
+- CPU 增加只读 SMC 温度、IOReport 活跃驻留频率、真实核心分类与各核心负载；GPU 增加渲染 / Tiler 分项、多屏合计呈现帧率和神经引擎功率。
+- 内存展示应用 / 联结 / 压缩、系统压力等级、缓存、可用及交换已用 / 总量，主要进程采用物理占用。
+- 磁盘可选择启动卷和外接卷，显示对应物理设备读写、型号、文件系统及支持设备的 NVMe SMART 健康、温度、寿命、备用和通电时长。
+
+### Fixed
+- 修正 Apple Silicon 进程 CPU 的 Mach tick 时间换算，保留多核进程超过 100% 的真实占用；避免 PID 复用与计数器重置造成假读数。
+- 不再将 GPU 设备利用率冒充缺失的渲染 / Tiler 数据，也不再把内存压力等级伪造成百分比；不可用硬件指标明确显示不可用。
+- 详情区支持滚动，长详情与较矮屏幕保留底部亮度、登录项及更新操作；折叠时释放深度采样资源。
+
 ## [1.6.1] - 2026-10-03
 
 ### Fixed

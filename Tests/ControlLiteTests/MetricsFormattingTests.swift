@@ -67,11 +67,11 @@ final class MetricsFormattingTests: XCTestCase {
         for dark in [false, true] {
             for tab in ["overview", "cpu", "gpu", "ram", "disk", "network"] {
                 state.selectedTab = tab
-                if tab == "disk" {
-                    _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab)
-                    Thread.sleep(forTimeInterval: 0.1)
+                if tab == "disk" || tab == "cpu" {
+                    _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
+                    Thread.sleep(forTimeInterval: 2.1)
                 }
-                state.updateForSnapshot(metrics: SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab), switches: originalSwitches)
+                state.updateForSnapshot(metrics: SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true), switches: originalSwitches)
                 let controller = NativePanelController()
                 let hosting = controller.view
                 hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -119,7 +119,7 @@ final class MetricsFormattingTests: XCTestCase {
             XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1,
                                      "\(tab) 详情和底部操作栏必须完整容纳在弹出面板内")
             if tab == "disk" {
-                XCTAssertTrue(strings(root).contains { $0.contains("共享容器已用") })
+                XCTAssertTrue(strings(root).contains { $0.contains("容量已用") })
             }
         }
     }

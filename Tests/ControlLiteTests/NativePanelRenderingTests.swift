@@ -14,6 +14,30 @@ private actor RenderingBrightnessHardware: BrightnessHardware {
 /// 详情页图表若交给 AppKit 异步绘制，会建立 IOSurface/Metal 资源并把内存峰值推高约 12MB。
 final class NativePanelRenderingTests: XCTestCase {
     @MainActor
+    func testDetailPanelsScrollOnShortScreensWhileBrightnessRemainsVisible() throws {
+        let state = AppState.shared
+        let originalTab = state.selectedTab, originalAbout = state.showAbout
+        defer { state.selectedTab = originalTab; state.showAbout = originalAbout }
+        state.showAbout = false
+        let controller = NativePanelController(maximumHeight: 600)
+        _ = controller.view
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: controller.preferredContentSize), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentViewController = nil; window.close() }
+        window.contentViewController = controller
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        for tab in ["cpu", "ram", "disk"] {
+            state.selectedTab = tab
+            _ = render(window, appearance: .aqua)
+            XCTAssertEqual(controller.preferredContentSize.height, 600)
+            let scroll = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSScrollView }.first)
+            XCTAssertGreaterThan(try XCTUnwrap(scroll.documentView).fittingSize.height, scroll.contentSize.height)
+            XCTAssertGreaterThan(try XCTUnwrap(scroll.documentView).frame.height, scroll.contentSize.height)
+            let slider = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSSlider }.first)
+            XCTAssertTrue(controller.view.bounds.contains(slider.convert(slider.bounds, to: controller.view)))
+        }
+    }
+    @MainActor
     func testBrightnessPowerOptionFitsEveryPageInBothAppearances() async throws {
         let state = AppState.shared
         let originalTab = state.selectedTab, originalAbout = state.showAbout

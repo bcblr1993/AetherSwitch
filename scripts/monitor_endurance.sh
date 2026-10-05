@@ -10,7 +10,8 @@ PROBE_DIR="$(mktemp -d /tmp/aetherswitch-probe.XXXXXX)"
 trap 'rm -rf "$PROBE_DIR"' EXIT
 cat > "$PROBE_DIR/probe.swift" <<'SWIFT'
 import Foundation
-DistributedNotificationCenter.default().postNotificationName(NSNotification.Name("com.aethernative.aetherswitch.reportStatus"), object: nil, deliverImmediately: true)
+let pid = CommandLine.arguments[1]
+DistributedNotificationCenter.default().postNotificationName(NSNotification.Name("com.aethernative.aetherswitch.reportStatus.\(pid)"), object: nil, deliverImmediately: true)
 SWIFT
 swiftc "$PROBE_DIR/probe.swift" -o "$PROBE_DIR/probe"
 cat > "$PROBE_DIR/cputime.c" <<'C'
@@ -19,12 +20,16 @@ cat > "$PROBE_DIR/cputime.c" <<'C'
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/resource.h>
+#include <mach/mach_time.h>
 int main(int argc, char **argv) {
     if (argc != 2) return 2;
     int pid = atoi(argv[1]);
     struct rusage_info_v4 usage = {0};
     if (pid <= 0 || proc_pid_rusage(pid, RUSAGE_INFO_V4, (rusage_info_t *)&usage) != 0) return 1;
-    printf("%llu\n", (unsigned long long)(usage.ri_user_time + usage.ri_system_time));
+    mach_timebase_info_data_t timebase;
+    if (mach_timebase_info(&timebase) != 0 || timebase.denom == 0) return 1;
+    long double nanoseconds = (long double)(usage.ri_user_time + usage.ri_system_time) * timebase.numer / timebase.denom;
+    printf("%llu\n", (unsigned long long)nanoseconds);
     return 0;
 }
 C
@@ -64,14 +69,14 @@ with (path / 'metrics.csv').open('w') as output:
         peak_match = re.search(r'Physical footprint \(peak\):\s*([\d.]+)([KMG])', memory.stdout)
         peak = float(peak_match[1]) * {'K': 1/1024, 'M': 1, 'G': 1024}[peak_match[2]] if peak_match else None
         request_time = time.time()
-        subprocess.run([probe], check=True)
+        subprocess.run([probe, pid], check=True)
         receipt = {}
         for _ in range(20):
             time.sleep(0.1)
-            try: receipt = json.loads(pathlib.Path('/tmp/AetherSwitch-runtime.json').read_text())
+            try: receipt = json.loads(pathlib.Path('/tmp/AetherSwitch-runtime-' + pid + '.json').read_text())
             except (OSError, ValueError): continue
             if receipt.get('timestamp', 0) >= request_time: break
-        responsive = receipt.get('timestamp', 0) >= request_time
+        responsive = receipt.get('timestamp', 0) >= request_time and receipt.get('pid') == int(pid)
         opened = receipt.get('popoverOpen') if responsive else None
         status = 'PASS'
         if footprint is None or peak is None or not responsive: status = 'UNVERIFIED'
