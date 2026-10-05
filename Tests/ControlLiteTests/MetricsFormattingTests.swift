@@ -119,7 +119,7 @@ final class MetricsFormattingTests: XCTestCase {
             XCTAssertLessThanOrEqual(root.fittingSize.height, controller.preferredContentSize.height + 1,
                                      "\(tab) 详情和底部操作栏必须完整容纳在弹出面板内")
             if tab == "disk" {
-                XCTAssertTrue(strings(root).contains { $0.contains("共享容器已用") })
+                XCTAssertTrue(strings(root).contains { $0.contains("容量已用") })
             }
         }
     }

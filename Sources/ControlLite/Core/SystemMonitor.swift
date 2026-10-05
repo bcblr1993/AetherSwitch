@@ -46,6 +46,11 @@ public struct SystemMetrics: Sendable {
     public var cpuLogicalCoreCount = 0
     public var cpuECoreCount = 0
     public var cpuPCoreCount = 0
+    public var cpuTemperature: Double?
+    public var cpuFrequencyMHz: Double?
+    public var cpuFrequencyMaximumMHz: Double?
+    public var cpuEFrequencyMHz: Double?
+    public var cpuPFrequencyMHz: Double?
     public var cpuHistory: [Double] = []        // 负载历史波形 (0~100)
     public var loadAvg1m: Double = 0.0
     public var loadAvg5m: Double = 0.0
@@ -61,7 +66,8 @@ public struct SystemMetrics: Sendable {
     public var gpuRenderAvailable = false
     public var gpuTilerAvailable = false
     public var gpuHistory: [Double] = []
-    public var screenFPS: Int = 0 // 未采集，不将屏幕最大刷新率冒充实时帧率
+    public var screenFPS: Double?
+    public var aneWatts: Double?
 
     // 内存 RAM 深度指标 (图 3)
     public var ramAppGB: Double = 0.0
@@ -82,6 +88,11 @@ public struct SystemMetrics: Sendable {
     public var diskIOAvailable = false
     public var diskIOPending = false
     public var diskVolumeName = "启动磁盘"
+    public var diskVolumes: [DiskVolume] = []
+    public var diskSelectedPath = "/"
+    public var diskFileSystem = ""
+    public var diskModel = ""
+    public var diskHealth: DiskHealth?
     public var diskReadHistory: [Double] = []
     public var diskWriteHistory: [Double] = []
     public var diskTopProcesses: [ProcessUsageItem] = []
@@ -160,15 +171,21 @@ public final class SystemMonitor: @unchecked Sendable {
     private var gpuService: io_service_t = 0
     private var gpuModel: String?
     private let processes = ProcessSampler()
+    private let hardware = HardwareDetails()
+    private let disks = DiskDetails()
+    private var selectedDiskPath = "/"
+    public func selectDisk(path: String) {
+        sampleLock.lock(); defer { sampleLock.unlock() }
+        if selectedDiskPath != path {
+            selectedDiskPath = path; disks.reset()
+            diskReadHistoryBuffer.removeAll(); diskWriteHistoryBuffer.removeAll()
+        }
+    }
 
     private var lastNetBytesIn: UInt64 = 0
     private var lastNetBytesOut: UInt64 = 0
     private var lastNetTimestamp: TimeInterval = 0
     private var lastNetworkRate: (Double, Double) = (0, 0)
-    private var diskCounters: [UInt64: (read: UInt64, write: UInt64)] = [:]
-    private var diskTimestamp: TimeInterval = 0
-    private var lastDiskRate: (read: Double, write: Double) = (0, 0)
-    private var hasDiskRate = false
 
     // 展开期间保留最近 60 个采样点，折叠时停止并清除基线。
     private var cpuHistoryBuffer: [Double] = []
@@ -278,8 +295,19 @@ public final class SystemMonitor: @unchecked Sendable {
         m.gpuCoreCount = gpuDetail.cores
 
         if fullMetrics && activeTab == "disk" {
-            m.diskVolumeName = (try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? "启动磁盘"
-            let io = fetchDiskRate()
+            let io = disks.sample(path: selectedDiskPath)
+            m.diskVolumes = io.volumes
+            if let volume = io.selected {
+                m.diskSelectedPath = volume.path
+                m.diskVolumeName = volume.name
+                m.diskFileSystem = volume.fileSystem
+                m.diskModel = volume.model
+                m.diskTotalGB = volume.totalGB
+                m.diskFreeGB = volume.freeGB
+                m.diskUsedGB = volume.totalGB - volume.freeGB
+                m.diskPercent = Int(m.diskUsedGB / m.diskTotalGB * 100)
+            }
+            m.diskHealth = io.health
             m.diskIOAvailable = io.available
             m.diskIOPending = io.pending
             m.diskReadBytesSec = io.read
@@ -291,10 +319,18 @@ public final class SystemMonitor: @unchecked Sendable {
                 m.diskWriteHistory = diskWriteHistoryBuffer
             }
         } else {
-            diskCounters.removeAll(keepingCapacity: true)
-            diskTimestamp = 0
-            hasDiskRate = false
+            disks.reset()
         }
+        if fullMetrics && ["cpu", "gpu"].contains(activeTab) {
+            let details = hardware.sample(tab: activeTab, chip: chipName, efficiencyCount: eCoreCount, performanceCount: pCoreCount)
+            m.cpuTemperature = details.temperature
+            m.cpuFrequencyMHz = details.frequency.total
+            m.cpuFrequencyMaximumMHz = details.frequency.maximum
+            m.cpuEFrequencyMHz = details.frequency.efficiency
+            m.cpuPFrequencyMHz = details.frequency.performance
+            m.screenFPS = details.fps
+            m.aneWatts = details.aneWatts
+        } else { hardware.reset() }
         guard fullMetrics else {
             processes.reset()
             cpuHistoryBuffer.removeAll(keepingCapacity: true)
@@ -343,53 +379,6 @@ public final class SystemMonitor: @unchecked Sendable {
             buffer.removeFirst()
         }
         buffer.append(value)
-    }
-
-    // 物理驱动计数，不包含同一 APFS 容器内各卷的重复统计。
-    private func fetchDiskRate() -> (available: Bool, pending: Bool, read: Double, write: Double) {
-        var iterator: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &iterator) == KERN_SUCCESS else {
-            diskCounters.removeAll(); diskTimestamp = 0; hasDiskRate = false
-            return (false, false, 0, 0)
-        }
-        defer { IOObjectRelease(iterator) }
-        var current: [UInt64: (read: UInt64, write: UInt64)] = [:]
-        var service = IOIteratorNext(iterator)
-        while service != 0 {
-            var id: UInt64 = 0
-            if IORegistryEntryGetRegistryEntryID(service, &id) == KERN_SUCCESS,
-               let stats = IORegistryEntryCreateCFProperty(service, "Statistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any],
-               let read = stats["Bytes (Read)"] as? NSNumber,
-               let write = stats["Bytes (Write)"] as? NSNumber {
-                current[id] = (read.uint64Value, write.uint64Value)
-            }
-            IOObjectRelease(service)
-            service = IOIteratorNext(iterator)
-        }
-        guard !current.isEmpty else {
-            diskCounters.removeAll(); diskTimestamp = 0; hasDiskRate = false
-            return (false, false, 0, 0)
-        }
-        let now = ProcessInfo.processInfo.systemUptime
-        guard diskTimestamp > 0 else {
-            diskCounters = current; diskTimestamp = now
-            return (false, true, 0, 0)
-        }
-        let elapsed = now - diskTimestamp
-        guard elapsed >= 0.05 else { return (hasDiskRate, !hasDiskRate, hasDiskRate ? lastDiskRate.read : 0, hasDiskRate ? lastDiskRate.write : 0) }
-        var readBytes: Double = 0
-        var writeBytes: Double = 0
-        var matched = false
-        for (id, counter) in current {
-            guard let previous = diskCounters[id], counter.read >= previous.read, counter.write >= previous.write else { continue }
-            matched = true
-            readBytes += Double(counter.read - previous.read)
-            writeBytes += Double(counter.write - previous.write)
-        }
-        diskCounters = current; diskTimestamp = now
-        lastDiskRate = (readBytes / elapsed, writeBytes / elapsed)
-        hasDiskRate = matched
-        return (matched, !matched, lastDiskRate.read, lastDiskRate.write)
     }
 
     // MARK: - CPU 深度分解采样

@@ -228,10 +228,10 @@ private final class DetailVisualView: DashboardCardView {
         switch kind {
         case "cpu":
             trio([
-                (metrics.cpuUserUsage, "用户", Palette.accent),
+                (metrics.cpuTemperature ?? 0, "温度", Palette.accent),
                 (metrics.cpuUsage, "总负载", Palette.tint(for: metrics.cpuUsage)),
-                (metrics.cpuSystemUsage, "系统", Palette.secondarySeries)
-            ])
+                ((metrics.cpuFrequencyMHz ?? 0) / max(1, metrics.cpuFrequencyMaximumMHz ?? 1) * 100, "频率", Palette.secondarySeries)
+            ], available: [metrics.cpuTemperature != nil, true, metrics.cpuFrequencyMHz != nil], formatted: [metrics.cpuTemperature.map { String(format: "%.0f°", $0) } ?? "—", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuFrequencyMHz.map { String(format: "%.2f", $0 / 1000) } ?? "—"])
             sectionLabel("负载历史")
             history(metrics.cpuHistory, in: loadChart, tint: Palette.accent, maximum: 100)
             segmentedRing(center: NSPoint(x: width / 2, y: 42), radius: 29, lineWidth: 7,
@@ -293,13 +293,13 @@ private final class DetailVisualView: DashboardCardView {
         }
     }
 
-    private func trio(_ values: [(Double, String, NSColor)], available: [Bool] = [true, true, true]) {
+    private func trio(_ values: [(Double, String, NSColor)], available: [Bool] = [true, true, true], formatted: [String]? = nil) {
         let centers: [CGFloat] = [48, bounds.width / 2, bounds.width - 48]
         for index in 0..<3 {
             let primary = index == 1
             ring(center: NSPoint(x: centers[index], y: 42), radius: primary ? 29 : 23, lineWidth: primary ? 7 : 5, percent: available[index] && !(primary && kind == "cpu") ? values[index].0 : 0, tint: values[index].2)
-            text(available[index] ? String(format: "%.0f%%", values[index].0) : "—", in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, color: primary ? values[index].2 : .labelColor, alignment: .center)
-            text(values[index].1, in: NSRect(x: centers[index] - 38, y: 76, width: 76, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
+            text(formatted?[index] ?? (available[index] ? String(format: "%.0f%%", values[index].0) : "—"), in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, color: primary ? values[index].2 : .labelColor, alignment: .center)
+            text(kind == "cpu" && index == 2 ? "频率 GHz" : values[index].1, in: NSRect(x: centers[index] - 38, y: 76, width: 76, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
         }
     }
 
@@ -446,17 +446,24 @@ private final class DetailRowsView: DashboardCardView {
         case "cpu": return [
             ("型号", metrics.cpuModelName),
             ("逻辑核心", "\(metrics.cpuLogicalCoreCount)"),
+            ("系统", String(format: "%.1f%%", metrics.cpuSystemUsage)),
+            ("用户", String(format: "%.1f%%", metrics.cpuUserUsage)),
             ("空闲", String(format: "%.1f%%", metrics.cpuIdleUsage)),
             ("能效核心", metrics.cpuCoreKinds.contains(.efficiency) ? (metrics.cpuCoreLoads.isEmpty ? "采样中…" : String(format: "%d 核 · %.1f%%", metrics.cpuECoreCount, metrics.cpuECoreUsage)) : "不可用"),
             ("性能核心", metrics.cpuCoreKinds.contains(.performance) ? (metrics.cpuCoreLoads.isEmpty ? "采样中…" : String(format: "%d 核 · %.1f%%", metrics.cpuPCoreCount, metrics.cpuPCoreUsage)) : "不可用"),
             ("1 / 5 / 15 分钟", String(format: "%.2f / %.2f / %.2f", metrics.loadAvg1m, metrics.loadAvg5m, metrics.loadAvg15m)),
+            ("温度", metrics.cpuTemperature.map { String(format: "%.1f °C", $0) } ?? "不可用"),
+            ("能效核心频率", metrics.cpuEFrequencyMHz.map { String(format: "%.2f GHz", $0 / 1000) } ?? "采样中或不可用"),
+            ("性能核心频率", metrics.cpuPFrequencyMHz.map { String(format: "%.2f GHz", $0 / 1000) } ?? "采样中或不可用"),
             ("运行时间", metrics.uptimeString)
         ]
         case "gpu": return [
             ("型号", metrics.gpuModelName), ("核心数", metrics.gpuCoreCount > 0 ? "\(metrics.gpuCoreCount)" : "不可用"),
             ("设备利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "不可用"),
             ("渲染利用率", metrics.gpuRenderAvailable ? String(format: "%.0f%%", metrics.gpuRenderUsage) : "不可用"),
-            ("Tiler 利用率", metrics.gpuTilerAvailable ? String(format: "%.0f%%", metrics.gpuTilerUsage) : "不可用")
+            ("Tiler 利用率", metrics.gpuTilerAvailable ? String(format: "%.0f%%", metrics.gpuTilerUsage) : "不可用"),
+            ("合计呈现帧率", metrics.screenFPS.map { String(format: "%.0f FPS", $0) } ?? "采样中或不可用"),
+            ("神经引擎功率", metrics.aneWatts.map { String(format: "%.3f W", $0) } ?? "采样中或不可用")
         ]
         case "ram": return [
             ("已用 / 总内存", String(format: "%.2f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)),
@@ -468,12 +475,18 @@ private final class DetailRowsView: DashboardCardView {
             ("交换已用 / 总量", String(format: "%.1f / %.1f GB", metrics.ramSwapUsedMB / 1024, metrics.ramSwapTotalMB / 1024))
         ]
         case "disk": return [
-            ("启动磁盘", metrics.diskVolumeName),
-            ("共享容器已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
-            ("共享容器总容量", String(format: "%.1f GB", metrics.diskTotalGB)),
+            ("所选卷", metrics.diskVolumeName),
+            ("型号", metrics.diskModel.isEmpty ? "不可用" : metrics.diskModel),
+            ("文件系统", metrics.diskFileSystem),
+            ("容量已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
+            ("容量总量", String(format: "%.1f GB", metrics.diskTotalGB)),
             ("可用空间", String(format: "%.1f GB", metrics.diskFreeGB)),
             ("物理磁盘读取", metrics.diskIOAvailable ? formatRate(metrics.diskReadBytesSec) : (metrics.diskIOPending ? "采样中…" : "不可用")),
-            ("物理磁盘写入", metrics.diskIOAvailable ? formatRate(metrics.diskWriteBytesSec) : (metrics.diskIOPending ? "采样中…" : "不可用"))
+            ("物理磁盘写入", metrics.diskIOAvailable ? formatRate(metrics.diskWriteBytesSec) : (metrics.diskIOPending ? "采样中…" : "不可用")),
+            ("SMART 健康", metrics.diskHealth.map { $0.warning == 0 ? "正常" : "警告 0x" + String($0.warning, radix: 16) } ?? "不可用"),
+            ("磁盘温度", metrics.diskHealth?.temperature.map { String(format: "%.1f °C", $0) } ?? "不可用"),
+            ("剩余寿命 / 备用", metrics.diskHealth.map { "\($0.remainingLife)% / \($0.spare)%" } ?? "不可用"),
+            ("通电时长", metrics.diskHealth.map { "\($0.powerOnHours) 小时" } ?? "不可用")
         ]
         default: return [("下载速率", metrics.menuBarDownloadFormatted), ("上传速率", metrics.menuBarUploadFormatted)]
         }
@@ -557,6 +570,8 @@ final class NativePanelController: NSViewController {
     private var pendingSubscription: AnyCancellable?
     private var updateSubscription: AnyCancellable?
     private var updateButton: NSButton!
+    private var diskSelector: NSPopUpButton?
+    private var diskOptions: [DiskVolume] = []
     private var detailRows: DetailRowsView?
     private var processRows: ProcessRowsView?
     private var processRowsHeight: NSLayoutConstraint?
@@ -617,7 +632,7 @@ final class NativePanelController: NSViewController {
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 8
-        if maximumHeight < 800 {
+        do {
             let scroll = NSScrollView()
             scroll.hasVerticalScroller = true
             scroll.autohidesScrollers = true
@@ -629,8 +644,6 @@ final class NativePanelController: NSViewController {
             let height = scroll.heightAnchor.constraint(equalToConstant: 360)
             height.isActive = true
             viewportHeight = height; contentScroll = scroll
-        } else {
-            root.addArrangedSubview(content)
         }
         updateButton = footerButton("检查更新", symbol: "arrow.triangle.2.circlepath", action: #selector(checkUpdate))
         let version = label("v\(UpdateManager.shared.currentVersion)", font: Palette.caption)
@@ -754,6 +767,11 @@ final class NativePanelController: NSViewController {
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
             self.detailRows?.metrics = m
+            if let height = self.detailRows?.idealHeight, self.detailRowsHeight?.constant != height {
+                self.detailRowsHeight?.constant = height
+                self.updatePreferredSize()
+            }
+            self.updateDiskSelector(m)
             self.processRows?.metrics = m
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
@@ -804,7 +822,7 @@ final class NativePanelController: NSViewController {
             visual("gpu")
             menuBarToggle(.gpu)
             rows("gpu")
-            note("显示系统提供的瞬时利用率；无可用读数时显示不可用。")
+            note("帧率汇总各屏幕实际呈现次数；神经引擎功率来自系统能量计数。")
         case "ram":
             visual("ram")
             menuBarToggle(.ram)
@@ -813,10 +831,17 @@ final class NativePanelController: NSViewController {
             note("可回收文件缓存不计入应用内存；内存压力采用系统等级。")
         case "disk":
             visual("disk")
+            let selector = NSPopUpButton(frame: .zero, pullsDown: false)
+            selector.target = self; selector.action = #selector(selectDisk(_:))
+            selector.setAccessibilityLabel("选择磁盘卷")
+            diskSelector = selector
+            content.addArrangedSubview(selector)
+            selector.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+            updateDiskSelector(state.metrics)
             menuBarToggle(.disk)
             rows("disk")
             processList("disk")
-            note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
+            note("速率属于所选卷的物理设备；APFS 容量由容器共享，SMART 取决于设备支持。")
         case "network":
             visual("network")
             menuBarToggle(.network)
@@ -895,6 +920,21 @@ final class NativePanelController: NSViewController {
         guard preferredContentSize != size else { return }
         preferredContentSize = size
         onPreferredSizeChange?(size)
+    }
+
+    @objc private func selectDisk(_ sender: NSPopUpButton) {
+        guard diskOptions.indices.contains(sender.indexOfSelectedItem) else { return }
+        SystemMonitor.shared.selectDisk(path: diskOptions[sender.indexOfSelectedItem].path)
+    }
+    private func updateDiskSelector(_ metrics: SystemMetrics) {
+        guard state.selectedTab == "disk", let selector = diskSelector else { return }
+        if diskOptions.map({ $0.path + $0.name }) != metrics.diskVolumes.map({ $0.path + $0.name }) || selector.numberOfItems == 0 {
+            diskOptions = metrics.diskVolumes
+            selector.removeAllItems()
+            selector.addItems(withTitles: diskOptions.isEmpty ? ["正在读取磁盘…"] : diskOptions.map { $0.name })
+        }
+        selector.isEnabled = !diskOptions.isEmpty
+        if let index = diskOptions.firstIndex(where: { $0.path == metrics.diskSelectedPath }) { selector.selectItem(at: index) }
     }
 
     private func rows(_ kind: String) {
