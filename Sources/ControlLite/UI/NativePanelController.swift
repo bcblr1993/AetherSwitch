@@ -616,7 +616,7 @@ final class NativePanelController: NSViewController {
         root.distribution = .fill
         let brand = NSImageView(image: BrandGlyph.templateImage(size: NSSize(width: 17, height: 15)))
         brand.contentTintColor = Palette.accent
-        let header = NSStackView(views: [brand, label("AetherSwitch", font: .systemFont(ofSize: 14, weight: .semibold)), spacer(), iconButton("arrow.clockwise", hint: "刷新硬件状态", action: #selector(refresh)), iconButton("info.circle", hint: "关于 AetherSwitch", action: #selector(about))])
+        let header = NSStackView(views: [brand, label("AetherSwitch", font: .systemFont(ofSize: 14, weight: .semibold)), spacer(), iconButton("gearshape", hint: "菜单栏外观设置", action: #selector(showMenuBarSettings)), iconButton("arrow.clockwise", hint: "刷新硬件状态", action: #selector(refresh)), iconButton("info.circle", hint: "关于 AetherSwitch", action: #selector(about))])
         header.orientation = .horizontal
         header.spacing = 6
         root.addArrangedSubview(header)
@@ -1091,6 +1091,8 @@ final class NativePanelController: NSViewController {
         guard let metric = menuBarMetric else { return }
         state.setMenuBarMetric(metric, visible: sender.state == .on)
     }
+
+    @objc private func showMenuBarSettings() { NotificationCenter.default.post(name: .showMenuBarSettings, object: nil) }
     @objc private func toggle(_ sender: NSSwitch) {
         switch sender.tag {
         case 0: state.toggleKeepAwake()
