@@ -38,6 +38,7 @@ final class MenuBarPreferencesTests: XCTestCase {
         XCTAssertNil(MenuBarStatusView.percent(for: .cpu, metrics: metrics))
         XCTAssertEqual(MenuBarStatusView.color(for: .red, percent: nil, pressure: nil), .secondaryLabelColor)
         XCTAssertEqual(MenuBarStatusView.color(for: .pressure, percent: 90, pressure: 1), .systemGreen)
+        XCTAssertEqual(MenuBarStatusView.color(for: .pressure, percent: 50, pressure: 2), .systemOrange)
         XCTAssertEqual(MenuBarStatusView.color(for: .pressure, percent: 10, pressure: 4), .systemRed)
     }
 

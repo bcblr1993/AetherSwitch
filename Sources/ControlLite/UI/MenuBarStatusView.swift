@@ -61,7 +61,7 @@ final class MenuBarStatusView: NSView {
         case .monochrome: return .labelColor
         case .accent: return .controlAccentColor
         case .pressure:
-            switch pressure { case 1: return .systemGreen; case 2: return .systemYellow; case 4: return .systemRed; default: return .secondaryLabelColor }
+            switch pressure { case 1: return .systemGreen; case 2: return .systemOrange; case 4: return .systemRed; default: return .secondaryLabelColor }
         case .blue: return .systemBlue; case .green: return .systemGreen; case .yellow: return .systemYellow
         case .orange: return .orange; case .red: return .red; case .purple: return .systemPurple
         }
