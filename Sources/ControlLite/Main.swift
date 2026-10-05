@@ -245,12 +245,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.aethernative.aetherswitch.reportStatus"), object: nil, queue: .main) { _ in
-            Task { @MainActor in
-                let state = AppState.shared
-                let json: [String: Any] = ["popoverOpen": state.isPopoverOpen, "tab": state.selectedTab, "cpu": state.metrics.cpuUsage, "gpu": state.metrics.gpuUsage, "ramUsedGB": state.metrics.ramUsedGB, "timestamp": Date().timeIntervalSince1970]
-                if let data = try? JSONSerialization.data(withJSONObject: json, options: .sortedKeys) {
-                    try? data.write(to: URL(fileURLWithPath: "/tmp/AetherSwitch-runtime.json"), options: .atomic)
+        for suffix in ["", ".\(getpid())"] {
+            DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.aethernative.aetherswitch.reportStatus\(suffix)"), object: nil, queue: .main) { _ in
+                Task { @MainActor in
+                    let state = AppState.shared
+                    let json: [String: Any] = ["pid": getpid(), "popoverOpen": state.isPopoverOpen, "tab": state.selectedTab, "cpu": state.metrics.cpuUsage, "gpu": state.metrics.gpuUsage, "ramUsedGB": state.metrics.ramUsedGB, "timestamp": Date().timeIntervalSince1970]
+                    if let data = try? JSONSerialization.data(withJSONObject: json, options: .sortedKeys) {
+                        let path = suffix.isEmpty ? "/tmp/AetherSwitch-runtime.json" : "/tmp/AetherSwitch-runtime-\(getpid()).json"
+                        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                    }
                 }
             }
         }
@@ -332,7 +335,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        let requested = Double(ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_TAB_INTERVAL"] ?? "1.5") ?? 1.5
+        let interval = requested.isFinite ? min(15, max(1.5, requested)) : 1.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
             guard let self else { return }
             let tab = sequence[index]
             if AppState.shared.selectedTab != tab {
@@ -344,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 "height": self.popover?.contentSize.height ?? 0,
                 "footprintMB": self.physicalFootprintMB() ?? -1,
                 "peakFootprintMB": self.physicalFootprintMB(peak: true) ?? -1,
+                "updaterRunning": UpdateManager.shared.isRunning,
                 "timestamp": Date().timeIntervalSince1970
             ]
             if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
@@ -460,7 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.animates = false
             popover.delegate = self
             self.popover = popover
-            let controller = NativePanelController()
+            let controller = NativePanelController(maximumHeight: min(800, (button.window?.screen?.visibleFrame.height ?? 860) - 60))
             controller.onPreferredSizeChange = { [weak popover] size in
                 popover?.contentSize = size
             }

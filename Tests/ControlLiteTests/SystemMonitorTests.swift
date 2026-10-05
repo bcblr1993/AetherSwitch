@@ -40,8 +40,10 @@ final class SystemMonitorTests: XCTestCase {
         // 验证 RAM 深度细分与压力指针
         XCTAssertGreaterThan(metrics.ramAppGB, 0, "App 占用内存应大于 0")
         XCTAssertGreaterThan(metrics.ramWiredGB, 0, "联动 (Wired) 内存应大于 0")
-        XCTAssertTrue(["正常", "警告", "严重"].contains(metrics.ramPressureLevel), "内存压力级别必须在预设区间内")
-        XCTAssertTrue(metrics.ramPressurePercent >= 0 && metrics.ramPressurePercent <= 100, "内存压力百分比指针应在合法区间")
+        XCTAssertTrue(["正常", "警告", "严重", "不可用"].contains(metrics.ramPressureLevel))
+        XCTAssertEqual(metrics.ramPressureCode == nil, metrics.ramPressureLevel == "不可用")
+        XCTAssertLessThanOrEqual(metrics.ramCacheGB, metrics.ramFreeGB)
+        XCTAssertLessThanOrEqual(metrics.ramSwapUsedMB, metrics.ramSwapTotalMB)
 
         // 验证 GPU 深度属性
         XCTAssertFalse(metrics.gpuModelName.isEmpty, "GPU 型号名称不应为空")

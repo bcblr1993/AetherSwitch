@@ -143,7 +143,7 @@ public final class AppState: ObservableObject {
         Task {
             let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
                 autoreleasepool {
-                    let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab)
+                    let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull)
                     let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
                     return (m, s)
                 }

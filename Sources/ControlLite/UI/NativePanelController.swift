@@ -9,6 +9,10 @@ private func formatRate(_ bytes: Double) -> String {
     return String(format: "%.0f B/s", max(0, bytes))
 }
 
+private final class FlippedStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
+
 private class DashboardCardView: NSView {
     override var isFlipped: Bool { true }
     /// 详细信息列表等不需要卡片底的视图关闭此项。
@@ -220,7 +224,7 @@ private final class DetailVisualView: DashboardCardView {
         autoreleasepool {
         super.draw(dirtyRect)
         let width = bounds.width
-        let loadChart = NSRect(x: 12, y: 120, width: width - 24, height: bounds.height - 132)
+        let loadChart = NSRect(x: 12, y: 120, width: width - 24, height: kind == "cpu" ? 48 : bounds.height - 132)
         switch kind {
         case "cpu":
             trio([
@@ -229,27 +233,26 @@ private final class DetailVisualView: DashboardCardView {
                 (metrics.cpuSystemUsage, "系统", Palette.secondarySeries)
             ])
             sectionLabel("负载历史")
-            history(metrics.cpuHistory, in: loadChart, tint: Palette.tint(for: metrics.cpuUsage), maximum: 100)
+            history(metrics.cpuHistory, in: loadChart, tint: Palette.accent, maximum: 100)
+            segmentedRing(center: NSPoint(x: width / 2, y: 42), radius: 29, lineWidth: 7,
+                values: [(metrics.cpuUserUsage, Palette.accent), (metrics.cpuSystemUsage, Palette.secondarySeries)])
+            coreBars()
         case "gpu":
             if metrics.gpuAvailable {
                 trio([
                     (metrics.gpuRenderUsage, "渲染", Palette.accent),
                     (metrics.gpuUsage, "GPU", Palette.tint(for: metrics.gpuUsage)),
                     (metrics.gpuTilerUsage, "Tiler", Palette.secondarySeries)
-                ])
+                ], available: [metrics.gpuRenderAvailable, true, metrics.gpuTilerAvailable])
             } else {
                 text("GPU 读数不可用", in: NSRect(x: 12, y: 38, width: width - 24, height: 20), font: Palette.bodyStrong, color: .secondaryLabelColor, alignment: .center)
             }
             sectionLabel("负载历史")
             history(metrics.gpuHistory, in: loadChart, tint: Palette.tint(for: metrics.gpuUsage), maximum: 100)
         case "ram":
-            let percent = Double(metrics.ramPercent)
-            let tint = Palette.tint(for: percent)
-            ring(center: NSPoint(x: width / 2, y: 42), radius: 30, lineWidth: 7, percent: percent, tint: tint)
-            text("\(metrics.ramPercent)%", in: NSRect(x: width / 2 - 30, y: 31, width: 60, height: 24), font: Palette.value, color: tint, alignment: .center)
-            text("内存压力 · \(metrics.ramPressureLevel)", in: NSRect(x: 12, y: 80, width: width - 24, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
-            sectionLabel("占用历史")
-            history(metrics.ramHistory, in: loadChart, tint: tint, maximum: 100)
+            memoryDashboard()
+            text("占用历史", in: NSRect(x: 12, y: 122, width: width - 24, height: 14), font: Palette.captionStrong, color: .secondaryLabelColor)
+            history(metrics.ramHistory, in: NSRect(x: 12, y: 142, width: width - 24, height: bounds.height - 154), tint: Palette.accent, maximum: 100)
         case "disk":
             let read = metrics.diskIOAvailable ? formatRate(metrics.diskReadBytesSec) : "—"
             let write = metrics.diskIOAvailable ? formatRate(metrics.diskWriteBytesSec) : "—"
@@ -290,13 +293,96 @@ private final class DetailVisualView: DashboardCardView {
         }
     }
 
-    private func trio(_ values: [(Double, String, NSColor)]) {
+    private func trio(_ values: [(Double, String, NSColor)], available: [Bool] = [true, true, true]) {
         let centers: [CGFloat] = [48, bounds.width / 2, bounds.width - 48]
         for index in 0..<3 {
             let primary = index == 1
-            ring(center: NSPoint(x: centers[index], y: 42), radius: primary ? 29 : 23, lineWidth: primary ? 7 : 5, percent: values[index].0, tint: values[index].2)
-            text(String(format: "%.0f%%", values[index].0), in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, color: primary ? values[index].2 : .labelColor, alignment: .center)
+            ring(center: NSPoint(x: centers[index], y: 42), radius: primary ? 29 : 23, lineWidth: primary ? 7 : 5, percent: available[index] && !(primary && kind == "cpu") ? values[index].0 : 0, tint: values[index].2)
+            text(available[index] ? String(format: "%.0f%%", values[index].0) : "—", in: NSRect(x: centers[index] - 30, y: primary ? 33 : 35, width: 60, height: 20), font: primary ? Palette.value : Palette.valueSmall, color: primary ? values[index].2 : .labelColor, alignment: .center)
             text(values[index].1, in: NSRect(x: centers[index] - 38, y: 76, width: 76, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
+        }
+    }
+
+    private func segmentedRing(center: NSPoint, radius: CGFloat, lineWidth: CGFloat, values: [(Double, NSColor)]) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineWidth(lineWidth)
+        context.setLineCap(.butt)
+        context.setStrokeColor(Palette.track.cgColor)
+        context.strokeEllipse(in: NSRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        var angle = -CGFloat.pi / 2
+        var remaining = 100.0
+        for (percent, color) in values {
+            let value = min(remaining, max(0, percent))
+            let end = angle + CGFloat(value / 100) * 2 * .pi
+            if value > 0 {
+                context.setStrokeColor(color.cgColor)
+                context.addArc(center: center, radius: radius, startAngle: angle, endAngle: end, clockwise: false)
+                context.strokePath()
+            }
+            angle = end; remaining -= value
+        }
+    }
+
+    private func coreBars() {
+        text("各核心", in: NSRect(x: 12, y: 177, width: 60, height: 14), font: Palette.captionStrong, color: .secondaryLabelColor)
+        text("E 能效 · P 性能", in: NSRect(x: 78, y: 177, width: bounds.width - 90, height: 14), font: Palette.caption, color: .secondaryLabelColor, alignment: .right)
+        guard !metrics.cpuCoreLoads.isEmpty else {
+            text("正在采集核心负载…", in: NSRect(x: 12, y: 196, width: bounds.width - 24, height: 16), font: Palette.caption, color: .tertiaryLabelColor)
+            return
+        }
+        let width = (bounds.width - 24) / CGFloat(metrics.cpuCoreLoads.count)
+        for (index, load) in metrics.cpuCoreLoads.enumerated() {
+            let kind = metrics.cpuCoreKinds.indices.contains(index) ? metrics.cpuCoreKinds[index] : .unknown
+            let color: NSColor = kind == .efficiency ? Palette.upload : kind == .performance ? Palette.accent : .secondaryLabelColor
+            let rect = NSRect(x: 12 + CGFloat(index) * width, y: 196, width: max(1, width - 3), height: 13)
+            Palette.track.setFill(); NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+            color.setFill()
+            let height = rect.height * CGFloat(min(100, max(0, load))) / 100
+            NSBezierPath(roundedRect: NSRect(x: rect.minX, y: rect.maxY - height, width: rect.width, height: height), xRadius: 1, yRadius: 1).fill()
+        }
+    }
+
+    private func memoryDashboard() {
+        let right = bounds.width * 0.73
+        let total = max(1, metrics.ramTotalGB)
+        segmentedRing(center: NSPoint(x: right, y: 44), radius: 29, lineWidth: 8, values: [
+            (metrics.ramAppGB / total * 100, Palette.accent),
+            (metrics.ramWiredGB / total * 100, .systemOrange),
+            (metrics.ramCompressedGB / total * 100, Palette.secondarySeries)
+        ])
+        text("\(metrics.ramPercent)%", in: NSRect(x: right - 30, y: 34, width: 60, height: 20), font: Palette.value, alignment: .center)
+        text("内存占用", in: NSRect(x: right - 42, y: 80, width: 84, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
+        let left = bounds.width * 0.27
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.saveGState()
+            context.setLineWidth(7)
+            for (index, color) in [Palette.levelLow, Palette.levelModerate, Palette.levelCritical].enumerated() {
+                context.setStrokeColor((metrics.ramPressureCode == nil ? Palette.track : color).cgColor)
+                context.addArc(center: NSPoint(x: left, y: 53), radius: 29, startAngle: .pi + CGFloat(index) * .pi / 3,
+                    endAngle: .pi + CGFloat(index + 1) * .pi / 3 - 0.04, clockwise: false)
+                context.strokePath()
+            }
+            if let code = metrics.ramPressureCode {
+                let segment: CGFloat = code == 1 ? 0.5 : code == 2 ? 1.5 : 2.5
+                let angle = CGFloat.pi + segment * .pi / 3
+                context.setStrokeColor(NSColor.labelColor.cgColor)
+                context.setLineWidth(2)
+                context.move(to: NSPoint(x: left, y: 53))
+                context.addLine(to: NSPoint(x: left + cos(angle) * 22, y: 53 + sin(angle) * 22))
+                context.strokePath()
+            }
+            context.restoreGState()
+        }
+        text(metrics.ramPressureLevel, in: NSRect(x: left - 42, y: 60, width: 84, height: 16), font: Palette.captionStrong, alignment: .center)
+        text("内存压力", in: NSRect(x: left - 42, y: 80, width: 84, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .center)
+        let legends: [(String, NSColor)] = [("应用", Palette.accent), ("联结", .systemOrange), ("压缩", Palette.secondarySeries)]
+        let column = (bounds.width - 24) / 3
+        for (index, item) in legends.enumerated() {
+            let x = 12 + CGFloat(index) * column
+            item.1.setFill(); NSBezierPath(ovalIn: NSRect(x: x, y: 106, width: 6, height: 6)).fill()
+            text(item.0, in: NSRect(x: x + 11, y: 102, width: column - 12, height: 14), font: Palette.caption, color: .secondaryLabelColor)
         }
     }
 
@@ -324,12 +410,16 @@ private final class DetailVisualView: DashboardCardView {
                 line.lineWidth = 1; line.stroke()
             }
         }
-        guard samples.count > 1 else { return }
+        guard !samples.isEmpty else {
+            text("等待采样…", in: rect.insetBy(dx: 4, dy: 4), font: Palette.caption, color: .tertiaryLabelColor)
+            return
+        }
+        // 固定 60 点窗口，短历史从右端开始，避免几秒数据铺满整张图。
         let points = samples.enumerated().map { index, sample in
-            NSPoint(x: rect.minX + rect.width * CGFloat(index) / CGFloat(samples.count - 1), y: rect.maxY - rect.height * CGFloat(min(1, max(0, sample / maximum))))
+            NSPoint(x: rect.minX + rect.width * CGFloat(60 - samples.count + index) / 59, y: rect.maxY - rect.height * CGFloat(min(1, max(0, sample / maximum))))
         }
         let area = NSBezierPath()
-        area.move(to: NSPoint(x: rect.minX, y: rect.maxY))
+        area.move(to: NSPoint(x: points[0].x, y: rect.maxY))
         points.forEach { area.line(to: $0) }
         area.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
         area.close()
@@ -354,30 +444,31 @@ private final class DetailRowsView: DashboardCardView {
     private var entries: [(String, String)] {
         switch kind {
         case "cpu": return [
-            ("系统", String(format: "%.1f%%", metrics.cpuSystemUsage)),
-            ("用户", String(format: "%.1f%%", metrics.cpuUserUsage)),
+            ("型号", metrics.cpuModelName),
+            ("逻辑核心", "\(metrics.cpuLogicalCoreCount)"),
             ("空闲", String(format: "%.1f%%", metrics.cpuIdleUsage)),
-            ("能效核心", String(format: "%.1f%%", metrics.cpuECoreUsage)),
-            ("性能核心", String(format: "%.1f%%", metrics.cpuPCoreUsage)),
+            ("能效核心", metrics.cpuCoreKinds.contains(.efficiency) ? (metrics.cpuCoreLoads.isEmpty ? "采样中…" : String(format: "%d 核 · %.1f%%", metrics.cpuECoreCount, metrics.cpuECoreUsage)) : "不可用"),
+            ("性能核心", metrics.cpuCoreKinds.contains(.performance) ? (metrics.cpuCoreLoads.isEmpty ? "采样中…" : String(format: "%d 核 · %.1f%%", metrics.cpuPCoreCount, metrics.cpuPCoreUsage)) : "不可用"),
             ("1 / 5 / 15 分钟", String(format: "%.2f / %.2f / %.2f", metrics.loadAvg1m, metrics.loadAvg5m, metrics.loadAvg15m)),
             ("运行时间", metrics.uptimeString)
         ]
         case "gpu": return [
             ("型号", metrics.gpuModelName), ("核心数", metrics.gpuCoreCount > 0 ? "\(metrics.gpuCoreCount)" : "不可用"),
             ("设备利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "不可用"),
-            ("渲染利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuRenderUsage) : "不可用"),
-            ("Tiler 利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuTilerUsage) : "不可用")
+            ("渲染利用率", metrics.gpuRenderAvailable ? String(format: "%.0f%%", metrics.gpuRenderUsage) : "不可用"),
+            ("Tiler 利用率", metrics.gpuTilerAvailable ? String(format: "%.0f%%", metrics.gpuTilerUsage) : "不可用")
         ]
         case "ram": return [
             ("已用 / 总内存", String(format: "%.2f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)),
             ("应用内存", String(format: "%.2f GB", metrics.ramAppGB)),
             ("联结内存", String(format: "%.2f GB", metrics.ramWiredGB)),
             ("压缩内存", String(format: "%.2f GB", metrics.ramCompressedGB)),
+            ("缓存文件", String(format: "%.2f GB", metrics.ramCacheGB)),
             ("可用内存", String(format: "%.2f GB", metrics.ramFreeGB)),
-            ("交换空间", String(format: "%.0f MB", metrics.ramSwapUsedMB)),
-            ("内存压力", metrics.ramPressureLevel)
+            ("交换已用 / 总量", String(format: "%.1f / %.1f GB", metrics.ramSwapUsedMB / 1024, metrics.ramSwapTotalMB / 1024))
         ]
         case "disk": return [
+            ("启动磁盘", metrics.diskVolumeName),
             ("共享容器已用", String(format: "%.1f GB · %d%%", metrics.diskUsedGB, metrics.diskPercent)),
             ("共享容器总容量", String(format: "%.1f GB", metrics.diskTotalGB)),
             ("可用空间", String(format: "%.1f GB", metrics.diskFreeGB)),
@@ -402,12 +493,61 @@ private final class DetailRowsView: DashboardCardView {
     }
 }
 
+private final class ProcessRowsView: DashboardCardView {
+    override var drawsCard: Bool { false }
+    var kind: String { didSet { refresh() } }
+    var metrics: SystemMetrics { didSet { refresh() } }
+    var idealHeight: CGFloat { kind == "disk" ? 142 : 124 }
+    private var items: [ProcessUsageItem] {
+        kind == "cpu" ? metrics.cpuTopProcesses : kind == "ram" ? metrics.ramTopProcesses : metrics.diskTopProcesses
+    }
+    init(kind: String, metrics: SystemMetrics) {
+        self.kind = kind; self.metrics = metrics; super.init(frame: .zero); refresh()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    private func refresh() {
+        setAccessibilityElement(true)
+        setAccessibilityLabel("主要进程 " + items.map { "\($0.name) \($0.valueString) \($0.secondaryValueString ?? "")" }.joined(separator: ", "))
+        needsDisplay = true
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
+            text("主要进程", in: NSRect(x: 2, y: 0, width: 100, height: 15), font: Palette.captionStrong, color: .secondaryLabelColor)
+            text(kind == "ram" ? "物理占用" : kind == "cpu" ? "CPU" : "磁盘 I/O", in: NSRect(x: 110, y: 0, width: bounds.width - 112, height: 15), font: Palette.caption, color: .secondaryLabelColor, alignment: .right)
+            Palette.cardStroke.setStroke()
+            let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 19)); line.line(to: NSPoint(x: bounds.width, y: 19)); line.stroke()
+            let start: CGFloat = kind == "disk" ? 44 : 25
+            if kind == "disk" {
+                text("读取/s", in: NSRect(x: 128, y: 25, width: 65, height: 15), font: Palette.caption, color: Palette.accent, alignment: .right)
+                text("写入/s", in: NSRect(x: 196, y: 25, width: bounds.width - 198, height: 15), font: Palette.caption, color: Palette.secondarySeries, alignment: .right)
+            }
+            if items.isEmpty {
+                let message = metrics.topProcessesPending ? "正在采集进程…" : metrics.topProcessesAvailable ? "暂无活跃进程" : "进程读数不可用"
+                text(message, in: NSRect(x: 2, y: start, width: bounds.width - 4, height: 17), font: Palette.caption, color: .tertiaryLabelColor)
+            }
+            for (index, item) in items.prefix(5).enumerated() {
+                let y = start + CGFloat(index) * 20
+                text(item.name, in: NSRect(x: 2, y: y, width: kind == "disk" ? 122 : 176, height: 17), font: Palette.body)
+                if kind == "disk" {
+                    text(item.valueString, in: NSRect(x: 128, y: y, width: 65, height: 17), font: Palette.valueSmall, color: Palette.accent, alignment: .right)
+                    text(item.secondaryValueString ?? "—", in: NSRect(x: 196, y: y, width: bounds.width - 198, height: 17), font: Palette.valueSmall, color: Palette.secondarySeries, alignment: .right)
+                } else {
+                    text(item.valueString, in: NSRect(x: 182, y: y, width: bounds.width - 184, height: 17), font: Palette.valueSmall, alignment: .right)
+                }
+            }
+        }
+    }
+}
+
 /// 系统原生面板；复用现有状态与采样引擎，避免常驻 SwiftUI 渲染树。
 @MainActor
 final class NativePanelController: NSViewController {
     var onPreferredSizeChange: ((NSSize) -> Void)?
     private let state = AppState.shared
-    private let content = NSStackView()
+    private let content = FlippedStackView()
+    private var contentScroll: NSScrollView?
+    private var viewportHeight: NSLayoutConstraint?
+    private let maximumHeight: CGFloat
     private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘", "网络"], trackingMode: .selectOne, target: nil, action: nil)
     private var subscription: AnyCancellable?
     private var tabSubscription: AnyCancellable?
@@ -418,6 +558,8 @@ final class NativePanelController: NSViewController {
     private var updateSubscription: AnyCancellable?
     private var updateButton: NSButton!
     private var detailRows: DetailRowsView?
+    private var processRows: ProcessRowsView?
+    private var processRowsHeight: NSLayoutConstraint?
     private var metricTiles: [DashboardMetricView] = []
     private var networkTile: DashboardNetworkView?
     private var switches: [NSSwitch] = []
@@ -441,9 +583,10 @@ final class NativePanelController: NSViewController {
     private let brightnessSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let backlightSwitch = NSButton(checkboxWithTitle: "零亮度时关闭外屏背光", target: nil, action: nil)
 
-    init(loginItems: LoginItemManager = .shared, brightness: BrightnessManager = .shared) {
+    init(loginItems: LoginItemManager = .shared, brightness: BrightnessManager = .shared, maximumHeight: CGFloat? = nil) {
         self.loginItems = loginItems
         self.brightness = brightness
+        self.maximumHeight = maximumHeight ?? min(800, (NSScreen.main?.visibleFrame.height ?? 860) - 60)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -474,7 +617,21 @@ final class NativePanelController: NSViewController {
         content.orientation = .vertical
         content.alignment = .leading
         content.spacing = 8
-        root.addArrangedSubview(content)
+        if maximumHeight < 800 {
+            let scroll = NSScrollView()
+            scroll.hasVerticalScroller = true
+            scroll.autohidesScrollers = true
+            scroll.drawsBackground = false
+            scroll.documentView = content
+            content.translatesAutoresizingMaskIntoConstraints = false
+            root.addArrangedSubview(scroll)
+            scroll.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24).isActive = true
+            let height = scroll.heightAnchor.constraint(equalToConstant: 360)
+            height.isActive = true
+            viewportHeight = height; contentScroll = scroll
+        } else {
+            root.addArrangedSubview(content)
+        }
         updateButton = footerButton("检查更新", symbol: "arrow.triangle.2.circlepath", action: #selector(checkUpdate))
         let version = label("v\(UpdateManager.shared.currentVersion)", font: Palette.caption)
         version.textColor = .tertiaryLabelColor
@@ -597,6 +754,7 @@ final class NativePanelController: NSViewController {
         subscription = state.$metrics.sink { [weak self] m in
             guard let self else { return }
             self.detailRows?.metrics = m
+            self.processRows?.metrics = m
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
             self.detailVisual?.metrics = m
@@ -640,6 +798,7 @@ final class NativePanelController: NSViewController {
             visual("cpu")
             menuBarToggle(.cpu)
             rows("cpu")
+            processList("cpu")
             note("进程 CPU 百分比可跨多个核心，系统利用率按全部核心归一化。")
         case "gpu":
             visual("gpu")
@@ -650,11 +809,13 @@ final class NativePanelController: NSViewController {
             visual("ram")
             menuBarToggle(.ram)
             rows("ram")
+            processList("ram")
             note("可回收文件缓存不计入应用内存；内存压力采用系统等级。")
         case "disk":
             visual("disk")
             menuBarToggle(.disk)
             rows("disk")
+            processList("disk")
             note("速率包含已连接的物理磁盘。APFS 容量与同一容器内其他卷共享。")
         case "network":
             visual("network")
@@ -709,6 +870,13 @@ final class NativePanelController: NSViewController {
         guard let root = view as? NSStackView else { return }
         // 伸缩空白只吸收剩余高度，不参与内容高度计算。
         let visible = root.arrangedSubviews.filter { !$0.isHidden && $0 !== footerSpacer }
+        if let scroll = contentScroll, let viewportHeight {
+            let otherHeight = root.edgeInsets.top + root.edgeInsets.bottom
+                + visible.filter { $0 !== scroll }.reduce(0) { $0 + $1.fittingSize.height }
+                + CGFloat(max(0, visible.count - 1)) * root.spacing
+            viewportHeight.constant = min(content.fittingSize.height, max(60, maximumHeight - otherHeight))
+            view.layoutSubtreeIfNeeded()
+        }
         let height = root.edgeInsets.top + root.edgeInsets.bottom
             + visible.reduce(0) { $0 + $1.fittingSize.height }
             + CGFloat(max(0, visible.count - 1)) * root.spacing
@@ -717,7 +885,7 @@ final class NativePanelController: NSViewController {
         // Reserve room for synchronized brightness and login-item status on every page.
         // Older macOS control metrics can make the overview slightly taller.
         // Retain the measured size when changing tabs or opening About.
-        let size = NSSize(width: 294, height: max(611, max(height, preferredContentSize.height)))
+        let size = NSSize(width: 294, height: min(maximumHeight, max(min(800, maximumHeight), max(height, preferredContentSize.height))))
         if let rootHeight { rootHeight.constant = size.height }
         else {
             let constraint = root.heightAnchor.constraint(equalToConstant: size.height)
@@ -753,12 +921,23 @@ final class NativePanelController: NSViewController {
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         // Reuse one backing-store size across tabs instead of allocating a
         // different Retina surface for every chart transition.
-        let height: CGFloat = 170
+        let height: CGFloat = 220
         if let detailVisualHeight { detailVisualHeight.constant = height }
         else {
             let constraint = panel.heightAnchor.constraint(equalToConstant: height)
             constraint.isActive = true
             detailVisualHeight = constraint
+        }
+    }
+    private func processList(_ kind: String) {
+        let panel = processRows ?? ProcessRowsView(kind: kind, metrics: state.metrics)
+        panel.kind = kind; panel.metrics = state.metrics; processRows = panel
+        content.addArrangedSubview(panel)
+        panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        if let processRowsHeight { processRowsHeight.constant = panel.idealHeight }
+        else {
+            let constraint = panel.heightAnchor.constraint(equalToConstant: panel.idealHeight)
+            constraint.isActive = true; processRowsHeight = constraint
         }
     }
     /// 详情页"在菜单栏显示"开关：控制 Stats 样式菜单栏中对应的指标列。

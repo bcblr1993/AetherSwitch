@@ -33,6 +33,7 @@ def main() -> int:
         environment.update(
             AETHERSWITCH_ACCEPTANCE_LOG=str(log),
             AETHERSWITCH_ACCEPTANCE_TABS=",".join(TABS),
+            AETHERSWITCH_ACCEPTANCE_TAB_INTERVAL="3",
         )
         process = subprocess.Popen(
             [str(executable), "--acceptance-cycle"],
@@ -41,7 +42,7 @@ def main() -> int:
             stderr=subprocess.DEVNULL,
         )
         try:
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + 40
             records = []
             while time.monotonic() < deadline:
                 if process.poll() is not None:
@@ -56,9 +57,10 @@ def main() -> int:
             observed_tabs = [record.get("tab") for record in records]
             if observed_tabs != TABS or not all(
                 record.get("popoverShown") is True and record.get("height", 0) > 0
+                and record.get("updaterRunning") is True
                 for record in records
             ):
-                raise RuntimeError(f"popover failed to show all tabs: {observed_tabs}")
+                raise RuntimeError(f"popover or initialized Sparkle failed on tabs: {observed_tabs}")
             vmmap = subprocess.run(
                 ["vmmap", "-summary", str(process.pid)],
                 capture_output=True,
@@ -75,6 +77,7 @@ def main() -> int:
                 "sampledMaximumMB": round(sampled, 2),
                 "processPeakMB": round(peak, 2),
                 "tabs": observed_tabs,
+                "updaterRunning": True,
                 "passed": max(sampled, peak) <= limit,
             }
             print(json.dumps(result, ensure_ascii=False))
