@@ -62,16 +62,19 @@ final class MetricsFormattingTests: XCTestCase {
             state.selectedTab = originalTab
             UpdateManager.shared.setVersionForSnapshot(version: originalVersion)
         }
-        UpdateManager.shared.setVersionForSnapshot(version: "1.0.2")
+        UpdateManager.shared.setVersionForSnapshot(version: "1.9.0")
         state.showAbout = false
         for dark in [false, true] {
-            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network"] {
+            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network", "battery"] {
                 state.selectedTab = tab
                 if tab == "disk" || tab == "cpu" {
                     _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
                     Thread.sleep(forTimeInterval: 2.1)
                 }
-                state.updateForSnapshot(metrics: SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true), switches: originalSwitches)
+                var sampled = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
+                sampled.network.address = "192.0.2.10"
+                if sampled.network.wifiName != nil { sampled.network.wifiName = "Wi-Fi" }
+                state.updateForSnapshot(metrics: sampled, switches: originalSwitches)
                 let controller = NativePanelController()
                 let hosting = controller.view
                 hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -79,6 +82,8 @@ final class MetricsFormattingTests: XCTestCase {
                 XCTAssertGreaterThan(fit.height, 100)
                 hosting.frame = CGRect(x: 0, y: 0, width: 294, height: fit.height)
                 let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                defer { window.contentView = nil; window.close() }
                 window.appearance = hosting.appearance
                 window.contentView = hosting
                 window.backgroundColor = .windowBackgroundColor
@@ -111,7 +116,7 @@ final class MetricsFormattingTests: XCTestCase {
         XCTAssertTrue(strings(root).contains { $0.contains("已用 / 总内存") })
         XCTAssertFalse(strings(root).contains("保持常亮"))
         XCTAssertGreaterThanOrEqual(controller.preferredContentSize.height, overviewHeight)
-        for tab in ["cpu", "gpu", "disk", "network"] {
+        for tab in ["cpu", "gpu", "disk", "network", "battery"] {
             state.selectedTab = tab
             // AppKit font metrics differ by macOS version; allow the panel to grow
             // while ensuring every detail page and the footer still fit.

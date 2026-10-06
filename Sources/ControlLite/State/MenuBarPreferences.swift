@@ -36,6 +36,7 @@ struct MenuBarWidgetPreferences: Equatable, Sendable {
 /// 独立保存菜单栏外观，旧版本的指标开关与显示样式继续有效。
 struct MenuBarPreferences: Equatable, Sendable {
     static let defaultsKey = "menuBarAppearance"
+    var order: [MenuBarMetric] = MenuBarMetric.allCases
     var spacing = 2
     var monospacedDigits = false
     var networkIcon: MenuBarNetworkIcon = .dots
@@ -52,6 +53,10 @@ struct MenuBarPreferences: Equatable, Sendable {
     static func load(from defaults: UserDefaults) -> Self {
         guard let stored = defaults.dictionary(forKey: defaultsKey) else { return Self() }
         var result = Self()
+        if let saved = stored["order"] as? [String] {
+            var seen = Set<MenuBarMetric>()
+            result.order = (saved.compactMap(MenuBarMetric.init(rawValue:)) + MenuBarMetric.allCases).filter { seen.insert($0).inserted }
+        }
         if let spacing = stored["spacing"] as? Int, (0...12).contains(spacing) { result.spacing = spacing }
         result.monospacedDigits = stored["monospacedDigits"] as? Bool ?? false
         result.networkIcon = (stored["networkIcon"] as? String).flatMap(MenuBarNetworkIcon.init(rawValue:)) ?? .dots
@@ -72,7 +77,7 @@ struct MenuBarPreferences: Equatable, Sendable {
     }
 
     func save(to defaults: UserDefaults) {
-        var value: [String: Any] = ["spacing": min(12, max(0, spacing)), "monospacedDigits": monospacedDigits,
+        var value: [String: Any] = ["order": order.map(\.rawValue), "spacing": min(12, max(0, spacing)), "monospacedDigits": monospacedDigits,
                                   "networkIcon": networkIcon.rawValue, "networkUnits": networkUnits,
                                   "networkColor": networkColor, "networkDownloadFirst": networkDownloadFirst]
         for metric in MenuBarMetric.allCases where metric != .network {

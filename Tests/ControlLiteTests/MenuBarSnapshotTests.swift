@@ -71,6 +71,8 @@ final class MenuBarSnapshotTests: XCTestCase {
         let canvas = MenuBarSnapshotBackground(frame: view.frame)
         view.frame.origin = .zero; canvas.addSubview(view)
         let window = NSWindow(contentRect: canvas.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.close() }
         window.appearance = appearance; canvas.appearance = appearance; view.appearance = appearance; window.contentView = canvas
         canvas.layoutSubtreeIfNeeded(); canvas.displayIfNeeded()
         let bitmap = try XCTUnwrap(canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds))

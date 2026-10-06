@@ -33,6 +33,8 @@ public struct SystemMetrics: Sendable {
     public var diskFreeGB: Double = 0.0
     public var netDownloadBytesSec: Double = 0.0
     public var netUploadBytesSec: Double = 0.0
+    var network = NetworkSnapshot()
+    var battery = BatterySnapshot()
 
     // CPU 深度指标 (图 1)
     public var cpuSystemUsage: Double = 0.0
@@ -172,7 +174,11 @@ public final class SystemMonitor: @unchecked Sendable {
     private var gpuModel: String?
     private let processes = ProcessSampler()
     private let hardware = HardwareDetails()
+    private var capacityTimestamp = -Double.infinity
+    private var cachedCapacity: (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double)?
     private let disks = DiskDetails()
+    private let networkMonitor = NetworkMonitor()
+    private let batteryMonitor = BatteryMonitor()
     private var selectedDiskPath = "/"
     public func selectDisk(path: String) {
         sampleLock.lock(); defer { sampleLock.unlock() }
@@ -182,10 +188,6 @@ public final class SystemMonitor: @unchecked Sendable {
         }
     }
 
-    private var lastNetBytesIn: UInt64 = 0
-    private var lastNetBytesOut: UInt64 = 0
-    private var lastNetTimestamp: TimeInterval = 0
-    private var lastNetworkRate: (Double, Double) = (0, 0)
 
     // 展开期间保留最近 60 个采样点，折叠时停止并清除基线。
     private var cpuHistoryBuffer: [Double] = []
@@ -202,10 +204,6 @@ public final class SystemMonitor: @unchecked Sendable {
             sysctl(ptr.baseAddress, 2, &numCPUsU, &sizeOfNumCPUsU, nil, 0)
         }
         self.numCPUs = UInt32(numCPUsU)
-        self.lastNetTimestamp = ProcessInfo.processInfo.systemUptime
-        let (initialIn, initialOut) = fetchRawNetworkBytes()
-        self.lastNetBytesIn = initialIn
-        self.lastNetBytesOut = initialOut
 
         // 读取芯片型号
         var nameBuf = [CChar](repeating: 0, count: 256)
@@ -227,9 +225,22 @@ public final class SystemMonitor: @unchecked Sendable {
         }
     }
 
+    /// Sleep excludes time from systemUptime; wake must not divide sleep traffic by an awake interval.
+    func resetSamplingBaselines() {
+        sampleLock.lock(); defer { sampleLock.unlock() }
+        capacityTimestamp = -Double.infinity
+        previousAggregateTicks = nil
+        lastAggregateCPU = CPUDetail(idle: 100)
+        resetCPUDetails()
+        networkMonitor.pause()
+        disks.reset()
+        processes.reset()
+        hardware.reset()
+    }
+
     // MARK: - 采样分流
 
-    public func sample(fullMetrics: Bool = true, activeTab: String = "overview", includeProcesses: Bool = false) -> SystemMetrics {
+    public func sample(fullMetrics: Bool = true, activeTab: String = "overview", includeProcesses: Bool = false, visibleMetrics: Set<MenuBarMetric> = Set(MenuBarMetric.allCases)) -> SystemMetrics {
         sampleLock.lock()
         defer { sampleLock.unlock() }
         var m = SystemMetrics()
@@ -242,58 +253,71 @@ public final class SystemMonitor: @unchecked Sendable {
         m.cpuCoreKinds = coreKinds
 
         // 1. 基础轻量核心指标（RAM、网络、磁盘、CPU、GPU）- 均采用微秒级系统内核原生采样，服务于菜单栏 5 列常驻显示
-        let ramData = fetchRAMDetailed()
-        m.ramPercent = ramData.percent
-        m.ramUsedGB = ramData.usedGB
-        m.ramTotalGB = ramData.totalGB
-        m.ramAppGB = ramData.appGB
-        m.ramWiredGB = ramData.wiredGB
-        m.ramCompressedGB = ramData.compressedGB
-        m.ramFreeGB = ramData.freeGB
-        m.ramSwapUsedMB = ramData.swapUsedMB
-        m.ramSwapTotalMB = ramData.swapTotalMB
-        m.ramCacheGB = ramData.cacheGB
-        m.ramPressureLevel = ramData.pressure
-        m.ramPressureCode = ramData.pressureCode
+        let requested = SamplingPlan.metrics(visible: visibleMetrics, full: fullMetrics, tab: activeTab)
+        if requested.contains(.ram) {
+            let ramData = fetchRAMDetailed()
+            m.ramPercent = ramData.percent
+            m.ramUsedGB = ramData.usedGB
+            m.ramTotalGB = ramData.totalGB
+            m.ramAppGB = ramData.appGB
+            m.ramWiredGB = ramData.wiredGB
+            m.ramCompressedGB = ramData.compressedGB
+            m.ramFreeGB = ramData.freeGB
+            m.ramSwapUsedMB = ramData.swapUsedMB
+            m.ramSwapTotalMB = ramData.swapTotalMB
+            m.ramCacheGB = ramData.cacheGB
+            m.ramPressureLevel = ramData.pressure
+            m.ramPressureCode = ramData.pressureCode
 
-        let (downRate, upRate) = fetchNetworkRate()
-        m.netDownloadBytesSec = downRate
-        m.netUploadBytesSec = upRate
+        }
+        if requested.contains(.network) {
+            let network = networkMonitor.sample(detailed: fullMetrics && activeTab == "network")
+            m.network = network
+            let (downRate, upRate) = (network.downloadRate, network.uploadRate)
+            m.netDownloadBytesSec = downRate
+            m.netUploadBytesSec = upRate
 
-        let (diskUsed, diskTotal, diskPct, diskFree) = fetchDisk()
-        m.diskUsedGB = diskUsed
-        m.diskTotalGB = diskTotal
-        m.diskPercent = diskPct
-        m.diskFreeGB = diskFree
+        } else { networkMonitor.pause() }
+        if requested.contains(.disk) {
+            let (diskUsed, diskTotal, diskPct, diskFree) = fetchDisk()
+            m.diskUsedGB = diskUsed
+            m.diskTotalGB = diskTotal
+            m.diskPercent = diskPct
+            m.diskFreeGB = diskFree
 
-        // CPU 原生 Mach 内核采样
-        let aggregate = fetchCPULightweight()
-        let cpuDetail: CPUDetail
-        if fullMetrics && activeTab == "cpu" { cpuDetail = fetchCPUDetailed() }
-        else { resetCPUDetails(); cpuDetail = aggregate }
-        // 总体指标始终采用连续采样的计数器，避免重新打开面板后
-        // 误用上一次展开以来的多核平均值，或首次多核基线的零值。
-        m.cpuUsage = aggregate.total
-        m.cpuUserUsage = aggregate.user
-        m.cpuSystemUsage = aggregate.system
-        m.cpuIdleUsage = aggregate.idle
-        m.cpuECoreUsage = cpuDetail.eCore
-        m.cpuPCoreUsage = cpuDetail.pCore
-        m.cpuCoreLoads = cpuDetail.coreLoads
+        }
+        if requested.contains(.cpu) {
+            // CPU 原生 Mach 内核采样
+            let aggregate = fetchCPULightweight()
+            let cpuDetail: CPUDetail
+            if fullMetrics && activeTab == "cpu" { cpuDetail = fetchCPUDetailed() }
+            else { resetCPUDetails(); cpuDetail = aggregate }
+            // 总体指标始终采用连续采样的计数器，避免重新打开面板后
+            // 误用上一次展开以来的多核平均值，或首次多核基线的零值。
+            m.cpuUsage = aggregate.total
+            m.cpuUserUsage = aggregate.user
+            m.cpuSystemUsage = aggregate.system
+            m.cpuIdleUsage = aggregate.idle
+            m.cpuECoreUsage = cpuDetail.eCore
+            m.cpuPCoreUsage = cpuDetail.pCore
+            m.cpuCoreLoads = cpuDetail.coreLoads
 
-        // GPU 原生 IOKit IOAccelerator 采样
-        let gpuDetail = fetchAppleSiliconGPU()
-        m.gpuAvailable = gpuDetail.available
-        m.gpuUsage = gpuDetail.total
-        m.gpuRenderUsage = gpuDetail.render
-        m.gpuTilerUsage = gpuDetail.tiler
-        m.gpuRenderAvailable = gpuDetail.renderAvailable
-        m.gpuTilerAvailable = gpuDetail.tilerAvailable
-        if let model = gpuDetail.model, !model.isEmpty {
-            m.gpuModelName = model
+        } else { previousAggregateTicks = nil; resetCPUDetails() }
+        if requested.contains(.gpu) {
+            // GPU 原生 IOKit IOAccelerator 采样
+            let gpuDetail = fetchAppleSiliconGPU()
+            m.gpuAvailable = gpuDetail.available
+            m.gpuUsage = gpuDetail.total
+            m.gpuRenderUsage = gpuDetail.render
+            m.gpuTilerUsage = gpuDetail.tiler
+            m.gpuRenderAvailable = gpuDetail.renderAvailable
+            m.gpuTilerAvailable = gpuDetail.tilerAvailable
+            if let model = gpuDetail.model, !model.isEmpty {
+                m.gpuModelName = model
         }
         m.gpuCoreCount = gpuDetail.cores
 
+        }
         if fullMetrics && activeTab == "disk" {
             let io = disks.sample(path: selectedDiskPath)
             m.diskVolumes = io.volumes
@@ -331,6 +355,7 @@ public final class SystemMonitor: @unchecked Sendable {
             m.screenFPS = details.fps
             m.aneWatts = details.aneWatts
         } else { hardware.reset() }
+        if fullMetrics && ["overview", "battery"].contains(activeTab) { m.battery = batteryMonitor.sample() }
         guard fullMetrics else {
             processes.reset()
             cpuHistoryBuffer.removeAll(keepingCapacity: true)
@@ -629,6 +654,8 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - 磁盘容量采样
 
     private func fetchDisk() -> (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cachedCapacity, now - capacityTimestamp < 30 { return cachedCapacity }
         var stat = statfs()
         guard statfs("/", &stat) == 0 else { return (0, 0, 0, 0) }
         let totalBytes = Double(stat.f_blocks) * Double(stat.f_bsize)
@@ -636,12 +663,14 @@ public final class SystemMonitor: @unchecked Sendable {
         let usedBytes = max(0, totalBytes - freeBytes)
         let percent = totalBytes > 0 ? Int((usedBytes / totalBytes) * 100) : 0
 
-        return (
+        let result = (
             usedBytes / 1_073_741_824.0,
             totalBytes / 1_073_741_824.0,
             min(100, max(0, percent)),
             freeBytes / 1_073_741_824.0
         )
+        cachedCapacity = result; capacityTimestamp = now
+        return result
     }
 
     // MARK: - Uptime & Load Average
@@ -664,44 +693,11 @@ public final class SystemMonitor: @unchecked Sendable {
         return (loads[0], loads[1], loads[2])
     }
 
+    func selectNetwork(interface: String) {
+        sampleLock.lock(); defer { sampleLock.unlock() }
+        networkMonitor.select(interface)
+    }
+
     // MARK: - 网络吞吐采样
-
-    private func fetchRawNetworkBytes() -> (bytesIn: UInt64, bytesOut: UInt64) {
-        var ifap: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifap) == 0, let first = ifap else { return (0, 0) }
-        defer { freeifaddrs(ifap) }
-
-        var totalIn: UInt64 = 0
-        var totalOut: UInt64 = 0
-
-        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
-            let interface = ptr.pointee
-            let name = String(cString: interface.ifa_name)
-            if name.hasPrefix("en"), interface.ifa_addr?.pointee.sa_family == UInt8(AF_LINK), interface.ifa_data != nil {
-                let data = interface.ifa_data.assumingMemoryBound(to: if_data.self)
-                totalIn += UInt64(data.pointee.ifi_ibytes)
-                totalOut += UInt64(data.pointee.ifi_obytes)
-            }
-        }
-        return (totalIn, totalOut)
-    }
-
-    private func fetchNetworkRate() -> (downRate: Double, upRate: Double) {
-        let (currentIn, currentOut) = fetchRawNetworkBytes()
-        let now = ProcessInfo.processInfo.systemUptime
-        let interval = now - lastNetTimestamp
-
-        guard interval >= 0.3 else { return lastNetworkRate }
-
-        let downRate = currentIn >= lastNetBytesIn ? Double(currentIn - lastNetBytesIn) / interval : 0.0
-        let upRate = currentOut >= lastNetBytesOut ? Double(currentOut - lastNetBytesOut) / interval : 0.0
-
-        lastNetBytesIn = currentIn
-        lastNetBytesOut = currentOut
-        lastNetTimestamp = now
-
-        lastNetworkRate = (downRate, upRate)
-        return lastNetworkRate
-    }
 
 }

@@ -488,7 +488,23 @@ private final class DetailRowsView: DashboardCardView {
             ("剩余寿命 / 备用", metrics.diskHealth.map { "\($0.remainingLife)% / \($0.spare)%" } ?? "不可用"),
             ("通电时长", metrics.diskHealth.map { "\($0.powerOnHours) 小时" } ?? "不可用")
         ]
-        default: return [("下载速率", metrics.menuBarDownloadFormatted), ("上传速率", metrics.menuBarUploadFormatted)]
+        case "battery": return [
+            ("电池状态", metrics.battery.summary),
+            ("预计剩余时间", metrics.battery.remainingMinutes.map { "\($0) 分钟" } ?? "不可用"),
+            ("最大容量", metrics.battery.healthPercentage.map { "\($0)%" } ?? "不可用"),
+            ("循环次数", metrics.battery.cycleCount.map(String.init) ?? "不可用")
+        ]
+        default: return [
+            ("当前接口", metrics.network.interface),
+            ("IPv4 地址", metrics.network.address),
+            ("Wi-Fi 名称", metrics.network.wifiName ?? "不可用"),
+            ("协商速率", metrics.network.wifiTransmitMbps.map { String(format: "%.0f Mbps", $0) } ?? "不可用"),
+            ("信号强度", metrics.network.wifiRSSI.map { "\($0) dBm" } ?? "不可用"),
+            ("下载速率", metrics.network.available ? (metrics.network.pending ? "采样中…" : metrics.menuBarDownloadFormatted) : "不可用"),
+            ("上传速率", metrics.network.available ? (metrics.network.pending ? "采样中…" : metrics.menuBarUploadFormatted) : "不可用"),
+            ("监测下载累计", ByteCountFormatter.string(fromByteCount: Int64(clamping: metrics.network.downloaded), countStyle: .binary)),
+            ("监测上传累计", ByteCountFormatter.string(fromByteCount: Int64(clamping: metrics.network.uploaded), countStyle: .binary))
+        ]
         }
     }
     override func draw(_ dirtyRect: NSRect) {
@@ -561,7 +577,7 @@ final class NativePanelController: NSViewController {
     private var contentScroll: NSScrollView?
     private var viewportHeight: NSLayoutConstraint?
     private let maximumHeight: CGFloat
-    private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘", "网络"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["概览", "CPU", "GPU", "内存", "磁盘", "网络", "电池"], trackingMode: .selectOne, target: nil, action: nil)
     private var subscription: AnyCancellable?
     private var tabSubscription: AnyCancellable?
     private var aboutSubscription: AnyCancellable?
@@ -570,6 +586,8 @@ final class NativePanelController: NSViewController {
     private var pendingSubscription: AnyCancellable?
     private var updateSubscription: AnyCancellable?
     private var updateButton: NSButton!
+    private var networkSelector: NSPopUpButton?
+    private var networkOptions: [String] = []
     private var diskSelector: NSPopUpButton?
     private var diskOptions: [DiskVolume] = []
     private var detailRows: DetailRowsView?
@@ -589,7 +607,7 @@ final class NativePanelController: NSViewController {
     private var menuBarSubscription: AnyCancellable?
     private var rootHeight: NSLayoutConstraint?
     private let footerSpacer = NSView()
-    private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network"]
+    private let tabNames = ["overview", "cpu", "gpu", "ram", "disk", "network", "battery"]
     private let loginItems: LoginItemManager
     private var loginItemSubscription: AnyCancellable?
     private let loginItemSwitch = NSSwitch()
@@ -772,6 +790,7 @@ final class NativePanelController: NSViewController {
                 self.updatePreferredSize()
             }
             self.updateDiskSelector(m)
+            self.updateNetworkSelector(m)
             self.processRows?.metrics = m
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
@@ -842,11 +861,21 @@ final class NativePanelController: NSViewController {
             rows("disk")
             processList("disk")
             note("速率属于所选卷的物理设备；APFS 容量由容器共享，SMART 取决于设备支持。")
+        case "battery":
+            rows("battery")
+            note("电池数据每 30 秒更新；剩余时间由系统估计，不支持的指标显示不可用。")
         case "network":
             visual("network")
+            let selector = NSPopUpButton(frame: .zero, pullsDown: false)
+            selector.target = self; selector.action = #selector(selectNetwork(_:))
+            selector.setAccessibilityLabel("选择网络接口")
+            networkSelector = selector
+            content.addArrangedSubview(selector)
+            selector.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+            updateNetworkSelector(state.metrics)
             menuBarToggle(.network)
             rows("network")
-            note("速率来自系统网络接口计数器，每秒刷新。")
+            note("自动跟随主接口；累计仅含本次监测期间，切换接口后重新计数。Wi-Fi 名称受系统定位权限限制；曲线为本页最近 60 个采样点。")
         default:
             metricTiles = (0..<4).map { DashboardMetricView(kind: $0, metrics: state.metrics) }
             let top = NSStackView(views: [metricTiles[0], metricTiles[1]])
@@ -922,6 +951,23 @@ final class NativePanelController: NSViewController {
         onPreferredSizeChange?(size)
     }
 
+    @objc private func selectNetwork(_ sender: NSPopUpButton) {
+        guard networkOptions.indices.contains(sender.indexOfSelectedItem) else { return }
+        SystemMonitor.shared.selectNetwork(interface: networkOptions[sender.indexOfSelectedItem])
+        state.refreshFull()
+    }
+    private func updateNetworkSelector(_ metrics: SystemMetrics) {
+        guard state.selectedTab == "network", let selector = networkSelector else { return }
+        var options = ["auto"] + metrics.network.interfaces
+        if !options.contains(metrics.network.selection) { options.append(metrics.network.selection) }
+        if networkOptions != options || selector.numberOfItems == 0 {
+            networkOptions = options
+            selector.removeAllItems()
+            selector.addItems(withTitles: options.map { $0 == "auto" ? "自动 · 当前主接口" : $0 })
+        }
+        if let index = options.firstIndex(of: metrics.network.selection) { selector.selectItem(at: index) }
+    }
+
     @objc private func selectDisk(_ sender: NSPopUpButton) {
         guard diskOptions.indices.contains(sender.indexOfSelectedItem) else { return }
         SystemMonitor.shared.selectDisk(path: diskOptions[sender.indexOfSelectedItem].path)
@@ -943,7 +989,8 @@ final class NativePanelController: NSViewController {
         panel.metrics = state.metrics
         detailRows = panel
         content.addArrangedSubview(panel)
-        content.setCustomSpacing(12, after: menuBarRow ?? panel)
+        let spacingAnchor = menuBarRow.flatMap { row in content.arrangedSubviews.contains(where: { $0 === row }) ? row : nil } ?? panel
+        content.setCustomSpacing(12, after: spacingAnchor)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         if let detailRowsHeight { detailRowsHeight.constant = panel.idealHeight }
         else {

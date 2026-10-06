@@ -11,7 +11,7 @@ import tempfile
 import time
 
 
-TABS = ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
+TABS = ["overview", "cpu", "gpu", "ram", "disk", "network", "battery", "overview"]
 
 
 def memory_mb(value: str, unit: str) -> float:

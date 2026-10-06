@@ -4,12 +4,55 @@ import AppKit
 final class MenuBarStatusView: NSView {
     static let padding: CGFloat = 2
     static let glyphWidth: CGFloat = 20
-    var metrics = SystemMetrics() { didSet { needsDisplay = true } }
+    var metrics = SystemMetrics() {
+        didSet {
+            if Self.renderingKey(metrics, visible: visible, preferences: preferences) != Self.renderingKey(oldValue, visible: visible, preferences: preferences) { needsDisplay = true }
+        }
+    }
     var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
     var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { needsDisplay = true } } }
 
+    private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
+    private func frames(height: CGFloat) -> [(MenuBarMetric, CGFloat, CGFloat)] {
+        if let cachedLayout, cachedLayout.visible == visible, cachedLayout.preferences == preferences, cachedLayout.height == height { return cachedLayout.frames }
+        let frames = Self.layout(for: visible, preferences: preferences, height: height)
+        cachedLayout = (visible, preferences, height, frames)
+        return frames
+    }
+    func requiredWidth(height: CGFloat) -> CGFloat {
+        guard let last = frames(height: height).last else { return Self.glyphWidth + Self.padding * 2 }
+        return ceil(last.1 + last.2 + Self.padding)
+    }
+    static func renderingKey(_ metrics: SystemMetrics, visible: Set<MenuBarMetric>, preferences: MenuBarPreferences) -> [String] {
+        preferences.order.filter(visible.contains).flatMap { metric -> [String] in
+            if metric == .network {
+                return [metrics.menuBarDownloadFormatted, metrics.menuBarUploadFormatted,
+                        String(metrics.netDownloadBytesSec >= 1024), String(metrics.netUploadBytesSec >= 1024)]
+            }
+            let percent = Self.percent(for: metric, metrics: metrics)
+            let value = percent.map { preferences[metric].widget == .mini ? String(format: "%.0f", $0) : String($0) } ?? "unavailable"
+            let color = preferences[metric].color
+            let colorKey = color == .pressure ? String(metrics.ramPressureCode ?? -1)
+                : color == .utilization ? String(percent.map { $0 <= 60 ? 0 : $0 <= 80 ? 1 : 2 } ?? -1) : "fixed"
+            return [value, colorKey]
+        }
+    }
+    private struct FontKey: Hashable { let size: CGFloat; let weight: CGFloat; let monospaced: Bool }
+    private static var fonts: [FontKey: NSFont] = [:]
+    private static let textStyles: [MenuBarAlignment: NSParagraphStyle] = {
+        Dictionary(uniqueKeysWithValues: MenuBarAlignment.allCases.map { alignment in
+            let style = NSMutableParagraphStyle()
+            switch alignment { case .left: style.alignment = .left; case .center: style.alignment = .center; case .right: style.alignment = .right }
+            return (alignment, style as NSParagraphStyle)
+        })
+    }()
+
     static func font(size: CGFloat, weight: NSFont.Weight, preferences: MenuBarPreferences) -> NSFont {
-        preferences.monospacedDigits ? .monospacedDigitSystemFont(ofSize: size, weight: weight) : .systemFont(ofSize: size, weight: weight)
+        let key = FontKey(size: size, weight: weight.rawValue, monospaced: preferences.monospacedDigits)
+        if let font = fonts[key] { return font }
+        let font = preferences.monospacedDigits ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight)
+        fonts[key] = font
+        return font
     }
 
     static func widgetWidth(_ metric: MenuBarMetric, preferences: MenuBarPreferences, height: CGFloat) -> CGFloat {
@@ -33,7 +76,7 @@ final class MenuBarStatusView: NSView {
     static func layout(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24) -> [(MenuBarMetric, CGFloat, CGFloat)] {
         var x = padding
         var frames: [(MenuBarMetric, CGFloat, CGFloat)] = []
-        for metric in MenuBarMetric.allCases where visible.contains(metric) {
+        for metric in preferences.order where visible.contains(metric) {
             if !frames.isEmpty { x += CGFloat(min(12, max(0, preferences.spacing))) }
             let width = widgetWidth(metric, preferences: preferences, height: height)
             frames.append((metric, x, width)); x += width
@@ -83,14 +126,13 @@ final class MenuBarStatusView: NSView {
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 
     private func text(_ value: String, rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor, alignment: MenuBarAlignment = .left) {
-        let style = NSMutableParagraphStyle()
-        switch alignment { case .left: style.alignment = .left; case .center: style.alignment = .center; case .right: style.alignment = .right }
+        let style = Self.textStyles[alignment]!
         (value as NSString).draw(in: rect, withAttributes: [.font: Self.font(size: size, weight: weight, preferences: preferences), .foregroundColor: color, .paragraphStyle: style])
     }
 
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
-            let frames = Self.layout(for: visible, preferences: preferences, height: bounds.height)
+            let frames = frames(height: bounds.height)
             guard !frames.isEmpty else {
                 BrandGlyph.draw(in: NSRect(x: Self.padding, y: (bounds.height - 18) / 2, width: Self.glyphWidth, height: 18), color: .labelColor)
                 return
