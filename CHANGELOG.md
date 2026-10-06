@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-10-06
+
+### Added
+- 菜单栏外观参考 Stats 的 Mini、柱状图、饼图及网速组件，可分别设置 CPU、GPU、RAM、SSD 的组件、标签、对齐和颜色。
+- 按利用率显示蓝 / 橙 / 红，也支持黑白、系统强调色、固定色和真实内存压力色；字体、间距、网络圆点 / 箭头 / I/O 图标、单位与方向顺序均可调整。
+- 面板齿轮和菜单栏右键菜单提供外观设置入口，带实时预览；设置立即生效，重启后保留。
+
+### Fixed
+- 菜单栏按当前字体测量最宽百分比，避免 `100%` 被裁切；关闭设置窗口时释放预览与订阅资源。
+
 ## [1.7.0] - 2026-10-05
 
 ### Added

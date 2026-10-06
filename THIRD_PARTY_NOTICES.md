@@ -6,4 +6,4 @@ AetherSwitch 仅使用 macOS 系统框架（Darwin、Mach、IOKit、AppKit、Sec
 
 ## Stats 参考实现
 
-硬件传感器键、IOReport 通道及指标分解参考 [Stats v3.0.20](https://github.com/exelban/stats/tree/v3.0.20)，遵循 MIT 许可证。AetherSwitch 使用独立的 Swift 原生实现，未链接 Stats 或引入其辅助进程。完整许可见 `LICENSES/Stats-MIT.txt`，随应用打包。
+硬件传感器键、IOReport 通道、指标分解及菜单栏 Mini / 图表 / 网速组件的字体、尺寸、图标和利用率配色参考 [Stats v3.0.20](https://github.com/exelban/stats/tree/v3.0.20)，遵循 MIT 许可证。AetherSwitch 使用独立的 Swift 原生实现，未链接 Stats 或引入其辅助进程。完整许可见 `LICENSES/Stats-MIT.txt`，随应用打包。

@@ -58,6 +58,13 @@ public final class AppState: ObservableObject {
         }
     }
 
+    @Published var menuBarPreferences = MenuBarPreferences.load(from: .standard) {
+        didSet {
+            guard oldValue != menuBarPreferences else { return }
+            menuBarPreferences.save(to: .standard)
+        }
+    }
+
     // Stats 样式菜单栏显示哪些指标列
     @Published public var menuBarMetrics: Set<MenuBarMetric> = MenuBarMetric.decode(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)) {
         didSet {

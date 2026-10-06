@@ -1,78 +1,6 @@
 import Cocoa
 import Combine
 
-/// 双行指标直接绘制在原生状态栏按钮内；只绘制用户在面板中打开的指标列。
-final class MenuBarStatusView: NSView {
-    private static let titleFont = NSFont.systemFont(ofSize: 8, weight: .semibold)
-    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-    private static let rateFont = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
-    private static let centerStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()
-    private static let leadingStyle: NSParagraphStyle = { let style = NSMutableParagraphStyle(); style.alignment = .left; return style }()
-
-    static let padding: CGFloat = 3
-    static let columnWidth: CGFloat = 36
-    static let gap: CGFloat = 6
-    static let arrowWidth: CGFloat = 10
-    static let glyphWidth: CGFloat = 20
-    /// 网速列按最宽读数（1023 KB/s）固定宽度，数值变化时状态栏不抖动。
-    static let rateWidth: CGFloat = ceil(("1023 KB/s" as NSString).size(withAttributes: [.font: rateFont]).width)
-
-    /// 各可见列在视图中的横向区间；全部关闭时返回空，只显示品牌图标。
-    static func layout(for visible: Set<MenuBarMetric>) -> [(MenuBarMetric, CGFloat, CGFloat)] {
-        var x = padding
-        var frames: [(MenuBarMetric, CGFloat, CGFloat)] = []
-        for metric in MenuBarMetric.allCases where visible.contains(metric) {
-            let width = metric == .network ? arrowWidth + rateWidth : columnWidth
-            if !frames.isEmpty { x += gap }
-            frames.append((metric, x, width))
-            x += width
-        }
-        return frames
-    }
-
-    static func width(for visible: Set<MenuBarMetric>) -> CGFloat {
-        guard let last = layout(for: visible).last else { return glyphWidth + padding * 2 }
-        return ceil(last.1 + last.2 + padding)
-    }
-
-    var metrics = SystemMetrics() { didSet { needsDisplay = true } }
-    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
-    override var isFlipped: Bool { true }
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func draw(_ dirtyRect: NSRect) {
-        autoreleasepool {
-        let foreground = NSColor.labelColor
-        let top = (bounds.height - 23) / 2
-        let frames = Self.layout(for: visible)
-        guard !frames.isEmpty else {
-            BrandGlyph.draw(in: NSRect(x: Self.padding, y: top + 1, width: Self.glyphWidth, height: 21), color: foreground)
-            return
-        }
-        for (metric, x, width) in frames {
-            if metric == .network {
-                let rows = [("↑", metrics.menuBarUploadFormatted), ("↓", metrics.menuBarDownloadFormatted)]
-                for (index, row) in rows.enumerated() {
-                    let y = top + CGFloat(index) * 12
-                    (row.0 as NSString).draw(in: NSRect(x: x, y: y, width: Self.arrowWidth, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground])
-                    (row.1 as NSString).draw(in: NSRect(x: x + Self.arrowWidth, y: y, width: Self.rateWidth + 2, height: 12), withAttributes: [.font: Self.rateFont, .foregroundColor: foreground, .paragraphStyle: Self.leadingStyle])
-                }
-                continue
-            }
-            let column: (String, String, Double?)
-            switch metric {
-            case .cpu: column = ("CPU", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuUsage)
-            case .gpu: column = ("GPU", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "—", metrics.gpuAvailable ? metrics.gpuUsage : nil)
-            case .ram: column = ("RAM", "\(metrics.ramPercent)%", Double(metrics.ramPercent))
-            default: column = ("SSD", "\(metrics.diskPercent)%", Double(metrics.diskPercent))
-            }
-            (column.0 as NSString).draw(in: NSRect(x: x, y: top, width: width, height: 10), withAttributes: [.font: Self.titleFont, .foregroundColor: foreground, .paragraphStyle: Self.centerStyle])
-            let color: NSColor = column.2.map { Palette.tint(for: $0) } ?? .secondaryLabelColor
-            (column.1 as NSString).draw(in: NSRect(x: x - 2, y: top + 9, width: width + 4, height: 15), withAttributes: [.font: Self.numberFont, .foregroundColor: color, .paragraphStyle: Self.centerStyle])
-        }
-        }
-    }
-}
-
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -81,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var menuBarStatusView: MenuBarStatusView?
     private var appliedMenuBarStyle: MenuBarStyle?
+    private var menuBarSettings: MenuBarSettingsController?
 
     static func main() {
         if CommandLine.arguments.contains("--keep-awake-status") {
@@ -181,6 +110,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             .sink { [weak self] style in
                 self?.updateStatusItemWidth(style: style)
             }
+            .store(in: &cancellables)
+
+        AppState.shared.$menuBarPreferences.dropFirst()
+            .sink { [weak self] preferences in self?.updateStatusItemWidth(preferences: preferences) }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .showMenuBarSettings)
+            .sink { [weak self] _ in self?.showMenuBarSettings() }
             .store(in: &cancellables)
 
         // 4. 注册系统级分布式通知，便于脚本与自动化唤起
@@ -332,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         guard index < sequence.count else {
             if ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_CLOSE_AFTER_CYCLE"] == "1" {
                 popover?.performClose(nil)
+                menuBarSettings?.close()
             }
             return
         }
@@ -339,6 +277,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let interval = requested.isFinite ? min(15, max(1.5, requested)) : 1.5
         DispatchQueue.main.asyncAfter(deadline: .now() + interval) { [weak self] in
             guard let self else { return }
+            if index == 0 && ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_MENU_BAR_SETTINGS"] == "1" {
+                self.showMenuBarSettings()
+            }
             let tab = sequence[index]
             if AppState.shared.selectedTab != tab {
                 AppState.shared.selectedTab = tab
@@ -350,6 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 "footprintMB": self.physicalFootprintMB() ?? -1,
                 "peakFootprintMB": self.physicalFootprintMB(peak: true) ?? -1,
                 "updaterRunning": UpdateManager.shared.isRunning,
+                "menuBarSettingsShown": self.menuBarSettings?.window?.isVisible == true,
                 "timestamp": Date().timeIntervalSince1970
             ]
             if let data = try? JSONSerialization.data(withJSONObject: record, options: .sortedKeys),
@@ -390,13 +332,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     // MARK: - 动态调整状态栏宽度
 
-    private func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil, visible: Set<MenuBarMetric>? = nil) {
+    private func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil, visible: Set<MenuBarMetric>? = nil, preferences: MenuBarPreferences? = nil) {
         guard let button = statusItem.button else { return }
         let state = AppState.shared
         // @Published emits before the stored property changes; render the emitted value.
         let m = metrics ?? state.metrics
         let style = style ?? state.menuBarStyle
         let visible = visible ?? state.menuBarMetrics
+        let preferences = preferences ?? state.menuBarPreferences
         let styleChanged = appliedMenuBarStyle != style
         if !styleChanged && style == .iconOnly { return }
         switch style {
@@ -406,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 button.image = nil
             }
             // 宽度随面板中打开的指标列变化。
-            let width = MenuBarStatusView.width(for: visible)
+            let width = MenuBarStatusView.width(for: visible, preferences: preferences, height: button.bounds.height)
             if statusItem.length != width { statusItem.length = width }
             let display = menuBarStatusView ?? MenuBarStatusView(frame: button.bounds)
             if display.superview == nil {
@@ -416,6 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             menuBarStatusView = display
             if styleChanged { display.frame = button.bounds }
             display.visible = visible
+            display.preferences = preferences
             display.metrics = m
         case .compact:
             menuBarStatusView?.removeFromSuperview()
@@ -496,6 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         styleParent.submenu = styleSubmenu
         menu.addItem(styleParent)
+        menu.addItem(NSMenuItem(title: "菜单栏外观设置…", action: #selector(showMenuBarSettings), keyEquivalent: ","))
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "关于 AetherSwitch...", action: #selector(showAboutAction), keyEquivalent: ""))
@@ -531,6 +476,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover?.isShown != true {
             togglePopover()
         }
+    }
+
+    @objc private func showMenuBarSettings() {
+        if let menuBarSettings { menuBarSettings.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return }
+        let controller = MenuBarSettingsController()
+        controller.onClose = { [weak self] in self?.menuBarSettings = nil }
+        menuBarSettings = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {

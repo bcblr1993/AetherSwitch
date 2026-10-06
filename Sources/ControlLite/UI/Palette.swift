@@ -1,6 +1,6 @@
 import AppKit
 
-/// 负载等级：面板与菜单栏共用同一套阈值，数字、进度条与环形图按等级着色。
+/// 面板负载等级；菜单栏使用 Stats 的独立利用率配色。
 enum LoadLevel: Equatable, CaseIterable {
     case low, moderate, elevated, critical
 
@@ -51,7 +51,7 @@ enum Palette {
         }
     }
 
-    /// 指标色（数字、进度条、环形图、菜单栏数值共用）。
+    /// 面板指标色（数字、进度条、环形图共用）。
     static func tint(for percent: Double) -> NSColor { color(for: LoadLevel(percent: percent)) }
 
     /// 弹窗使用毛玻璃（vibrant）外观，次要文字色依赖系统实时混合才可见；
