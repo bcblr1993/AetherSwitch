@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-10-06
+
+### Added
+- 新的 S 形开关品牌图标，应用图标与菜单栏使用共享原生几何。
+- 网络接口自动/手动选择、IPv4 地址、Wi-Fi 信息与本次监测累计流量；切换、断线和计数器重置时重建速率基线。
+- 原生电池页：电量、充电状态、预计时间、最大容量与循环次数，30 秒缓存，不支持时明确提示。
+- 菜单栏指标排序与 1/2/5/10 秒后台刷新设置，展开时保持每秒刷新。
+
+### Performance
+- 根据可见菜单栏指标和当前页面采样；隐藏指标停止读取，仅图标模式收起时停止采样定时器。
+- Wi-Fi 详情只在网络页读取并缓存 15 秒；高阶硬件采样继续按页面启停。
+
+### Fixed
+- 无菜单栏开关的详情页不再访问已移除控件的间距约束。
+- 网络流量采用单接口口径，避免物理与虚拟接口重复汇总；历史图与累计时间范围明确标注。
+- 官网图标与功能介绍更新，移除过时的 15 MB 内存宣传值。
+
 ## [1.8.0] - 2026-10-06
 
 ### Added

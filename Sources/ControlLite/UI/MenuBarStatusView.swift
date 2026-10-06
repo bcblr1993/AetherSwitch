@@ -33,7 +33,7 @@ final class MenuBarStatusView: NSView {
     static func layout(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24) -> [(MenuBarMetric, CGFloat, CGFloat)] {
         var x = padding
         var frames: [(MenuBarMetric, CGFloat, CGFloat)] = []
-        for metric in MenuBarMetric.allCases where visible.contains(metric) {
+        for metric in preferences.order where visible.contains(metric) {
             if !frames.isEmpty { x += CGFloat(min(12, max(0, preferences.spacing))) }
             let width = widgetWidth(metric, preferences: preferences, height: height)
             frames.append((metric, x, width)); x += width

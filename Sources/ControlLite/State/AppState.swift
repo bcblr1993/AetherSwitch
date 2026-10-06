@@ -55,6 +55,7 @@ public final class AppState: ObservableObject {
     @Published public var menuBarStyle: MenuBarStyle {
         didSet {
             UserDefaults.standard.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
+            adjustTimerFrequency(); refreshFull()
         }
     }
 
@@ -70,6 +71,7 @@ public final class AppState: ObservableObject {
         didSet {
             guard oldValue != menuBarMetrics else { return }
             UserDefaults.standard.set(MenuBarMetric.encode(menuBarMetrics), forKey: MenuBarMetric.defaultsKey)
+            adjustTimerFrequency(); refreshFull()
         }
     }
 
@@ -115,10 +117,21 @@ public final class AppState: ObservableObject {
         } else {
             self.menuBarStyle = MenuBarStyle(rawValue: savedStyle) ?? .statsColumns
         }
-        self.metrics = monitor.sample(fullMetrics: false)
+        self.metrics = monitor.sample(fullMetrics: false, visibleMetrics: SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics))
         self.switches = switchMgr.getCurrentStates()
         if !restoredKeepAwake { switchError = "无法恢复保持常亮，请重新开启。" }
-        startTimer(interval: 5.0)
+        adjustTimerFrequency()
+    }
+
+    @Published var backgroundInterval: Double = {
+        let saved = UserDefaults.standard.double(forKey: "backgroundSamplingInterval")
+        return [1.0, 2.0, 5.0, 10.0].contains(saved) ? saved : 5.0
+    }() {
+        didSet {
+            guard [1.0, 2.0, 5.0, 10.0].contains(backgroundInterval) else { backgroundInterval = 5; return }
+            UserDefaults.standard.set(backgroundInterval, forKey: "backgroundSamplingInterval")
+            adjustTimerFrequency()
+        }
     }
 
     // MARK: - 动态频率定时器
@@ -128,7 +141,7 @@ public final class AppState: ObservableObject {
         if isPopoverOpen {
             startTimer(interval: 1.0)
         } else {
-            startTimer(interval: 5.0)
+            if !SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty { startTimer(interval: backgroundInterval) }
         }
     }
 
@@ -143,14 +156,16 @@ public final class AppState: ObservableObject {
 
     private func tick() {
         guard !samplingInFlight else { return }
+        if !isPopoverOpen && SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty { return }
         samplingInFlight = true
         let isFull = isPopoverOpen
         let tab = selectedTab
+        let visible = SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics)
         let revision = switchRevision
         Task {
             let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
                 autoreleasepool {
-                    let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull)
+                    let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull, visibleMetrics: visible)
                     let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
                     return (m, s)
                 }

@@ -1,32 +1,40 @@
 import AppKit
 
-/// 品牌单色图形（Logo B「叠放滑杆」）：菜单栏、弹窗标题共用同一套几何。
+/// S 形开关：同一套几何用于应用图标、菜单栏和面板标题。
 enum BrandGlyph {
-    /// 三根滑杆的滑块位置（0~1），与 App 图标保持一致。
-    private static let knobs: [CGFloat] = [0.68, 0.34, 0.86]
-
-    /// 在 rect 内绘制图形；rect 以左上为原点（flipped 视图）或左下为原点均可，图形上下对称排布。
-    static func draw(in rect: NSRect, color: NSColor) {
-        let rowGap = rect.height / 3
-        // 滑块之间留出 1.5pt 以上的间隙，小尺寸下三行依然分得开。
-        let track: CGFloat = max(1.5, (rowGap * 0.28 * 2).rounded() / 2)
-        let knob: CGFloat = (rowGap * 0.76).rounded(.down)
-        let inset = knob / 2
-        let span = rect.width - knob
-        for (index, position) in knobs.enumerated() {
-            let y = rect.minY + rowGap * (CGFloat(index) + 0.5)
-            let knobX = rect.minX + inset + span * position
-            // 未填充段：半透明轨道
-            color.withAlphaComponent(0.35).setFill()
-            NSBezierPath(roundedRect: NSRect(x: rect.minX, y: y - track / 2, width: rect.width, height: track), xRadius: track / 2, yRadius: track / 2).fill()
-            // 已填充段 + 滑块
-            color.setFill()
-            NSBezierPath(roundedRect: NSRect(x: rect.minX, y: y - track / 2, width: knobX - rect.minX, height: track), xRadius: track / 2, yRadius: track / 2).fill()
-            NSBezierPath(ovalIn: NSRect(x: knobX - knob / 2, y: y - knob / 2, width: knob, height: knob)).fill()
+    static func draw(in rect: NSRect, color: NSColor, secondary: NSColor? = nil, knobColor: NSColor? = nil) {
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            NSPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
+        }
+        let path = NSBezierPath()
+        path.move(to: point(0.80, 0.22))
+        path.line(to: point(0.34, 0.22))
+        path.curve(to: point(0.34, 0.50), controlPoint1: point(0.06, 0.22), controlPoint2: point(0.06, 0.50))
+        path.line(to: point(0.66, 0.50))
+        path.curve(to: point(0.66, 0.78), controlPoint1: point(0.94, 0.50), controlPoint2: point(0.94, 0.78))
+        path.line(to: point(0.20, 0.78))
+        path.lineWidth = min(rect.width, rect.height) * 0.21
+        path.lineCapStyle = .round; path.lineJoinStyle = .round
+        if let secondary, let context = NSGraphicsContext.current?.cgContext {
+            NSGraphicsContext.saveGraphicsState()
+            context.addPath(path.cgPath)
+            context.setLineWidth(path.lineWidth)
+            context.setLineCap(.round); context.setLineJoin(.round)
+            context.replacePathWithStrokedPath(); context.clip()
+            NSGradient(starting: color, ending: secondary)?.draw(in: rect, angle: 90)
+            NSGraphicsContext.restoreGraphicsState()
+        } else { color.setStroke(); path.stroke() }
+        let diameter = min(rect.width, rect.height) * 0.155
+        let center = point(0.80, 0.22)
+        let knob = NSBezierPath(ovalIn: NSRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter))
+        if let knobColor { knobColor.setFill(); knob.fill() }
+        else {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current?.cgContext.setBlendMode(.clear)
+            knob.fill()
+            NSGraphicsContext.restoreGraphicsState()
         }
     }
-
-    /// 模板图像：交给 NSStatusBarButton / NSImageView 按系统外观着色。
     static func templateImage(size: NSSize) -> NSImage {
         let image = NSImage(size: size, flipped: true) { rect in
             draw(in: rect.insetBy(dx: 0.5, dy: 0), color: .black)

@@ -15,6 +15,10 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     private var subscriptions = Set<AnyCancellable>()
     private var widgetControls: [MenuBarMetric: [NSControl]] = [:]
     private let spacing = NSPopUpButton()
+    private let refreshInterval = NSPopUpButton()
+    private let metricOrder = NSPopUpButton()
+    private let moveLeft = NSButton(title: "向左", target: nil, action: nil)
+    private let moveRight = NSButton(title: "向右", target: nil, action: nil)
     private let font = NSPopUpButton()
     private let networkIcon = NSPopUpButton()
     private let networkUnits = NSButton(checkboxWithTitle: "显示单位", target: nil, action: nil)
@@ -22,7 +26,7 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     private let networkOrder = NSButton(checkboxWithTitle: "下载在上", target: nil, action: nil)
 
     init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 438), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 510), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "菜单栏外观"
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -72,6 +76,16 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         spacing.controlSize = .small; spacing.target = self; spacing.action = #selector(changeSpacing)
         font.addItems(withTitles: ["Stats 系统字体", "等宽数字"]); font.controlSize = .small; font.target = self; font.action = #selector(changeFont)
         root.addArrangedSubview(row([label("指标间距"), spacing, label("字体"), font]))
+
+        refreshInterval.addItems(withTitles: ["1 秒", "2 秒", "5 秒", "10 秒"])
+        refreshInterval.selectItem(at: [1.0, 2.0, 5.0, 10.0].firstIndex(of: state.backgroundInterval) ?? 2)
+        refreshInterval.target = self; refreshInterval.action = #selector(changeRefresh)
+        refreshInterval.setAccessibilityLabel("面板关闭时刷新间隔")
+        root.addArrangedSubview(row([label("后台刷新"), refreshInterval, label("展开时每秒刷新", size: 11)]))
+        metricOrder.addItems(withTitles: MenuBarMetric.allCases.map(\.title))
+        metricOrder.setAccessibilityLabel("调整顺序的指标")
+        for control in [moveLeft, moveRight] { control.target = self; control.action = #selector(moveMetric(_:)); control.bezelStyle = .rounded }
+        root.addArrangedSubview(row([label("指标顺序"), metricOrder, moveLeft, moveRight]))
 
         let heading = label("各项指标", size: 11); heading.textColor = .secondaryLabelColor; root.addArrangedSubview(heading)
         for (index, metric) in MenuBarMetric.allCases.enumerated() where metric != .network {
@@ -151,6 +165,21 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         var preferences = state.menuBarPreferences
         preferences.networkIcon = (networkIcon.selectedItem?.representedObject as? String).flatMap(MenuBarNetworkIcon.init(rawValue:)) ?? .dots
         preferences.networkUnits = networkUnits.state == .on; preferences.networkColor = networkColor.state == .on; preferences.networkDownloadFirst = networkOrder.state == .on
+        state.menuBarPreferences = preferences
+    }
+    @objc private func changeRefresh() {
+        let values = [1.0, 2.0, 5.0, 10.0]
+        guard values.indices.contains(refreshInterval.indexOfSelectedItem) else { return }
+        state.backgroundInterval = values[refreshInterval.indexOfSelectedItem]
+    }
+    @objc private func moveMetric(_ sender: NSButton) {
+        guard MenuBarMetric.allCases.indices.contains(metricOrder.indexOfSelectedItem) else { return }
+        let metric = MenuBarMetric.allCases[metricOrder.indexOfSelectedItem]
+        var preferences = state.menuBarPreferences
+        guard let index = preferences.order.firstIndex(of: metric) else { return }
+        let destination = index + (sender === moveLeft ? -1 : 1)
+        guard preferences.order.indices.contains(destination) else { return }
+        preferences.order.swapAt(index, destination)
         state.menuBarPreferences = preferences
     }
     @objc private func resetPreferences() { state.menuBarPreferences = MenuBarPreferences() }

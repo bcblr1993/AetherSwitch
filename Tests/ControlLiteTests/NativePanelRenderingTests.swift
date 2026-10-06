@@ -55,7 +55,7 @@ final class NativePanelRenderingTests: XCTestCase {
         let option = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSButton }
             .first { $0.accessibilityLabel() == "零亮度时关闭外屏背光" })
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network"] {
+            for tab in ["overview", "cpu", "gpu", "ram", "disk", "network", "battery"] {
                 state.selectedTab = tab
                 window.setContentSize(controller.preferredContentSize)
                 _ = render(window, appearance: appearance)

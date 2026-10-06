@@ -265,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func runAcceptanceCycle(at index: Int) {
         let sequence = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_TABS"]?
             .split(separator: ",").map(String.init)
-            ?? ["overview", "cpu", "gpu", "ram", "disk", "network", "overview"]
+            ?? ["overview", "cpu", "gpu", "ram", "disk", "network", "battery", "overview"]
         guard index < sequence.count else {
             if ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_CLOSE_AFTER_CYCLE"] == "1" {
                 popover?.performClose(nil)
