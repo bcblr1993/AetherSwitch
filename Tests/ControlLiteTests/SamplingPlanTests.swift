@@ -43,4 +43,20 @@ final class SamplingPlanTests: XCTestCase {
         XCTAssertEqual(first.netDownloadBytesSec, 0)
         XCTAssertEqual(first.netUploadBytesSec, 0)
     }
+    @MainActor
+    func testMenuBarInvalidatesOnlyRenderedChangesIncludingColorBoundary() {
+        let preferences = MenuBarPreferences()
+        func key(_ metrics: SystemMetrics) -> [String] {
+            MenuBarStatusView.renderingKey(metrics, visible: [.cpu], preferences: preferences)
+        }
+        var metrics = SystemMetrics(); metrics.cpuUsage = 60.1
+        let original = key(metrics)
+        metrics.cpuUsage = 60.2; metrics.ramPercent = 80
+        XCTAssertEqual(key(metrics), original, "Same rounded value and color should reuse the drawing")
+        metrics.cpuUsage = 60
+        XCTAssertNotEqual(key(metrics), original, "Crossing utilization color boundaries must redraw")
+        let boundary = key(metrics)
+        metrics.cpuUsage = 61
+        XCTAssertNotEqual(key(metrics), boundary, "A changed displayed value must redraw")
+    }
 }

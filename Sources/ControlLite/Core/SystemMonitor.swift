@@ -174,6 +174,8 @@ public final class SystemMonitor: @unchecked Sendable {
     private var gpuModel: String?
     private let processes = ProcessSampler()
     private let hardware = HardwareDetails()
+    private var capacityTimestamp = -Double.infinity
+    private var cachedCapacity: (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double)?
     private let disks = DiskDetails()
     private let networkMonitor = NetworkMonitor()
     private let batteryMonitor = BatteryMonitor()
@@ -226,6 +228,7 @@ public final class SystemMonitor: @unchecked Sendable {
     /// Sleep excludes time from systemUptime; wake must not divide sleep traffic by an awake interval.
     func resetSamplingBaselines() {
         sampleLock.lock(); defer { sampleLock.unlock() }
+        capacityTimestamp = -Double.infinity
         previousAggregateTicks = nil
         lastAggregateCPU = CPUDetail(idle: 100)
         resetCPUDetails()
@@ -651,6 +654,8 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - 磁盘容量采样
 
     private func fetchDisk() -> (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if let cachedCapacity, now - capacityTimestamp < 30 { return cachedCapacity }
         var stat = statfs()
         guard statfs("/", &stat) == 0 else { return (0, 0, 0, 0) }
         let totalBytes = Double(stat.f_blocks) * Double(stat.f_bsize)
@@ -658,12 +663,14 @@ public final class SystemMonitor: @unchecked Sendable {
         let usedBytes = max(0, totalBytes - freeBytes)
         let percent = totalBytes > 0 ? Int((usedBytes / totalBytes) * 100) : 0
 
-        return (
+        let result = (
             usedBytes / 1_073_741_824.0,
             totalBytes / 1_073_741_824.0,
             min(100, max(0, percent)),
             freeBytes / 1_073_741_824.0
         )
+        cachedCapacity = result; capacityTimestamp = now
+        return result
     }
 
     // MARK: - Uptime & Load Average

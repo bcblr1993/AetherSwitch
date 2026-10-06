@@ -349,17 +349,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 button.image = nil
             }
             // 宽度随面板中打开的指标列变化。
-            let width = MenuBarStatusView.width(for: visible, preferences: preferences, height: button.bounds.height)
-            if statusItem.length != width { statusItem.length = width }
             let display = menuBarStatusView ?? MenuBarStatusView(frame: button.bounds)
+            display.visible = visible
+            display.preferences = preferences
+            let width = display.requiredWidth(height: button.bounds.height)
+            if statusItem.length != width { statusItem.length = width }
             if display.superview == nil {
                 display.autoresizingMask = [.width, .height]
                 button.addSubview(display)
             }
             menuBarStatusView = display
             if styleChanged { display.frame = button.bounds }
-            display.visible = visible
-            display.preferences = preferences
             display.metrics = m
         case .compact:
             menuBarStatusView?.removeFromSuperview()
