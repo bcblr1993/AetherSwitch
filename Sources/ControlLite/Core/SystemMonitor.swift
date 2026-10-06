@@ -223,6 +223,18 @@ public final class SystemMonitor: @unchecked Sendable {
         }
     }
 
+    /// Sleep excludes time from systemUptime; wake must not divide sleep traffic by an awake interval.
+    func resetSamplingBaselines() {
+        sampleLock.lock(); defer { sampleLock.unlock() }
+        previousAggregateTicks = nil
+        lastAggregateCPU = CPUDetail(idle: 100)
+        resetCPUDetails()
+        networkMonitor.pause()
+        disks.reset()
+        processes.reset()
+        hardware.reset()
+    }
+
     // MARK: - 采样分流
 
     public func sample(fullMetrics: Bool = true, activeTab: String = "overview", includeProcesses: Bool = false, visibleMetrics: Set<MenuBarMetric> = Set(MenuBarMetric.allCases)) -> SystemMetrics {

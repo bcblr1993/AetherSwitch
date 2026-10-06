@@ -32,4 +32,15 @@ final class SamplingPlanTests: XCTestCase {
         preferences.save(to: defaults)
         XCTAssertEqual(MenuBarPreferences.load(from: defaults).order, preferences.order)
     }
+    func testWakeRebuildsCPUAndNetworkBaselines() {
+        let monitor = SystemMonitor.shared
+        _ = monitor.sample(fullMetrics: false)
+        monitor.resetSamplingBaselines()
+        let first = monitor.sample(fullMetrics: false)
+        XCTAssertEqual(first.cpuUsage, 0)
+        XCTAssertEqual(first.cpuIdleUsage, 100)
+        XCTAssertTrue(first.network.pending)
+        XCTAssertEqual(first.netDownloadBytesSec, 0)
+        XCTAssertEqual(first.netUploadBytesSec, 0)
+    }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 public enum MenuBarStyle: String, CaseIterable, Codable {
     case statsColumns = "statsColumns"     // Stats 顶级监控（CPU / GPU / RAM / SSD / 速率）
@@ -106,6 +107,7 @@ public final class AppState: ObservableObject {
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
     private var timer: Timer?
+    private var wakeSubscription: AnyCancellable?
     private let monitor = SystemMonitor.shared
     private let switchMgr = SwitchManager.shared
 
@@ -121,6 +123,13 @@ public final class AppState: ObservableObject {
         self.switches = switchMgr.getCurrentStates()
         if !restoredKeepAwake { switchError = "无法恢复保持常亮，请重新开启。" }
         adjustTimerFrequency()
+        wakeSubscription = NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.monitor.resetSamplingBaselines()
+                    self?.refreshFull()
+                }
+            }
     }
 
     @Published var backgroundInterval: Double = {
