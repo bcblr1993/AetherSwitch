@@ -677,7 +677,17 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - Uptime & Load Average
 
     private func fetchUptime() -> String {
-        let uptimeSec = ProcessInfo.processInfo.systemUptime
+        var boottime = timeval()
+        var size = MemoryLayout<timeval>.size
+        var mib = [CTL_KERN, KERN_BOOTTIME]
+        let uptimeSec: TimeInterval
+        if sysctl(&mib, 2, &boottime, &size, nil, 0) == 0 && boottime.tv_sec > 0 {
+            var now = timeval()
+            gettimeofday(&now, nil)
+            uptimeSec = max(0, Double(now.tv_sec - boottime.tv_sec))
+        } else {
+            uptimeSec = ProcessInfo.processInfo.systemUptime
+        }
         let days = Int(uptimeSec) / 86400
         let hours = (Int(uptimeSec) % 86400) / 3600
         let minutes = (Int(uptimeSec) % 3600) / 60

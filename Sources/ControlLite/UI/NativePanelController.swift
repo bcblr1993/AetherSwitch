@@ -701,7 +701,10 @@ final class NativePanelController: NSViewController {
             guard let self else { return }
             self.brightnessSlider.isEnabled = snapshot.canAdjust
             self.backlightSwitch.isEnabled = snapshot.displays.contains { $0.isControllable && $0.supportsBacklightOff }
-            self.brightnessSlider.doubleValue = snapshot.value
+            let isDragging = NSApp.currentEvent?.type == .leftMouseDragged
+            if !isDragging || abs(self.brightnessSlider.doubleValue - snapshot.value) > 0.05 {
+                self.brightnessSlider.doubleValue = snapshot.value
+            }
             brightnessValue.stringValue = snapshot.canAdjust ? "\(Int((snapshot.value * 100).rounded()))%" : "—"
             let message = snapshot.message
             let messageChanged = brightnessMessage.stringValue != message
