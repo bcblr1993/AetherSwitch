@@ -20,6 +20,10 @@ struct BatterySnapshot: Sendable {
 final class BatteryMonitor {
     private var timestamp = -Double.infinity
     private var cached = BatterySnapshot()
+    func reset() {
+        timestamp = -Double.infinity
+        cached = BatterySnapshot()
+    }
     func sample() -> BatterySnapshot {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - timestamp >= 30 else { return cached }

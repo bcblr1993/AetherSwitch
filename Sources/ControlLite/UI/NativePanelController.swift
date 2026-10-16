@@ -1,6 +1,7 @@
 import AppKit
 import CoreText
 import Combine
+import SystemConfiguration
 
 /// 面板内速率统一为"数值 + 空格 + 单位"。
 private func formatRate(_ bytes: Double) -> String {
@@ -950,6 +951,20 @@ final class NativePanelController: NSViewController {
         SystemMonitor.shared.selectNetwork(interface: networkOptions[sender.indexOfSelectedItem])
         state.refreshFull()
     }
+    private static func formatInterfaceTitle(_ bsd: String) -> String {
+        if bsd == "auto" { return "自动 · 当前主接口" }
+        if let list = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] {
+            for iface in list {
+                if let name = SCNetworkInterfaceGetBSDName(iface) as String?, name == bsd,
+                   let localized = SCNetworkInterfaceGetLocalizedDisplayName(iface) as String? {
+                    return "\(localized) (\(bsd))"
+                }
+            }
+        }
+        if bsd.hasPrefix("utun") { return "VPN / 隧道 (\(bsd))" }
+        return bsd
+    }
+
     private func updateNetworkSelector(_ metrics: SystemMetrics) {
         guard state.selectedTab == "network", let selector = networkSelector else { return }
         var options = ["auto"] + metrics.network.interfaces
@@ -957,7 +972,7 @@ final class NativePanelController: NSViewController {
         if networkOptions != options || selector.numberOfItems == 0 {
             networkOptions = options
             selector.removeAllItems()
-            selector.addItems(withTitles: options.map { $0 == "auto" ? "自动 · 当前主接口" : $0 })
+            selector.addItems(withTitles: options.map(Self.formatInterfaceTitle))
         }
         if let index = options.firstIndex(of: metrics.network.selection) { selector.selectItem(at: index) }
     }

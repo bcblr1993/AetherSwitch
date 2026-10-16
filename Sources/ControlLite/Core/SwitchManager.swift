@@ -169,6 +169,9 @@ public final class SwitchManager: @unchecked Sendable {
         let killTask = Process()
         killTask.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         killTask.arguments = ["Finder"]
-        try? killTask.run()
+        do {
+            try killTask.run()
+            killTask.waitUntilExit()
+        } catch {}
     }
 }

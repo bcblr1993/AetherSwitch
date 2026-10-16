@@ -236,6 +236,7 @@ public final class SystemMonitor: @unchecked Sendable {
         disks.reset()
         processes.reset()
         hardware.reset()
+        batteryMonitor.reset()
     }
 
     // MARK: - 采样分流

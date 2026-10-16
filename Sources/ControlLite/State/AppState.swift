@@ -233,7 +233,9 @@ public final class AppState: ObservableObject {
         switchError = nil
         switchRevision &+= 1
         Task {
-            let isDark = switchMgr.toggleDarkMode()
+            let isDark = await Task.detached(priority: .userInitiated) {
+                SwitchManager.shared.toggleDarkMode()
+            }.value
             self.switches.isDarkModeActive = isDark
             switchRevision &+= 1
             pendingSwitches.remove(3)
