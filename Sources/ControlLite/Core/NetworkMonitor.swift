@@ -34,6 +34,8 @@ final class NetworkMonitor {
     private var uploaded: UInt64 = 0
     private var detailsTimestamp = -Double.infinity
     private var wifiDetails: (name: String?, rate: Double?, rssi: Int?) = (nil, nil, nil)
+    private var cachedPrimary = ""
+    private var primaryTimestamp = -Double.infinity
 
     func select(_ interface: String) {
         guard selection != interface else { return }
@@ -41,6 +43,7 @@ final class NetworkMonitor {
         UserDefaults.standard.set(interface, forKey: "networkInterface")
         active = ""; previous = nil; timestamp = 0
         downloaded = 0; uploaded = 0
+        cachedPrimary = ""; primaryTimestamp = -Double.infinity
     }
     func pause() { previous = nil; timestamp = 0 }
 
@@ -88,17 +91,40 @@ final class NetworkMonitor {
                 if inet_ntop(AF_INET, &ipCopy, &buffer, socklen_t(buffer.count)) != nil {
                     addresses[name] = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
                 }
+            } else if address.pointee.sa_family == UInt8(AF_INET6) && addresses[name] == nil {
+                let ip6 = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_addr
+                var ip6Copy = ip6
+                var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+                if inet_ntop(AF_INET6, &ip6Copy, &buffer, socklen_t(buffer.count)) != nil {
+                    let addrStr = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                    if !addrStr.hasPrefix("fe80:") || addresses[name] == nil {
+                        addresses[name] = addrStr
+                    }
+                }
             }
         }
         result.interfaces = counters.keys.filter { $0.hasPrefix("en") || $0.hasPrefix("utun") || $0.hasPrefix("ppp") }.sorted()
-        let global = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
-        let primary = global?["PrimaryInterface"] as? String
-        let selected = selection == "auto" ? primary ?? result.interfaces.first(where: { $0.hasPrefix("en") }) ?? "" : selection
+        let now = ProcessInfo.processInfo.systemUptime
+        let primary: String
+        if now - primaryTimestamp < 3.0, !cachedPrimary.isEmpty {
+            primary = cachedPrimary
+        } else {
+            let globalV4 = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
+            let p4 = globalV4?["PrimaryInterface"] as? String
+            if let p4, !p4.isEmpty {
+                primary = p4
+            } else {
+                let globalV6 = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv6" as CFString) as? [String: Any]
+                primary = globalV6?["PrimaryInterface"] as? String ?? ""
+            }
+            cachedPrimary = primary
+            primaryTimestamp = now
+        }
+        let selected = selection == "auto" ? (!primary.isEmpty ? primary : result.interfaces.first(where: { $0.hasPrefix("en") }) ?? "") : selection
         result.interface = selected.isEmpty ? "不可用" : selected
         result.address = addresses[selected] ?? "不可用"
         guard let counter = counters[selected] else { pause(); return result }
         result.available = true
-        let now = ProcessInfo.processInfo.systemUptime
         if selected != active {
             active = selected; previous = nil; downloaded = 0; uploaded = 0
             detailsTimestamp = -Double.infinity; wifiDetails = (nil, nil, nil)

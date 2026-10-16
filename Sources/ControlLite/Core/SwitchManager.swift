@@ -171,7 +171,13 @@ public final class SwitchManager: @unchecked Sendable {
         killTask.arguments = ["Finder"]
         do {
             try killTask.run()
-            killTask.waitUntilExit()
+            let deadline = ProcessInfo.processInfo.systemUptime + 3.0
+            while killTask.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if killTask.isRunning {
+                killTask.terminate()
+            }
         } catch {}
     }
 }

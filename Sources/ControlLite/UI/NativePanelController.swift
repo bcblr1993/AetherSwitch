@@ -492,7 +492,7 @@ private final class DetailRowsView: DashboardCardView {
         ]
         default: return [
             ("当前接口", metrics.network.interface),
-            ("IPv4 地址", metrics.network.address),
+            ("IP 地址", metrics.network.address),
             ("Wi-Fi 名称", metrics.network.wifiName ?? "不可用"),
             ("协商速率", metrics.network.wifiTransmitMbps.map { String(format: "%.0f Mbps", $0) } ?? "不可用"),
             ("信号强度", metrics.network.wifiRSSI.map { "\($0) dBm" } ?? "不可用"),
