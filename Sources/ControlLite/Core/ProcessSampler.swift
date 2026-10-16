@@ -68,9 +68,10 @@ final class ProcessSampler {
         var pids = [Int32](repeating: 0, count: Int(capacity))
         let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
         guard count > 0 else { reset(); return Result() }
+        let numPids = Int(count) / MemoryLayout<Int32>.stride
         var counters: [Counter] = []
-        counters.reserveCapacity(Int(count))
-        for pid in pids.prefix(min(Int(count), pids.count)) where pid > 0 {
+        counters.reserveCapacity(numPids)
+        for pid in pids.prefix(min(numPids, pids.count)) where pid > 0 {
             var usage = rusage_info_v2()
             let result = withUnsafeMutablePointer(to: &usage) {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }

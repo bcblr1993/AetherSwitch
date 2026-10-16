@@ -45,8 +45,25 @@ final class NetworkMonitor {
     func pause() { previous = nil; timestamp = 0 }
 
     static func delta(_ current: NetworkCounter, previous: NetworkCounter) -> NetworkCounter? {
-        guard current.received >= previous.received, current.sent >= previous.sent else { return nil }
-        return NetworkCounter(received: current.received - previous.received, sent: current.sent - previous.sent)
+        let max32 = UInt64(UInt32.max)
+        let wrapThreshold = max32 - 1_073_741_824
+
+        func calculateDelta(current: UInt64, previous: UInt64) -> UInt64? {
+            if current >= previous {
+                return current - previous
+            }
+            if previous >= wrapThreshold && current <= 1_073_741_824 {
+                return (max32 - previous) + current + 1
+            }
+            return nil
+        }
+
+        guard let deltaReceived = calculateDelta(current: current.received, previous: previous.received),
+              let deltaSent = calculateDelta(current: current.sent, previous: previous.sent) else {
+            return nil
+        }
+        guard deltaReceived < 10_000_000_000, deltaSent < 10_000_000_000 else { return nil }
+        return NetworkCounter(received: deltaReceived, sent: deltaSent)
     }
 
     func sample(detailed: Bool = false) -> NetworkSnapshot {

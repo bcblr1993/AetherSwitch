@@ -182,6 +182,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
+        let switchNotifications: [(String, @MainActor () -> Void)] = [
+            ("com.aethernative.aetherswitch.toggleKeepAwake", { AppState.shared.toggleKeepAwake() }),
+            ("com.aethernative.aetherswitch.toggleHideDesktop", { AppState.shared.toggleHideDesktop() }),
+            ("com.aethernative.aetherswitch.toggleHiddenFiles", { AppState.shared.toggleHiddenFiles() }),
+            ("com.aethernative.aetherswitch.toggleDarkMode", { AppState.shared.toggleDarkMode() })
+        ]
+        for (name, action) in switchNotifications {
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name(name),
+                object: nil,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in action() }
+            }
+        }
+
         for suffix in ["", ".\(getpid())"] {
             DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.aethernative.aetherswitch.reportStatus\(suffix)"), object: nil, queue: .main) { _ in
                 Task { @MainActor in
@@ -322,7 +338,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        BrightnessManager.shared.stopObservingSystemBrightness()
         BrightnessManager.shared.stopObservingSystemBrightness()
         DisplayBacklightControl.shared.shutdownAndRestore()
         DisplayGammaBlackout.shared.shutdownAndRestore()

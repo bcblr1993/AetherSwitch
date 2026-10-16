@@ -50,7 +50,6 @@ private class DashboardCardView: NSView {
         needsDisplay = true
     }
     override func draw(_ dirtyRect: NSRect) {
-        defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         guard drawsCard else { return }
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
@@ -103,7 +102,6 @@ private final class DashboardMetricView: DashboardCardView {
     init(kind: Int, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
-        defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         super.draw(dirtyRect)
         let unavailable = kind == 1 && !metrics.gpuAvailable
@@ -131,7 +129,6 @@ private final class DashboardNetworkView: DashboardCardView {
     init(metrics: SystemMetrics) { self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
-        defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         super.draw(dirtyRect)
         let half = bounds.width / 2
@@ -175,7 +172,6 @@ private final class DashboardSwitchView: DashboardCardView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
-        defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         super.draw(dirtyRect)
         let badge = NSRect(x: 10, y: (bounds.height - 26) / 2, width: 26, height: 26)
@@ -220,7 +216,6 @@ private final class DetailVisualView: DashboardCardView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func draw(_ dirtyRect: NSRect) {
-        defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         super.draw(dirtyRect)
         let width = bounds.width
@@ -508,7 +503,6 @@ private final class DetailRowsView: DashboardCardView {
         }
     }
     override func draw(_ dirtyRect: NSRect) {
-        defer { malloc_zone_pressure_relief(nil, 0) }
         autoreleasepool {
         text("详细信息", in: NSRect(x: 2, y: 0, width: bounds.width - 4, height: 15), font: Palette.captionStrong, color: .secondaryLabelColor)
         Palette.cardStroke.setStroke()
