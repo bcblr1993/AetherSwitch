@@ -84,14 +84,14 @@ final class NetworkMonitor {
             if address.pointee.sa_family == UInt8(AF_LINK), let data = item.ifa_data {
                 let info = data.assumingMemoryBound(to: if_data.self).pointee
                 counters[name] = NetworkCounter(received: UInt64(info.ifi_ibytes), sent: UInt64(info.ifi_obytes))
-            } else if address.pointee.sa_family == UInt8(AF_INET) {
+            } else if detailed && address.pointee.sa_family == UInt8(AF_INET) {
                 let ip = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr
                 var ipCopy = ip
                 var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
                 if inet_ntop(AF_INET, &ipCopy, &buffer, socklen_t(buffer.count)) != nil {
                     addresses[name] = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
                 }
-            } else if address.pointee.sa_family == UInt8(AF_INET6) && addresses[name] == nil {
+            } else if detailed && address.pointee.sa_family == UInt8(AF_INET6) && addresses[name] == nil {
                 let ip6 = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_addr
                 var ip6Copy = ip6
                 var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
