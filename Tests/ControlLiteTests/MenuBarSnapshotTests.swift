@@ -77,6 +77,27 @@ final class MenuBarSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testIncrementalRasterMatchesFreshDrawing() throws {
+        for dark in [false, true] {
+            var before = SystemMetrics(); before.cpuUsage = 88; before.ramPercent = 72
+            before.netUploadBytesSec = 24 * 1024; before.netDownloadBytesSec = 83 * 1024
+            var after = before; after.cpuUsage = 9; after.netDownloadBytesSec = 2 * 1024
+            func render(previous: SystemMetrics?) throws -> Data {
+                let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: MenuBarStatusView.width(for: [.cpu, .ram, .network]), height: 24))
+                view.visible = [.cpu, .ram, .network]
+                view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                view.wantsLayer = true
+                if let previous { view.metrics = previous; view.updateLayer() }
+                view.metrics = after; view.updateLayer()
+                let contents = try XCTUnwrap(view.layer?.contents)
+                let image = contents as! CGImage
+                return try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            }
+            XCTAssertEqual(try render(previous: before), try render(previous: nil), "Changed columns must clear old text without disturbing unchanged columns")
+        }
+    }
+
+    @MainActor
     private func snapshot(_ view: NSView, name: String, dark: Bool) throws {
         let appearance = try XCTUnwrap(NSAppearance(named: dark ? .darkAqua : .aqua))
         let canvas = MenuBarSnapshotBackground(frame: view.frame)

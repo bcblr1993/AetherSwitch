@@ -4,28 +4,53 @@ import AppKit
 final class MenuBarStatusView: NSView {
     // 与详情卡片相同：直接生成 CPU 位图，避免 AppKit 的显示列表重复栅格化文字。
     private var rasterizingLayer = false
+    private var rasterColumns: Set<MenuBarMetric>?
+    private var dirtyColumns = Set<MenuBarMetric>()
+    private var rasterCache: (width: Int, height: Int, scale: CGFloat, context: CGContext)?
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() {
         guard let layer else { return }
         let scale = window?.backingScaleFactor ?? 2
         let width = Int(ceil(bounds.width * scale)), height = Int(ceil(bounds.height * scale))
-        guard width > 0, height > 0,
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
-        else { layer.contents = nil; return }
-        context.scaleBy(x: scale, y: scale)
+        guard width > 0, height > 0 else { layer.contents = nil; return }
+        let context: CGContext
+        let full: Bool
+        if let cache = rasterCache, cache.width == width, cache.height == height, cache.scale == scale {
+            context = cache.context
+            full = dirtyColumns.isEmpty
+        } else {
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let bitmap = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: space, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
+            else { layer.contents = nil; return }
+            bitmap.scaleBy(x: scale, y: scale)
+            rasterCache = (width, height, scale, bitmap)
+            context = bitmap
+            full = true
+        }
+        rasterColumns = full ? nil : dirtyColumns
+        if full { context.clear(bounds) }
+        else {
+            for (metric, x, columnWidth) in frames(height: bounds.height) where dirtyColumns.contains(metric) {
+                context.clear(NSRect(x: x, y: 0, width: columnWidth, height: bounds.height))
+            }
+        }
+        context.saveGState()
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
         rasterizingLayer = true
         effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
         rasterizingLayer = false
+        rasterColumns = nil
+        dirtyColumns.removeAll(keepingCapacity: true)
+        context.restoreGState()
         NSGraphicsContext.restoreGraphicsState()
         layer.contentsScale = scale
         layer.contents = context.makeImage()
     }
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        rasterCache = nil
         needsDisplay = true
     }
     static let padding: CGFloat = 2
@@ -40,20 +65,21 @@ final class MenuBarStatusView: NSView {
                 let old = Self.percent(for: metric, metrics: oldValue).map { $0.rounded() >= 100 } ?? false
                 let new = Self.percent(for: metric, metrics: metrics).map { $0.rounded() >= 100 } ?? false
                 return old != new
-            }) { needsDisplay = true; return }
+            }) { rasterCache = nil; needsDisplay = true; return }
             var offset = 0
             for (metric, x, width) in frames(height: bounds.height) {
                 let count = metric == .network ? 4 : 2
                 let range = offset..<(offset + count)
                 if previous[range] != current[range] {
+                    dirtyColumns.insert(metric)
                     setNeedsDisplay(NSRect(x: x, y: 0, width: width, height: bounds.height))
                 }
                 offset += count
             }
         }
     }
-    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
-    var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { needsDisplay = true } } }
+    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { rasterCache = nil; needsDisplay = true } } }
+    var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { rasterCache = nil; needsDisplay = true } } }
 
     private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, threeDigits: Set<MenuBarMetric>, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
     private func frames(height: CGFloat) -> [(MenuBarMetric, CGFloat, CGFloat)] {
@@ -170,7 +196,7 @@ final class MenuBarStatusView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); rasterCache = nil; needsDisplay = true }
 
     private func text(_ value: String, rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor, alignment: MenuBarAlignment = .left) {
         let style = Self.textStyles[alignment]!
@@ -185,7 +211,9 @@ final class MenuBarStatusView: NSView {
                 return
             }
             for (metric, x, width) in frames {
-                guard rasterizingLayer || needsToDraw(NSRect(x: x, y: 0, width: width, height: bounds.height)) else { continue }
+                if rasterizingLayer {
+                    if let rasterColumns, !rasterColumns.contains(metric) { continue }
+                } else if !needsToDraw(NSRect(x: x, y: 0, width: width, height: bounds.height)) { continue }
                 if metric == .network { drawNetwork(x: x, width: width); continue }
                 let widget = preferences[metric]
                 let percent = Self.percent(for: metric, metrics: metrics)
