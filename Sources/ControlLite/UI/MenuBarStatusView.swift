@@ -16,8 +16,10 @@ final class MenuBarStatusView: NSView {
         let context: CGContext
         let full: Bool
         if let cache = rasterCache, cache.width == width, cache.height == height, cache.scale == scale {
+            // AppKit 可在布局 / 合成阶段重复请求更新；内容未变时沿用已提交的位图。
+            guard !dirtyColumns.isEmpty else { return }
             context = cache.context
-            full = dirtyColumns.isEmpty
+            full = false
         } else {
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
                   let bitmap = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
