@@ -61,11 +61,31 @@ final class MenuBarPreferencesTests: XCTestCase {
     }
 
     @MainActor
+    func testCPUAndMemoryUseCompactStableWidthsAndExpandFor100Percent() {
+        let visible: Set<MenuBarMetric> = [.cpu, .ram]
+        var metrics = SystemMetrics(); metrics.cpuUsage = 25; metrics.ramPercent = 72
+        let view = MenuBarStatusView(); view.visible = visible; view.metrics = metrics
+        let compact = view.requiredWidth(height: 24)
+        XCTAssertLessThan(compact, MenuBarStatusView.width(for: visible))
+        metrics.cpuUsage = 9; metrics.ramPercent = 99; view.metrics = metrics
+        XCTAssertEqual(view.requiredWidth(height: 24), compact, "Reserve two digits without sampling jitter")
+        metrics.cpuUsage = 99.6; metrics.ramPercent = 100; view.metrics = metrics
+        let expanded = view.requiredWidth(height: 24)
+        XCTAssertGreaterThan(expanded, compact, "Rounded 100% must fit without clipping")
+        XCTAssertEqual(expanded, MenuBarStatusView.width(for: visible))
+        metrics.cpuUsage = 25; metrics.ramPercent = 72; view.metrics = metrics
+        XCTAssertEqual(view.requiredWidth(height: 24), compact, "Cached layout must shrink again")
+        view.visible = [.cpu]
+        XCTAssertLessThan(view.requiredWidth(height: 24), compact)
+    }
+
+    @MainActor
     func testSettingsControlsApplyImmediatelyAndWindowFits() throws {
         let state = AppState.shared
         let original = state.menuBarPreferences, visible = state.menuBarMetrics
         defer { state.menuBarPreferences = original; state.menuBarMetrics = visible }
         let controller = MenuBarSettingsController()
+        defer { controller.close() }
         let content = try XCTUnwrap(controller.window?.contentView)
         content.layoutSubtreeIfNeeded()
         func controls(_ view: NSView) -> [NSControl] { ((view as? NSControl).map { [$0] } ?? []) + view.subviews.flatMap { controls($0) } }
@@ -81,6 +101,17 @@ final class MenuBarPreferencesTests: XCTestCase {
         let toggle = try XCTUnwrap(all.first { $0.accessibilityLabel() == "在菜单栏显示CPU" } as? NSSwitch)
         toggle.state = .off; _ = toggle.target?.perform(toggle.action, with: toggle)
         XCTAssertFalse(state.menuBarMetrics.contains(.cpu))
+        let network = try XCTUnwrap(all.first { $0.accessibilityLabel() == "在菜单栏显示网络" } as? NSSwitch)
+        for shown in [false, true] {
+            network.state = shown ? .on : .off
+            _ = network.target?.perform(network.action, with: network)
+            XCTAssertEqual(state.menuBarMetrics.contains(.network), shown)
+            XCTAssertEqual(MenuBarMetric.decode(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)).contains(.network), shown)
+        }
+        state.setMenuBarMetric(.network, visible: false)
+        XCTAssertEqual(network.state, .off, "Changes from the detail page must update settings")
+        state.setMenuBarMetric(.network, visible: true)
+        XCTAssertEqual(network.state, .on)
         for control in all where !control.isHidden {
             let frame = control.convert(control.bounds, to: content)
             XCTAssertGreaterThanOrEqual(frame.minY, 4, control.accessibilityLabel() ?? control.description)

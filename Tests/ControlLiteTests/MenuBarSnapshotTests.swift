@@ -15,16 +15,18 @@ final class MenuBarSnapshotTests: XCTestCase {
         metrics.netUploadBytesSec = 24 * 1024
         metrics.netDownloadBytesSec = 83 * 1024
         let configurations: [(String, Set<MenuBarMetric>)] = [
-            ("all", Set(MenuBarMetric.allCases)), ("partial", [.cpu, .ram, .network]), ("none", [])
+            ("all", Set(MenuBarMetric.allCases)), ("partial", [.cpu, .ram, .network]), ("cpu-ram", [.cpu, .ram]), ("cpu-ram-max", [.cpu, .ram]), ("none", [])
         ]
         for dark in [false, true] {
             let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             for (name, visible) in configurations {
-                let width = MenuBarStatusView.width(for: visible)
+                var readings = metrics
+                if name == "cpu-ram-max" { readings.cpuUsage = 100; readings.ramPercent = 100 }
+                let width = MenuBarStatusView.width(for: visible, metrics: readings)
                 let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: width, height: 24))
                 view.appearance = appearance
                 view.visible = visible
-                view.metrics = metrics
+                view.metrics = readings
                 let canvas = NSView(frame: view.frame)
                 canvas.appearance = appearance
                 canvas.wantsLayer = true
@@ -55,12 +57,13 @@ final class MenuBarSnapshotTests: XCTestCase {
             for widget in MenuBarWidget.allCases {
                 var preferences = MenuBarPreferences()
                 for metric in MenuBarMetric.allCases where metric != .network { preferences[metric].widget = widget }
-                let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: MenuBarStatusView.width(for: state.menuBarMetrics, preferences: preferences), height: 24))
+                let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: MenuBarStatusView.width(for: state.menuBarMetrics, preferences: preferences, metrics: metrics), height: 24))
                 view.metrics = metrics; view.preferences = preferences
                 try snapshot(view, name: "\(widget.rawValue)-\(dark ? "dark" : "light")", dark: dark)
             }
             state.menuBarPreferences = MenuBarPreferences()
             let settings = MenuBarSettingsController()
+            defer { settings.close() }
             try snapshot(try XCTUnwrap(settings.window?.contentView), name: "settings-\(dark ? "dark" : "light")", dark: dark)
         }
     }

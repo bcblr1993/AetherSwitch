@@ -367,6 +367,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let display = menuBarStatusView ?? MenuBarStatusView(frame: button.bounds)
             display.visible = visible
             display.preferences = preferences
+            display.metrics = m
             let width = display.requiredWidth(height: button.bounds.height)
             if statusItem.length != width { statusItem.length = width }
             if display.superview == nil {
@@ -374,8 +375,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 button.addSubview(display)
             }
             menuBarStatusView = display
-            if styleChanged { display.frame = button.bounds }
-            display.metrics = m
+            let frame = NSRect(x: 0, y: 0, width: width, height: button.bounds.height)
+            if display.frame != frame { display.frame = frame }
         case .compact:
             menuBarStatusView?.removeFromSuperview()
             button.title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"

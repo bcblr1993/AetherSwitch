@@ -12,11 +12,12 @@ final class MenuBarStatusView: NSView {
     var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
     var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { needsDisplay = true } } }
 
-    private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
+    private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, threeDigits: Set<MenuBarMetric>, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
     private func frames(height: CGFloat) -> [(MenuBarMetric, CGFloat, CGFloat)] {
-        if let cachedLayout, cachedLayout.visible == visible, cachedLayout.preferences == preferences, cachedLayout.height == height { return cachedLayout.frames }
-        let frames = Self.layout(for: visible, preferences: preferences, height: height)
-        cachedLayout = (visible, preferences, height, frames)
+        let threeDigits = Set(visible.filter { preferences[$0].widget == .mini && (Self.percent(for: $0, metrics: metrics).map { $0.rounded() >= 100 } ?? false) })
+        if let cachedLayout, cachedLayout.threeDigits == threeDigits, cachedLayout.visible == visible, cachedLayout.preferences == preferences, cachedLayout.height == height { return cachedLayout.frames }
+        let frames = Self.layout(for: visible, preferences: preferences, height: height, metrics: metrics)
+        cachedLayout = (visible, preferences, height, threeDigits, frames)
         return frames
     }
     func requiredWidth(height: CGFloat) -> CGFloat {
@@ -55,7 +56,7 @@ final class MenuBarStatusView: NSView {
         return font
     }
 
-    static func widgetWidth(_ metric: MenuBarMetric, preferences: MenuBarPreferences, height: CGFloat) -> CGFloat {
+    static func widgetWidth(_ metric: MenuBarMetric, preferences: MenuBarPreferences, height: CGFloat, metrics: SystemMetrics? = nil) -> CGFloat {
         if metric == .network {
             let rateFont = font(size: 9, weight: .light, preferences: preferences)
             let text = preferences.networkUnits ? "1023 KB/s" : "1023"
@@ -66,26 +67,29 @@ final class MenuBarStatusView: NSView {
         switch widget.widget {
         case .mini:
             let font = font(size: widget.label ? 12 : 14, weight: .regular, preferences: preferences)
-            // Stats 的基础宽度；额外保证 100% 在当前系统字体下完整显示。
-            return max(widget.label ? 31 : 36, ceil(("100%" as NSString).size(withAttributes: [.font: font]).width))
+            // 普通读数固定预留两位数，避免每次采样宽度抖动；100% 时才扩展。
+            let threeDigits = metrics.map { Self.percent(for: metric, metrics: $0).map { $0.rounded() >= 100 } ?? false } ?? true
+            let value = threeDigits ? "100%" : "99%"
+            let labelWidth = widget.label ? (metric.title as NSString).size(withAttributes: [.font: Self.font(size: 7, weight: .light, preferences: preferences)]).width : 0
+            return ceil(max(labelWidth, (value as NSString).size(withAttributes: [.font: font]).width))
         case .bar: return 11 + (widget.label ? 8 : 0)
         case .pie: return max(14, height - 4) + (widget.label ? 8 : 0)
         }
     }
 
-    static func layout(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24) -> [(MenuBarMetric, CGFloat, CGFloat)] {
+    static func layout(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24, metrics: SystemMetrics? = nil) -> [(MenuBarMetric, CGFloat, CGFloat)] {
         var x = padding
         var frames: [(MenuBarMetric, CGFloat, CGFloat)] = []
         for metric in preferences.order where visible.contains(metric) {
             if !frames.isEmpty { x += CGFloat(min(12, max(0, preferences.spacing))) }
-            let width = widgetWidth(metric, preferences: preferences, height: height)
+            let width = widgetWidth(metric, preferences: preferences, height: height, metrics: metrics)
             frames.append((metric, x, width)); x += width
         }
         return frames
     }
 
-    static func width(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24) -> CGFloat {
-        guard let last = layout(for: visible, preferences: preferences, height: height).last else { return glyphWidth + padding * 2 }
+    static func width(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24, metrics: SystemMetrics? = nil) -> CGFloat {
+        guard let last = layout(for: visible, preferences: preferences, height: height, metrics: metrics).last else { return glyphWidth + padding * 2 }
         return ceil(last.1 + last.2 + padding)
     }
 

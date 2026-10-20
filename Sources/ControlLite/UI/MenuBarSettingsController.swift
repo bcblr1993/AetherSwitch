@@ -20,6 +20,7 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     private let moveLeft = NSButton(title: "向左", target: nil, action: nil)
     private let moveRight = NSButton(title: "向右", target: nil, action: nil)
     private let font = NSPopUpButton()
+    private let networkVisible = NSSwitch()
     private let networkIcon = NSPopUpButton()
     private let networkUnits = NSButton(checkboxWithTitle: "显示单位", target: nil, action: nil)
     private let networkColor = NSButton(checkboxWithTitle: "数值着色", target: nil, action: nil)
@@ -34,7 +35,7 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         build(window)
         subscriptions.insert(state.$menuBarPreferences.sink { [weak self] preferences in self?.update(preferences) })
         subscriptions.insert(state.$menuBarMetrics.sink { [weak self] visible in self?.preview.visible = visible; self?.layoutPreview() })
-        subscriptions.insert(state.$metrics.sink { [weak self] metrics in self?.preview.metrics = metrics })
+        subscriptions.insert(state.$metrics.sink { [weak self] metrics in self?.preview.metrics = metrics; self?.layoutPreview() })
         window.center()
     }
 
@@ -103,17 +104,22 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
             widgetControls[metric] = [visible, widget, color, title, alignment]
             root.addArrangedSubview(row([name, visible, widget, color, title, alignment]))
         }
-        let network = label("网络图标", size: 11); network.textColor = .secondaryLabelColor; root.addArrangedSubview(network)
+        let network = label("网络", size: 12); network.widthAnchor.constraint(equalToConstant: 35).isActive = true
+        networkVisible.controlSize = .small
+        networkVisible.tag = MenuBarMetric.allCases.firstIndex(of: .network)!
+        networkVisible.target = self; networkVisible.action = #selector(changeVisible)
+        networkVisible.setAccessibilityLabel("在菜单栏显示网络")
         for icon in MenuBarNetworkIcon.allCases { networkIcon.addItem(withTitle: icon.title); networkIcon.lastItem?.representedObject = icon.rawValue }
         networkIcon.controlSize = .small; networkIcon.target = self; networkIcon.action = #selector(changeNetwork)
         networkIcon.setAccessibilityLabel("网络图标")
         for control in [networkUnits, networkColor, networkOrder] { control.controlSize = .small; control.target = self; control.action = #selector(changeNetwork) }
-        root.addArrangedSubview(row([networkIcon, networkUnits, networkColor, networkOrder]))
+        root.addArrangedSubview(row([network, networkVisible, networkIcon, networkUnits, networkColor, networkOrder]))
         let reset = NSButton(title: "恢复默认外观", target: self, action: #selector(resetPreferences)); reset.bezelStyle = .rounded; reset.controlSize = .small
         root.addArrangedSubview(reset)
         subscriptions.insert(state.$menuBarMetrics.sink { [weak self] visible in
             guard let self else { return }
             for (metric, controls) in self.widgetControls { (controls[0] as? NSSwitch)?.state = visible.contains(metric) ? .on : .off }
+            self.networkVisible.state = visible.contains(.network) ? .on : .off
         })
     }
 
@@ -134,7 +140,7 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     }
 
     private func layoutPreview() {
-        let width = MenuBarStatusView.width(for: preview.visible, preferences: preview.preferences)
+        let width = preview.requiredWidth(height: 24)
         preview.frame = NSRect(x: (540 - width) / 2, y: 3, width: width, height: 24)
     }
 
