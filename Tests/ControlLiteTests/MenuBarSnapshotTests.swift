@@ -24,6 +24,7 @@ final class MenuBarSnapshotTests: XCTestCase {
                 if name == "cpu-ram-max" { readings.cpuUsage = 100; readings.ramPercent = 100 }
                 let width = MenuBarStatusView.width(for: visible, metrics: readings)
                 let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+                view.wantsLayer = true
                 view.appearance = appearance
                 view.visible = visible
                 view.metrics = readings
@@ -37,6 +38,13 @@ final class MenuBarSnapshotTests: XCTestCase {
                 window.contentView = canvas
                 canvas.layoutSubtreeIfNeeded()
                 canvas.displayIfNeeded()
+                view.displayIfNeeded()
+                let contents = try XCTUnwrap(view.layer?.contents, "Menu bar must submit a nonempty raster image")
+                guard CFGetTypeID(contents as CFTypeRef) == CGImage.typeID else { XCTFail("Expected a CPU raster image"); return }
+                let layerImage = contents as! CGImage
+                XCTAssertGreaterThan(layerImage.width, 0); XCTAssertGreaterThan(layerImage.height, 0)
+                let layerBitmap = NSBitmapImageRep(cgImage: layerImage)
+                try XCTUnwrap(layerBitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/aetherswitch-menubar-layer-\(name)-\(dark ? "dark" : "light").png"))
                 let bitmap = try XCTUnwrap(canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds))
                 canvas.cacheDisplay(in: canvas.bounds, to: bitmap)
                 let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))

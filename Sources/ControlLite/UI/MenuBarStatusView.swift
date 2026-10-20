@@ -2,6 +2,32 @@ import AppKit
 
 /// 原生同步绘制。字体、Mini 尺寸及 2pt 间距参考 Stats v3.0.20（MIT）。
 final class MenuBarStatusView: NSView {
+    // 与详情卡片相同：直接生成 CPU 位图，避免 AppKit 的显示列表重复栅格化文字。
+    private var rasterizingLayer = false
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        guard let layer else { return }
+        let scale = window?.backingScaleFactor ?? 2
+        let width = Int(ceil(bounds.width * scale)), height = Int(ceil(bounds.height * scale))
+        guard width > 0, height > 0,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
+        else { layer.contents = nil; return }
+        context.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        rasterizingLayer = true
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
+        rasterizingLayer = false
+        NSGraphicsContext.restoreGraphicsState()
+        layer.contentsScale = scale
+        layer.contents = context.makeImage()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        needsDisplay = true
+    }
     static let padding: CGFloat = 2
     static let glyphWidth: CGFloat = 20
     var metrics = SystemMetrics() {
@@ -159,7 +185,7 @@ final class MenuBarStatusView: NSView {
                 return
             }
             for (metric, x, width) in frames {
-                guard needsToDraw(NSRect(x: x, y: 0, width: width, height: bounds.height)) else { continue }
+                guard rasterizingLayer || needsToDraw(NSRect(x: x, y: 0, width: width, height: bounds.height)) else { continue }
                 if metric == .network { drawNetwork(x: x, width: width); continue }
                 let widget = preferences[metric]
                 let percent = Self.percent(for: metric, metrics: metrics)

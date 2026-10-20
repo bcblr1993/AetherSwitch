@@ -371,6 +371,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let width = display.requiredWidth(height: button.bounds.height)
             if statusItem.length != width { statusItem.length = width }
             if display.superview == nil {
+                display.wantsLayer = true
+                display.layerContentsRedrawPolicy = .onSetNeedsDisplay
                 display.autoresizingMask = [.width, .height]
                 button.addSubview(display)
             }
