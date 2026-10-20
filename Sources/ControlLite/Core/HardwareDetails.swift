@@ -58,7 +58,6 @@ private final class ReportChannels {
         self.subgroup = subgroup; self.unit = unit; self.stateName = stateName
         self.count = count; self.residency = residency; self.integer = integer
     }
-    deinit { dlclose(library) }
     func read() -> (items: [CFDictionary], elapsed: Double)? {
         guard let sample = samples(subscription, channels, nil)?.takeRetainedValue() else { previous = nil; return nil }
         let now = ProcessInfo.processInfo.systemUptime

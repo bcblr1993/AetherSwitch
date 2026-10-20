@@ -70,6 +70,12 @@ final class StatsMetricsTests: XCTestCase {
                           ProcessUsageItem(name: "Helper", valueString: "1 MB", pid: 12).id)
     }
 
+    func testDuplicatePIDsDoNotCrashProcessSampler() {
+        let counters = [counter(10, cpu: 100), counter(10, cpu: 200)]
+        let dict = Dictionary(counters.map { ($0.pid, $0) }, uniquingKeysWith: { _, new in new })
+        XCTAssertEqual(dict[10]?.cpuTicks, 200)
+    }
+
     func testLiveNativeProcessSamplingAndBaselineReset() {
         let sampler = ProcessSampler()
         let memory = sampler.sample(.memory)

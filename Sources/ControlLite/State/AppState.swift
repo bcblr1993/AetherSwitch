@@ -155,12 +155,14 @@ public final class AppState: ObservableObject {
     }
 
     private func startTimer(interval: TimeInterval) {
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.tick()
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     private func tick() {
@@ -231,7 +233,9 @@ public final class AppState: ObservableObject {
         switchError = nil
         switchRevision &+= 1
         Task {
-            let isDark = switchMgr.toggleDarkMode()
+            let isDark = await Task.detached(priority: .userInitiated) {
+                SwitchManager.shared.toggleDarkMode()
+            }.value
             self.switches.isDarkModeActive = isDark
             switchRevision &+= 1
             pendingSwitches.remove(3)

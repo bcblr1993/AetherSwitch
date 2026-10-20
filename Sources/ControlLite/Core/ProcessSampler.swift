@@ -63,14 +63,16 @@ final class ProcessSampler {
         if requested != mode { reset(); mode = requested }
         let now = ProcessInfo.processInfo.systemUptime
         if timestamp > 0, now - timestamp < 2 { return cached }
-        let capacity = proc_listallpids(nil, 0) + 128
-        guard capacity > 0 else { return Result() }
-        var pids = [Int32](repeating: 0, count: Int(capacity))
+        let byteCapacity = proc_listallpids(nil, 0)
+        guard byteCapacity > 0 else { return Result() }
+        let pidCapacity = Int(byteCapacity) / MemoryLayout<Int32>.stride + 64
+        var pids = [Int32](repeating: 0, count: pidCapacity)
         let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
         guard count > 0 else { reset(); return Result() }
+        let numPids = Int(count) / MemoryLayout<Int32>.stride
         var counters: [Counter] = []
-        counters.reserveCapacity(Int(count))
-        for pid in pids.prefix(min(Int(count), pids.count)) where pid > 0 {
+        counters.reserveCapacity(numPids)
+        for pid in pids.prefix(min(numPids, pids.count)) where pid > 0 {
             var usage = rusage_info_v2()
             let result = withUnsafeMutablePointer(to: &usage) {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }
@@ -95,7 +97,7 @@ final class ProcessSampler {
             return ProcessUsageItem(name: name, valueString: value,
                 secondaryValueString: requested == .disk ? Self.rateString(item.secondary) : nil, pid: item.pid)
         }
-        previous = Dictionary(uniqueKeysWithValues: counters.map { ($0.pid, $0) })
+        previous = Dictionary(counters.map { ($0.pid, $0) }, uniquingKeysWith: { _, new in new })
         timestamp = now
         cached = Result(items: items, available: !counters.isEmpty && !pending, pending: pending)
         return cached

@@ -15,6 +15,15 @@ final class SamplingPlanTests: XCTestCase {
         XCTAssertNil(NetworkMonitor.delta(.init(received: 10, sent: 20), previous: .init(received: 100, sent: 200)))
         XCTAssertEqual(NetworkMonitor.delta(.init(received: 150, sent: 250), previous: .init(received: 100, sent: 200)), .init(received: 50, sent: 50))
     }
+    func testNetwork32BitWrapAroundCompensation() {
+        let prev = NetworkCounter(received: 4_294_900_000, sent: 4_294_900_000)
+        let curr = NetworkCounter(received: 2_000_000, sent: 2_000_000)
+        let expected = (UInt64(UInt32.max) - 4_294_900_000) + 2_000_000 + 1
+        let delta = NetworkMonitor.delta(curr, previous: prev)
+        XCTAssertNotNil(delta)
+        XCTAssertEqual(delta?.received, expected)
+        XCTAssertEqual(delta?.sent, expected)
+    }
     func testDisabledMetricsDoNotProduceReadings() {
         let m = SystemMonitor.shared.sample(fullMetrics: false, visibleMetrics: [])
         XCTAssertEqual(m.ramTotalGB, 0)

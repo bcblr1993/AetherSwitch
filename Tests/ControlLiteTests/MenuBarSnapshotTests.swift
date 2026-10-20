@@ -15,16 +15,19 @@ final class MenuBarSnapshotTests: XCTestCase {
         metrics.netUploadBytesSec = 24 * 1024
         metrics.netDownloadBytesSec = 83 * 1024
         let configurations: [(String, Set<MenuBarMetric>)] = [
-            ("all", Set(MenuBarMetric.allCases)), ("partial", [.cpu, .ram, .network]), ("none", [])
+            ("all", Set(MenuBarMetric.allCases)), ("partial", [.cpu, .ram, .network]), ("cpu-ram", [.cpu, .ram]), ("cpu-ram-max", [.cpu, .ram]), ("none", [])
         ]
         for dark in [false, true] {
             let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             for (name, visible) in configurations {
-                let width = MenuBarStatusView.width(for: visible)
+                var readings = metrics
+                if name == "cpu-ram-max" { readings.cpuUsage = 100; readings.ramPercent = 100 }
+                let width = MenuBarStatusView.width(for: visible, metrics: readings)
                 let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: width, height: 24))
+                view.wantsLayer = true
                 view.appearance = appearance
                 view.visible = visible
-                view.metrics = metrics
+                view.metrics = readings
                 let canvas = NSView(frame: view.frame)
                 canvas.appearance = appearance
                 canvas.wantsLayer = true
@@ -35,6 +38,13 @@ final class MenuBarSnapshotTests: XCTestCase {
                 window.contentView = canvas
                 canvas.layoutSubtreeIfNeeded()
                 canvas.displayIfNeeded()
+                view.displayIfNeeded()
+                let contents = try XCTUnwrap(view.layer?.contents, "Menu bar must submit a nonempty raster image")
+                guard CFGetTypeID(contents as CFTypeRef) == CGImage.typeID else { XCTFail("Expected a CPU raster image"); return }
+                let layerImage = contents as! CGImage
+                XCTAssertGreaterThan(layerImage.width, 0); XCTAssertGreaterThan(layerImage.height, 0)
+                let layerBitmap = NSBitmapImageRep(cgImage: layerImage)
+                try XCTUnwrap(layerBitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/aetherswitch-menubar-layer-\(name)-\(dark ? "dark" : "light").png"))
                 let bitmap = try XCTUnwrap(canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds))
                 canvas.cacheDisplay(in: canvas.bounds, to: bitmap)
                 let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
@@ -55,13 +65,35 @@ final class MenuBarSnapshotTests: XCTestCase {
             for widget in MenuBarWidget.allCases {
                 var preferences = MenuBarPreferences()
                 for metric in MenuBarMetric.allCases where metric != .network { preferences[metric].widget = widget }
-                let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: MenuBarStatusView.width(for: state.menuBarMetrics, preferences: preferences), height: 24))
+                let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: MenuBarStatusView.width(for: state.menuBarMetrics, preferences: preferences, metrics: metrics), height: 24))
                 view.metrics = metrics; view.preferences = preferences
                 try snapshot(view, name: "\(widget.rawValue)-\(dark ? "dark" : "light")", dark: dark)
             }
             state.menuBarPreferences = MenuBarPreferences()
             let settings = MenuBarSettingsController()
+            defer { settings.close() }
             try snapshot(try XCTUnwrap(settings.window?.contentView), name: "settings-\(dark ? "dark" : "light")", dark: dark)
+        }
+    }
+
+    @MainActor
+    func testIncrementalRasterMatchesFreshDrawing() throws {
+        for dark in [false, true] {
+            var before = SystemMetrics(); before.cpuUsage = 88; before.ramPercent = 72
+            before.netUploadBytesSec = 24 * 1024; before.netDownloadBytesSec = 83 * 1024
+            var after = before; after.cpuUsage = 9; after.netDownloadBytesSec = 2 * 1024
+            func render(previous: SystemMetrics?) throws -> Data {
+                let view = MenuBarStatusView(frame: NSRect(x: 0, y: 0, width: MenuBarStatusView.width(for: [.cpu, .ram, .network]), height: 24))
+                view.visible = [.cpu, .ram, .network]
+                view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                view.wantsLayer = true
+                if let previous { view.metrics = previous; view.updateLayer() }
+                view.metrics = after; view.updateLayer()
+                let contents = try XCTUnwrap(view.layer?.contents)
+                let image = contents as! CGImage
+                return try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+            }
+            XCTAssertEqual(try render(previous: before), try render(previous: nil), "Changed columns must clear old text without disturbing unchanged columns")
         }
     }
 

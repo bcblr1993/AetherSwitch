@@ -2,21 +2,93 @@ import AppKit
 
 /// 原生同步绘制。字体、Mini 尺寸及 2pt 间距参考 Stats v3.0.20（MIT）。
 final class MenuBarStatusView: NSView {
+    // 与详情卡片相同：直接生成 CPU 位图，避免 AppKit 的显示列表重复栅格化文字。
+    private var rasterizingLayer = false
+    private var rasterColumns: Set<MenuBarMetric>?
+    private var dirtyColumns = Set<MenuBarMetric>()
+    private var rasterCache: (width: Int, height: Int, scale: CGFloat, context: CGContext)?
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        guard let layer else { return }
+        let scale = window?.backingScaleFactor ?? 2
+        let width = Int(ceil(bounds.width * scale)), height = Int(ceil(bounds.height * scale))
+        guard width > 0, height > 0 else { layer.contents = nil; return }
+        let context: CGContext
+        let full: Bool
+        if let cache = rasterCache, cache.width == width, cache.height == height, cache.scale == scale {
+            // AppKit 可在布局 / 合成阶段重复请求更新；内容未变时沿用已提交的位图。
+            guard !dirtyColumns.isEmpty else { return }
+            context = cache.context
+            full = false
+        } else {
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let bitmap = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: space, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
+            else { layer.contents = nil; return }
+            bitmap.scaleBy(x: scale, y: scale)
+            rasterCache = (width, height, scale, bitmap)
+            context = bitmap
+            full = true
+        }
+        rasterColumns = full ? nil : dirtyColumns
+        if full { context.clear(bounds) }
+        else {
+            for (metric, x, columnWidth) in frames(height: bounds.height) where dirtyColumns.contains(metric) {
+                context.clear(NSRect(x: x, y: 0, width: columnWidth, height: bounds.height))
+            }
+        }
+        context.saveGState()
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        rasterizingLayer = true
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
+        rasterizingLayer = false
+        rasterColumns = nil
+        dirtyColumns.removeAll(keepingCapacity: true)
+        context.restoreGState()
+        NSGraphicsContext.restoreGraphicsState()
+        layer.contentsScale = scale
+        layer.contents = context.makeImage()
+    }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        rasterCache = nil
+        needsDisplay = true
+    }
     static let padding: CGFloat = 2
     static let glyphWidth: CGFloat = 20
     var metrics = SystemMetrics() {
         didSet {
-            if Self.renderingKey(metrics, visible: visible, preferences: preferences) != Self.renderingKey(oldValue, visible: visible, preferences: preferences) { needsDisplay = true }
+            let previous = Self.renderingKey(oldValue, visible: visible, preferences: preferences)
+            let current = Self.renderingKey(metrics, visible: visible, preferences: preferences)
+            guard previous != current else { return }
+            // 仅使变化的指标列失效，避免网速变化时重绘稳定的 RAM / SSD 数值。
+            if visible.contains(where: { metric in
+                let old = Self.percent(for: metric, metrics: oldValue).map { $0.rounded() >= 100 } ?? false
+                let new = Self.percent(for: metric, metrics: metrics).map { $0.rounded() >= 100 } ?? false
+                return old != new
+            }) { rasterCache = nil; needsDisplay = true; return }
+            var offset = 0
+            for (metric, x, width) in frames(height: bounds.height) {
+                let count = metric == .network ? 4 : 2
+                let range = offset..<(offset + count)
+                if previous[range] != current[range] {
+                    dirtyColumns.insert(metric)
+                    setNeedsDisplay(NSRect(x: x, y: 0, width: width, height: bounds.height))
+                }
+                offset += count
+            }
         }
     }
-    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
-    var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { needsDisplay = true } } }
+    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { rasterCache = nil; needsDisplay = true } } }
+    var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { rasterCache = nil; needsDisplay = true } } }
 
-    private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
+    private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, threeDigits: Set<MenuBarMetric>, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
     private func frames(height: CGFloat) -> [(MenuBarMetric, CGFloat, CGFloat)] {
-        if let cachedLayout, cachedLayout.visible == visible, cachedLayout.preferences == preferences, cachedLayout.height == height { return cachedLayout.frames }
-        let frames = Self.layout(for: visible, preferences: preferences, height: height)
-        cachedLayout = (visible, preferences, height, frames)
+        let threeDigits = Set(visible.filter { preferences[$0].widget == .mini && (Self.percent(for: $0, metrics: metrics).map { $0.rounded() >= 100 } ?? false) })
+        if let cachedLayout, cachedLayout.threeDigits == threeDigits, cachedLayout.visible == visible, cachedLayout.preferences == preferences, cachedLayout.height == height { return cachedLayout.frames }
+        let frames = Self.layout(for: visible, preferences: preferences, height: height, metrics: metrics)
+        cachedLayout = (visible, preferences, height, threeDigits, frames)
         return frames
     }
     func requiredWidth(height: CGFloat) -> CGFloat {
@@ -30,7 +102,7 @@ final class MenuBarStatusView: NSView {
                         String(metrics.netDownloadBytesSec >= 1024), String(metrics.netUploadBytesSec >= 1024)]
             }
             let percent = Self.percent(for: metric, metrics: metrics)
-            let value = percent.map { preferences[metric].widget == .mini ? String(format: "%.0f", $0) : String($0) } ?? "unavailable"
+            let value = percent.map { preferences[metric].widget == .mini ? String(Int($0.rounded(.toNearestOrEven))) : String($0) } ?? "unavailable"
             let color = preferences[metric].color
             let colorKey = color == .pressure ? String(metrics.ramPressureCode ?? -1)
                 : color == .utilization ? String(percent.map { $0 <= 60 ? 0 : $0 <= 80 ? 1 : 2 } ?? -1) : "fixed"
@@ -55,7 +127,7 @@ final class MenuBarStatusView: NSView {
         return font
     }
 
-    static func widgetWidth(_ metric: MenuBarMetric, preferences: MenuBarPreferences, height: CGFloat) -> CGFloat {
+    static func widgetWidth(_ metric: MenuBarMetric, preferences: MenuBarPreferences, height: CGFloat, metrics: SystemMetrics? = nil) -> CGFloat {
         if metric == .network {
             let rateFont = font(size: 9, weight: .light, preferences: preferences)
             let text = preferences.networkUnits ? "1023 KB/s" : "1023"
@@ -66,26 +138,29 @@ final class MenuBarStatusView: NSView {
         switch widget.widget {
         case .mini:
             let font = font(size: widget.label ? 12 : 14, weight: .regular, preferences: preferences)
-            // Stats 的基础宽度；额外保证 100% 在当前系统字体下完整显示。
-            return max(widget.label ? 31 : 36, ceil(("100%" as NSString).size(withAttributes: [.font: font]).width))
+            // 普通读数固定预留两位数，避免每次采样宽度抖动；100% 时才扩展。
+            let threeDigits = metrics.map { Self.percent(for: metric, metrics: $0).map { $0.rounded() >= 100 } ?? false } ?? true
+            let value = threeDigits ? "100%" : "99%"
+            let labelWidth = widget.label ? (metric.title as NSString).size(withAttributes: [.font: Self.font(size: 7, weight: .light, preferences: preferences)]).width : 0
+            return ceil(max(labelWidth, (value as NSString).size(withAttributes: [.font: font]).width))
         case .bar: return 11 + (widget.label ? 8 : 0)
         case .pie: return max(14, height - 4) + (widget.label ? 8 : 0)
         }
     }
 
-    static func layout(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24) -> [(MenuBarMetric, CGFloat, CGFloat)] {
+    static func layout(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24, metrics: SystemMetrics? = nil) -> [(MenuBarMetric, CGFloat, CGFloat)] {
         var x = padding
         var frames: [(MenuBarMetric, CGFloat, CGFloat)] = []
         for metric in preferences.order where visible.contains(metric) {
             if !frames.isEmpty { x += CGFloat(min(12, max(0, preferences.spacing))) }
-            let width = widgetWidth(metric, preferences: preferences, height: height)
+            let width = widgetWidth(metric, preferences: preferences, height: height, metrics: metrics)
             frames.append((metric, x, width)); x += width
         }
         return frames
     }
 
-    static func width(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24) -> CGFloat {
-        guard let last = layout(for: visible, preferences: preferences, height: height).last else { return glyphWidth + padding * 2 }
+    static func width(for visible: Set<MenuBarMetric>, preferences: MenuBarPreferences = MenuBarPreferences(), height: CGFloat = 24, metrics: SystemMetrics? = nil) -> CGFloat {
+        guard let last = layout(for: visible, preferences: preferences, height: height, metrics: metrics).last else { return glyphWidth + padding * 2 }
         return ceil(last.1 + last.2 + padding)
     }
 
@@ -123,7 +198,7 @@ final class MenuBarStatusView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); rasterCache = nil; needsDisplay = true }
 
     private func text(_ value: String, rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor, alignment: MenuBarAlignment = .left) {
         let style = Self.textStyles[alignment]!
@@ -138,6 +213,9 @@ final class MenuBarStatusView: NSView {
                 return
             }
             for (metric, x, width) in frames {
+                if rasterizingLayer {
+                    if let rasterColumns, !rasterColumns.contains(metric) { continue }
+                } else if !needsToDraw(NSRect(x: x, y: 0, width: width, height: bounds.height)) { continue }
                 if metric == .network { drawNetwork(x: x, width: width); continue }
                 let widget = preferences[metric]
                 let percent = Self.percent(for: metric, metrics: metrics)
@@ -146,7 +224,7 @@ final class MenuBarStatusView: NSView {
                 if widget.widget == .mini {
                     if widget.label { text(metric.title, rect: NSRect(x: x, y: origin + 12, width: width, height: 9), size: 7, weight: .light, color: .labelColor, alignment: widget.alignment) }
                     let size: CGFloat = widget.label ? 12 : 14
-                    let number = percent.map { String(format: "%.0f%%", $0) } ?? "—"
+                    let number = percent.map { "\(Int($0.rounded(.toNearestOrEven)))%" } ?? "—"
                     text(number, rect: NSRect(x: x, y: widget.label ? origin + 1 : (bounds.height - size) / 2, width: width, height: size + 3), size: size, weight: .regular, color: color, alignment: widget.label ? widget.alignment : .center)
                     continue
                 }

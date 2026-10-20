@@ -49,7 +49,9 @@ final class DiskDetails {
         let now = ProcessInfo.processInfo.systemUptime
         if now - refreshed >= 10 {
             let roots = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeIsLocalKey], options: .skipHiddenVolumes) ?? []
-            volumes = ([URL(fileURLWithPath: "/")] + roots.filter { $0.path.hasPrefix("/Volumes/") }).compactMap { volume($0) }
+            volumes = ([URL(fileURLWithPath: "/")] + roots.filter {
+                $0.path.hasPrefix("/Volumes/") && ((try? $0.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal ?? false)
+            }).compactMap { volume($0) }
             refreshed = now
         }
         let actual = volumes.contains { $0.path == path } ? path : "/"
@@ -75,8 +77,8 @@ final class DiskDetails {
               let desc = DADiskCopyDescription(disk) as? [String: Any] else { return nil }
         var fs = statfs()
         guard url.path.withCString({ statfs($0, &fs) }) == 0 else { return nil }
-        let total = Double(fs.f_blocks) * Double(fs.f_bsize) / 1e9
-        let free = min(total, Double(fs.f_bavail) * Double(fs.f_bsize) / 1e9)
+        let total = Double(fs.f_blocks) * Double(fs.f_bsize) / 1_073_741_824.0
+        let free = min(total, Double(fs.f_bavail) * Double(fs.f_bsize) / 1_073_741_824.0)
         guard total > 0 else { return nil }
         return DiskVolume(path: url.path, name: desc[kDADiskDescriptionVolumeNameKey as String] as? String ?? url.lastPathComponent,
                           fileSystem: desc[kDADiskDescriptionVolumeKindKey as String] as? String ?? "未知",

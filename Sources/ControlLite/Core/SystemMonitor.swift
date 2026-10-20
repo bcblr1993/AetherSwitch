@@ -236,6 +236,7 @@ public final class SystemMonitor: @unchecked Sendable {
         disks.reset()
         processes.reset()
         hardware.reset()
+        batteryMonitor.reset()
     }
 
     // MARK: - 采样分流
@@ -255,7 +256,7 @@ public final class SystemMonitor: @unchecked Sendable {
         // 1. 基础轻量核心指标（RAM、网络、磁盘、CPU、GPU）- 均采用微秒级系统内核原生采样，服务于菜单栏 5 列常驻显示
         let requested = SamplingPlan.metrics(visible: visibleMetrics, full: fullMetrics, tab: activeTab)
         if requested.contains(.ram) {
-            let ramData = fetchRAMDetailed()
+            let ramData = fetchRAMDetailed(includeSwap: fullMetrics && (activeTab == "ram" || activeTab == "overview"))
             m.ramPercent = ramData.percent
             m.ramUsedGB = ramData.usedGB
             m.ramTotalGB = ramData.totalGB
@@ -592,7 +593,7 @@ public final class SystemMonitor: @unchecked Sendable {
         var pressureCode: Int32?
     }
 
-    private func fetchRAMDetailed() -> RAMDetailed {
+    private func fetchRAMDetailed(includeSwap: Bool) -> RAMDetailed {
         var size = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
         var vmStats = vm_statistics64()
         let totalBytes = Double(ProcessInfo.processInfo.physicalMemory)
@@ -623,7 +624,7 @@ public final class SystemMonitor: @unchecked Sendable {
         var swapSize = MemoryLayout<xsw_usage>.size
         var swapUsedMB = 0.0
         var swapTotalMB = 0.0
-        if sysctlbyname("vm.swapusage", &swapUsage, &swapSize, nil, 0) == 0 {
+        if includeSwap && sysctlbyname("vm.swapusage", &swapUsage, &swapSize, nil, 0) == 0 {
             swapUsedMB = Double(swapUsage.xsu_used) / (1024.0 * 1024.0)
             swapTotalMB = Double(swapUsage.xsu_total) / (1024.0 * 1024.0)
         }
@@ -676,7 +677,17 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - Uptime & Load Average
 
     private func fetchUptime() -> String {
-        let uptimeSec = ProcessInfo.processInfo.systemUptime
+        var boottime = timeval()
+        var size = MemoryLayout<timeval>.size
+        var mib = [CTL_KERN, KERN_BOOTTIME]
+        let uptimeSec: TimeInterval
+        if sysctl(&mib, 2, &boottime, &size, nil, 0) == 0 && boottime.tv_sec > 0 {
+            var now = timeval()
+            gettimeofday(&now, nil)
+            uptimeSec = max(0, Double(now.tv_sec - boottime.tv_sec))
+        } else {
+            uptimeSec = ProcessInfo.processInfo.systemUptime
+        }
         let days = Int(uptimeSec) / 86400
         let hours = (Int(uptimeSec) % 86400) / 3600
         let minutes = (Int(uptimeSec) % 3600) / 60

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-10-20
+
+### Fixed
+- 菜单栏外观设置增加网络显隐开关，与网络详情页双向同步并持久保存。
+- 精简 CPU、内存等数值组件的空白：普通读数预留两位百分比宽度，显示 100% 时扩展，隐藏指标后同步收缩视图。
+- 修复进程采样中的重复 PID 字典风险，完善网络计数器回绕、IPv6 地址与主接口识别。
+- 完善休眠唤醒后采样重置、定时器调度、磁盘读取、系统运行时间及亮度拖动保护。
+- 网络地址解析和交换空间查询仅在相关详情页启用，减少折叠菜单栏的系统调用。
+- 菜单栏按变化列标记重绘，并使用原生 CPU 位图提交图层，避免系统显示列表重复栅格化文字。
+- Finder 重启增加超时保护，深色模式变更异步执行。
+
 ## [1.9.0] - 2026-10-06
 
 ### Added
