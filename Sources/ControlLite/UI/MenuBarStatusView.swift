@@ -6,7 +6,24 @@ final class MenuBarStatusView: NSView {
     static let glyphWidth: CGFloat = 20
     var metrics = SystemMetrics() {
         didSet {
-            if Self.renderingKey(metrics, visible: visible, preferences: preferences) != Self.renderingKey(oldValue, visible: visible, preferences: preferences) { needsDisplay = true }
+            let previous = Self.renderingKey(oldValue, visible: visible, preferences: preferences)
+            let current = Self.renderingKey(metrics, visible: visible, preferences: preferences)
+            guard previous != current else { return }
+            // 仅使变化的指标列失效，避免网速变化时重绘稳定的 RAM / SSD 数值。
+            if visible.contains(where: { metric in
+                let old = Self.percent(for: metric, metrics: oldValue).map { $0.rounded() >= 100 } ?? false
+                let new = Self.percent(for: metric, metrics: metrics).map { $0.rounded() >= 100 } ?? false
+                return old != new
+            }) { needsDisplay = true; return }
+            var offset = 0
+            for (metric, x, width) in frames(height: bounds.height) {
+                let count = metric == .network ? 4 : 2
+                let range = offset..<(offset + count)
+                if previous[range] != current[range] {
+                    setNeedsDisplay(NSRect(x: x, y: 0, width: width, height: bounds.height))
+                }
+                offset += count
+            }
         }
     }
     var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { needsDisplay = true } } }
@@ -31,7 +48,7 @@ final class MenuBarStatusView: NSView {
                         String(metrics.netDownloadBytesSec >= 1024), String(metrics.netUploadBytesSec >= 1024)]
             }
             let percent = Self.percent(for: metric, metrics: metrics)
-            let value = percent.map { preferences[metric].widget == .mini ? String(format: "%.0f", $0) : String($0) } ?? "unavailable"
+            let value = percent.map { preferences[metric].widget == .mini ? String(Int($0.rounded(.toNearestOrEven))) : String($0) } ?? "unavailable"
             let color = preferences[metric].color
             let colorKey = color == .pressure ? String(metrics.ramPressureCode ?? -1)
                 : color == .utilization ? String(percent.map { $0 <= 60 ? 0 : $0 <= 80 ? 1 : 2 } ?? -1) : "fixed"
@@ -142,6 +159,7 @@ final class MenuBarStatusView: NSView {
                 return
             }
             for (metric, x, width) in frames {
+                guard needsToDraw(NSRect(x: x, y: 0, width: width, height: bounds.height)) else { continue }
                 if metric == .network { drawNetwork(x: x, width: width); continue }
                 let widget = preferences[metric]
                 let percent = Self.percent(for: metric, metrics: metrics)
@@ -150,7 +168,7 @@ final class MenuBarStatusView: NSView {
                 if widget.widget == .mini {
                     if widget.label { text(metric.title, rect: NSRect(x: x, y: origin + 12, width: width, height: 9), size: 7, weight: .light, color: .labelColor, alignment: widget.alignment) }
                     let size: CGFloat = widget.label ? 12 : 14
-                    let number = percent.map { String(format: "%.0f%%", $0) } ?? "—"
+                    let number = percent.map { "\(Int($0.rounded(.toNearestOrEven)))%" } ?? "—"
                     text(number, rect: NSRect(x: x, y: widget.label ? origin + 1 : (bounds.height - size) / 2, width: width, height: size + 3), size: size, weight: .regular, color: color, alignment: widget.label ? widget.alignment : .center)
                     continue
                 }
