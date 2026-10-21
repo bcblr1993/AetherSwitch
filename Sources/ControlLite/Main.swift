@@ -182,19 +182,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
-        let switchNotifications: [(String, @MainActor () -> Void)] = [
-            ("com.aethernative.aetherswitch.toggleKeepAwake", { AppState.shared.toggleKeepAwake() }),
-            ("com.aethernative.aetherswitch.toggleHideDesktop", { AppState.shared.toggleHideDesktop() }),
-            ("com.aethernative.aetherswitch.toggleHiddenFiles", { AppState.shared.toggleHiddenFiles() }),
-            ("com.aethernative.aetherswitch.toggleDarkMode", { AppState.shared.toggleDarkMode() })
-        ]
-        for (name, action) in switchNotifications {
-            DistributedNotificationCenter.default().addObserver(
-                forName: NSNotification.Name(name),
-                object: nil,
-                queue: .main
-            ) { _ in
-                Task { @MainActor in action() }
+        // 会改变系统状态（甚至重启 Finder）的命令默认不响应分布式通知，见 AutomationPolicy。
+        if AutomationPolicy.allowsSystemChanges() {
+            let handlers: [String: @MainActor () -> Void] = [
+                AutomationPolicy.toggleKeepAwake: { AppState.shared.toggleKeepAwake() },
+                AutomationPolicy.toggleHideDesktop: { AppState.shared.toggleHideDesktop() },
+                AutomationPolicy.toggleHiddenFiles: { AppState.shared.toggleHiddenFiles() },
+                AutomationPolicy.toggleDarkMode: { AppState.shared.toggleDarkMode() }
+            ]
+            for name in AutomationPolicy.systemChangingCommands {
+                guard let action = handlers[name] else { assertionFailure("未登记处理函数：\(name)"); continue }
+                DistributedNotificationCenter.default().addObserver(
+                    forName: NSNotification.Name(name),
+                    object: nil,
+                    queue: .main
+                ) { _ in
+                    Task { @MainActor in action() }
+                }
             }
         }
 
