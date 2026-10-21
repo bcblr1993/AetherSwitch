@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- 面板内容区被经典滚动条挤掉约 17 pt：系统设置“始终显示滚动条”（接鼠标时的默认值）下，CPU、磁盘等需要滚动的页面右侧的数值、开关和图表被截断。内容宽度现在跟随可视区。
+- CPU、内存、磁盘页的“主要进程”榜单只采样了约 8% 的进程：`proc_listallpids` 返回进程个数而不是字节数，旧代码按字节数换算导致缓冲区过小，榜单几乎只剩 PID 最小的系统守护进程，真正的耗资源大户不会上榜。
+- 切换“隐藏桌面 / 显示隐藏文件”时，重启 Finder（最长等待 3 秒）发生在与状态查询共用的锁内，期间点击任何其他开关会让主线程卡住最多 3 秒。两者现在分开加锁。
+- 网络页曲线在离开页面期间不再累积，回来时旧采样会与新采样拼成一条看似连续的曲线，现在回到该页会重新开始。
+- 接口只有链路本地 IPv6 地址时，后出现的全局 IPv6 地址无法取代它，现在全局地址优先。
+
+### Security
+- 会改变系统状态的外部命令（保持常亮、隐藏桌面、显示隐藏文件、深色模式；其中两项会重启 Finder）此前对任意本机进程开放（系统范围的分布式通知）。现在默认不响应，需以环境变量 `AETHERSWITCH_AUTOMATION=1` 启动才开启；界面类与只读命令不受影响。
+
+### Accessibility
+- 概览的指标卡、网络卡和各详情页的图表此前是整块自绘、没有任何无障碍描述，VoiceOver 读不到数值；现在朗读名称与读数（含“不可用”状态）。
+
+### Performance
+- 网络接口选项的显示名称改为一次枚举系统接口后查表，不再为每个选项各枚举一次（8 个选项约 26 ms 降至 3 ms）。
+
+### Tests
+- 新增进程列表覆盖率、滚动布局、Finder 锁、自动化策略、无障碍描述、网络显示与面板生命周期的回归测试（共 18 项）。
+
 ## [1.9.1] - 2026-10-20
 
 ### Fixed
