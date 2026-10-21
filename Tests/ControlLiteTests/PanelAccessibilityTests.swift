@@ -3,7 +3,7 @@ import AppKit
 @testable import ControlLite
 
 final class PanelAccessibilityTests: XCTestCase {
-    private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+    @MainActor private func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
 
     @MainActor
     private func accessibleSummaries(tab: String, metrics: SystemMetrics) -> [String] {
