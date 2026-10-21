@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.2] - 2026-10-21
 
 ### Fixed
 - 面板内容区被经典滚动条挤掉约 17 pt：系统设置“始终显示滚动条”（接鼠标时的默认值）下，CPU、磁盘等需要滚动的页面右侧的数值、开关和图表被截断。内容宽度现在跟随可视区。
