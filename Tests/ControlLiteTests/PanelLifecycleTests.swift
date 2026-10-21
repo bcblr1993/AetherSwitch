@@ -25,7 +25,11 @@ final class PanelLifecycleTests: XCTestCase {
                 controller.about()
                 controller.about()
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            // 释放可能被延后到后续 run loop 周期（CI 上更慢）；真正的循环引用会一直存活到超时。
+            let deadline = Date().addingTimeInterval(3)
+            while (weakController != nil || weakView != nil) && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            }
             XCTAssertNil(weakController, "\(tab)：面板控制器关闭后仍被持有（疑似循环引用）")
             XCTAssertNil(weakView, "\(tab)：面板视图树关闭后仍被持有")
         }
