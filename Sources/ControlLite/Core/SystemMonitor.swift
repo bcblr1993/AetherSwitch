@@ -269,7 +269,6 @@ public final class SystemMonitor: @unchecked Sendable {
             m.ramCacheGB = ramData.cacheGB
             m.ramPressureLevel = ramData.pressure
             m.ramPressureCode = ramData.pressureCode
-
         }
         if requested.contains(.network) {
             let network = networkMonitor.sample(detailed: fullMetrics && activeTab == "network")
@@ -277,7 +276,6 @@ public final class SystemMonitor: @unchecked Sendable {
             let (downRate, upRate) = (network.downloadRate, network.uploadRate)
             m.netDownloadBytesSec = downRate
             m.netUploadBytesSec = upRate
-
         } else { networkMonitor.pause() }
         if requested.contains(.disk) {
             let (diskUsed, diskTotal, diskPct, diskFree) = fetchDisk()
@@ -285,7 +283,6 @@ public final class SystemMonitor: @unchecked Sendable {
             m.diskTotalGB = diskTotal
             m.diskPercent = diskPct
             m.diskFreeGB = diskFree
-
         }
         if requested.contains(.cpu) {
             // CPU 原生 Mach 内核采样
@@ -302,7 +299,6 @@ public final class SystemMonitor: @unchecked Sendable {
             m.cpuECoreUsage = cpuDetail.eCore
             m.cpuPCoreUsage = cpuDetail.pCore
             m.cpuCoreLoads = cpuDetail.coreLoads
-
         } else { previousAggregateTicks = nil; resetCPUDetails() }
         if requested.contains(.gpu) {
             // GPU 原生 IOKit IOAccelerator 采样
@@ -315,9 +311,8 @@ public final class SystemMonitor: @unchecked Sendable {
             m.gpuTilerAvailable = gpuDetail.tilerAvailable
             if let model = gpuDetail.model, !model.isEmpty {
                 m.gpuModelName = model
-        }
-        m.gpuCoreCount = gpuDetail.cores
-
+            }
+            m.gpuCoreCount = gpuDetail.cores
         }
         if fullMetrics && activeTab == "disk" {
             let io = disks.sample(path: selectedDiskPath)
@@ -610,8 +605,6 @@ public final class SystemMonitor: @unchecked Sendable {
         let inactive = Double(vmStats.inactive_count) * pageSize
         let wired = Double(vmStats.wire_count) * pageSize
         let compressed = Double(vmStats.compressor_page_count) * pageSize
-
-
         let speculative = Double(vmStats.speculative_count) * pageSize
         let breakdown = MemoryBreakdown(total: totalBytes, active: active, inactive: inactive, speculative: speculative,
             wired: wired, compressed: compressed, purgeable: Double(vmStats.purgeable_count) * pageSize,
@@ -708,7 +701,5 @@ public final class SystemMonitor: @unchecked Sendable {
         sampleLock.lock(); defer { sampleLock.unlock() }
         networkMonitor.select(interface)
     }
-
-    // MARK: - 网络吞吐采样
 
 }
