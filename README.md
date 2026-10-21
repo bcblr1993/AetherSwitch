@@ -35,6 +35,14 @@ CPU、GPU、内存和磁盘面板参考 [Stats v3.0.20](https://github.com/exelb
 
 电池页使用 IOKit 电源来源和内置电池信息，30 秒缓存一次电量、充电状态、预计剩余时间、最大容量和循环次数；台式 Mac 或缺少系统字段时明确显示不可用。图表展示面板展开期间最近 60 个采样点，收起后不保留跨时段连续曲线。
 
+## 外部自动化
+
+应用通过系统范围的分布式通知接受外部命令（任何本机进程都能发送）。展开面板、切换页面、关于、检查更新与状态回执（`reportStatus`）始终可用；会改变系统状态的四个开关命令（`com.aethernative.aetherswitch.toggleKeepAwake`、`toggleHideDesktop`、`toggleHiddenFiles`、`toggleDarkMode`，其中两项会重启 Finder）默认不响应，需要以环境变量 `AETHERSWITCH_AUTOMATION=1` 启动应用才会开启，例如：
+
+```bash
+AETHERSWITCH_AUTOMATION=1 open -n /Applications/AetherSwitch.app
+```
+
 品牌图形为 S 形开关。`./scripts/generate_icon.sh` 由共享的原生 `BrandGlyph` 几何生成图标预览，应用图标与菜单栏使用同一套形状。
 
 ## 构建

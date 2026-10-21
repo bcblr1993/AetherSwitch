@@ -69,6 +69,15 @@ final class NetworkMonitor {
         return NetworkCounter(received: deltaReceived, sent: deltaSent)
     }
 
+    /// 选择接口要展示的 IPv6 地址：IPv4 优先；全局地址优先于链路本地（fe80::）地址；已有全局地址时保持第一个。
+    /// 此前一旦先遇到链路本地地址，后面的全局地址就永远无法取代它。
+    static func mergedAddress(existing: String?, candidate: String) -> String {
+        guard let existing else { return candidate }
+        let existingIsLinkLocal = existing.lowercased().hasPrefix("fe80:")
+        let candidateIsLinkLocal = candidate.lowercased().hasPrefix("fe80:")
+        return existingIsLinkLocal && !candidateIsLinkLocal ? candidate : existing
+    }
+
     func sample(detailed: Bool = false) -> NetworkSnapshot {
         var result = NetworkSnapshot(); result.selection = selection
         var addresses: [String: String] = [:]
@@ -91,15 +100,13 @@ final class NetworkMonitor {
                 if inet_ntop(AF_INET, &ipCopy, &buffer, socklen_t(buffer.count)) != nil {
                     addresses[name] = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
                 }
-            } else if detailed && address.pointee.sa_family == UInt8(AF_INET6) && addresses[name] == nil {
+            } else if detailed && address.pointee.sa_family == UInt8(AF_INET6) {
                 let ip6 = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in6.self).pointee.sin6_addr
                 var ip6Copy = ip6
                 var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
                 if inet_ntop(AF_INET6, &ip6Copy, &buffer, socklen_t(buffer.count)) != nil {
-                    let addrStr = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-                    if !addrStr.hasPrefix("fe80:") || addresses[name] == nil {
-                        addresses[name] = addrStr
-                    }
+                    let candidate = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                    addresses[name] = Self.mergedAddress(existing: addresses[name], candidate: candidate)
                 }
             }
         }

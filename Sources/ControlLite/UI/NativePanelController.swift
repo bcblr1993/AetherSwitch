@@ -14,7 +14,7 @@ private final class FlippedStackView: NSStackView {
     override var isFlipped: Bool { true }
 }
 
-private class DashboardCardView: NSView {
+class DashboardCardView: NSView {
     override var isFlipped: Bool { true }
     /// 详细信息列表等不需要卡片底的视图关闭此项。
     var drawsCard: Bool { true }
@@ -102,12 +102,11 @@ private final class DashboardMetricView: DashboardCardView {
     var metrics: SystemMetrics { didSet { needsDisplay = true } }
     init(kind: Int, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override func draw(_ dirtyRect: NSRect) {
-        autoreleasepool {
-        super.draw(dirtyRect)
+
+    /// 绘制与 VoiceOver 朗读共用，保证屏幕上看到的和读出来的一致。
+    private var reading: (percent: Double, unavailable: Bool, detail: String) {
         let unavailable = kind == 1 && !metrics.gpuAvailable
         let percent = [metrics.cpuUsage, metrics.gpuUsage, Double(metrics.ramPercent), Double(metrics.diskPercent)][kind]
-        let tint = unavailable ? Palette.unavailable : Palette.tint(for: percent)
         let detail: String
         switch kind {
         case 0: detail = String(format: "用户 %.0f%% · 系统 %.0f%%", metrics.cpuUserUsage, metrics.cpuSystemUsage)
@@ -115,6 +114,22 @@ private final class DashboardMetricView: DashboardCardView {
         case 2: detail = String(format: "%.1f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)
         default: detail = String(format: "%.0f / %.0f GB", metrics.diskUsedGB, metrics.diskTotalGB)
         }
+        return (percent, unavailable, detail)
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? { Self.titles[kind] }
+    override func accessibilityValue() -> Any? {
+        let r = reading
+        return r.unavailable ? "不可用，\(r.detail)" : "\(Int(r.percent.rounded()))%，\(r.detail)"
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
+        super.draw(dirtyRect)
+        let (percent, unavailable, detail) = reading
+        let tint = unavailable ? Palette.unavailable : Palette.tint(for: percent)
         let width = bounds.width
         symbol(Self.symbols[kind], in: NSRect(x: 10, y: 10, width: 18, height: 18), size: 12, tint: tint)
         text(Self.titles[kind], in: NSRect(x: 31, y: 12, width: width - 80, height: 16), font: Palette.captionStrong, color: .secondaryLabelColor)
@@ -129,6 +144,10 @@ private final class DashboardNetworkView: DashboardCardView {
     var metrics: SystemMetrics { didSet { needsDisplay = true } }
     init(metrics: SystemMetrics) { self.metrics = metrics; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? { "网络速率" }
+    override func accessibilityValue() -> Any? { "下载 \(metrics.menuBarDownloadFormatted)，上传 \(metrics.menuBarUploadFormatted)" }
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
         super.draw(dirtyRect)
@@ -187,14 +206,19 @@ private final class DashboardSwitchView: DashboardCardView {
 }
 
 /// A single drawing surface keeps the live charts inexpensive while the popover is open.
-private final class DetailVisualView: DashboardCardView {
+final class DetailVisualView: DashboardCardView {
     var kind: String { didSet {
-        if kind == "network" && downloadHistory.isEmpty {
-            downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
-            uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+        // 离开网络页期间不会累积采样；回来时若沿用旧数组，几分钟前的旧点会与新点拼成一条看似连续的曲线。
+        if oldValue != kind {
+            downloadHistory = []; uploadHistory = []
+            if kind == "network" {
+                downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
+                uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+            }
         }
         needsDisplay = true
     } }
+    var networkHistoryCount: Int { downloadHistory.count }
     private var downloadHistory: [Double] = []
     private var uploadHistory: [Double] = []
     var metrics: SystemMetrics { didSet {
@@ -215,6 +239,39 @@ private final class DetailVisualView: DashboardCardView {
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? {
+        switch kind {
+        case "cpu": return "CPU 图表"
+        case "gpu": return "GPU 图表"
+        case "ram": return "内存图表"
+        case "disk": return "磁盘图表"
+        default: return "网络图表"
+        }
+    }
+    override func accessibilityValue() -> Any? {
+        switch kind {
+        case "cpu":
+            var parts = [String(format: "总负载 %.0f%%", metrics.cpuUsage)]
+            parts.append(metrics.cpuTemperature.map { String(format: "温度 %.0f 摄氏度", $0) } ?? "温度不可用")
+            parts.append(metrics.cpuFrequencyMHz.map { String(format: "频率 %.2f GHz", $0 / 1000) } ?? "频率不可用")
+            return parts.joined(separator: "，")
+        case "gpu":
+            guard metrics.gpuAvailable else { return "GPU 读数不可用" }
+            return String(format: "GPU %.0f%%，渲染 %@，Tiler %@", metrics.gpuUsage,
+                          metrics.gpuRenderAvailable ? String(format: "%.0f%%", metrics.gpuRenderUsage) : "不可用",
+                          metrics.gpuTilerAvailable ? String(format: "%.0f%%", metrics.gpuTilerUsage) : "不可用")
+        case "ram":
+            return "内存占用 \(metrics.ramPercent)%，内存压力 \(metrics.ramPressureLevel)"
+        case "disk":
+            let io = metrics.diskIOAvailable ? "读取 \(formatRate(metrics.diskReadBytesSec))，写入 \(formatRate(metrics.diskWriteBytesSec))" : "读写速率不可用"
+            return "\(io)，容量已用 \(metrics.diskPercent)%"
+        default:
+            return "下载 \(metrics.menuBarDownloadFormatted)，上传 \(metrics.menuBarUploadFormatted)"
+        }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
@@ -693,7 +750,7 @@ final class NativePanelController: NSViewController {
         brightnessSection.spacing = 2
         root.addArrangedSubview(brightnessSection)
         NSLayoutConstraint.activate([
-            brightnessSection.widthAnchor.constraint(equalTo: content.widthAnchor),
+            brightnessSection.widthAnchor.constraint(equalTo: header.widthAnchor),
             brightnessRow.widthAnchor.constraint(equalTo: brightnessSection.widthAnchor),
             brightnessMessage.widthAnchor.constraint(equalTo: brightnessSection.widthAnchor)
         ])
@@ -722,12 +779,12 @@ final class NativePanelController: NSViewController {
         loginItemSwitch.setAccessibilityLabel("开机自启动")
         let loginRow = NSStackView(views: [label("开机自启动", font: Palette.caption), spacer(), loginItemSwitch])
         root.addArrangedSubview(loginRow)
-        loginRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        loginRow.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
         let loginMessage = NSTextField(wrappingLabelWithString: "")
         loginMessage.font = Palette.caption
         loginMessage.textColor = .secondaryLabelColor
         root.addArrangedSubview(loginMessage)
-        loginMessage.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        loginMessage.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
         let loginSettings = footerButton("打开登录项设置", symbol: "gearshape", action: #selector(openLoginItemSettings))
         root.addArrangedSubview(loginSettings)
         loginItemSubscription = loginItems.$snapshot.sink { [weak self] snapshot in
@@ -746,7 +803,7 @@ final class NativePanelController: NSViewController {
         errorField.font = Palette.caption
         errorField.textColor = .systemRed
         root.addArrangedSubview(errorField)
-        errorField.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        errorField.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
         errorSubscription = state.$switchError.sink { [weak self] error in
             errorField.stringValue = error ?? ""
             errorField.isHidden = error == nil
@@ -755,7 +812,12 @@ final class NativePanelController: NSViewController {
         }
         view = root
         root.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 294), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), content.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        NSLayoutConstraint.activate([root.widthAnchor.constraint(equalToConstant: 294), header.widthAnchor.constraint(equalTo: root.widthAnchor, constant: -24), tabs.widthAnchor.constraint(equalTo: header.widthAnchor), footer.widthAnchor.constraint(equalTo: header.widthAnchor)])
+        // 内容区宽度跟随滚动视图的可视区：系统设置为“始终显示滚动条”时经典滚动条会占用约 17pt，
+        // 写死宽度会让内容右侧被滚动条截断。
+        if let clip = contentScroll?.contentView {
+            NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: clip.leadingAnchor), content.topAnchor.constraint(equalTo: clip.topAnchor), content.widthAnchor.constraint(equalTo: clip.widthAnchor)])
+        }
         rebuild()
         // Sparkle 发现新版本后，底部按钮改为"更新至 x.y.z"并用主题色提示。
         updateSubscription = UpdateManager.shared.$availableVersion.sink { [weak self] version in
@@ -954,18 +1016,23 @@ final class NativePanelController: NSViewController {
         SystemMonitor.shared.selectNetwork(interface: networkOptions[sender.indexOfSelectedItem])
         state.refreshFull()
     }
-    private static func formatInterfaceTitle(_ bsd: String) -> String {
-        if bsd == "auto" { return "自动 · 当前主接口" }
-        if let list = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] {
-            for iface in list {
-                if let name = SCNetworkInterfaceGetBSDName(iface) as String?, name == bsd,
-                   let localized = SCNetworkInterfaceGetLocalizedDisplayName(iface) as String? {
-                    return "\(localized) (\(bsd))"
-                }
-            }
+    /// 一次枚举系统网络接口后建表。此前每个选项都调用一次 `SCNetworkInterfaceCopyAll()`（需要和系统配置服务
+    /// 通信并解析配置），8 个选项约 26 毫秒，且在 VPN 的 utun 接口频繁增减时反复发生；单次枚举约 3 毫秒。
+    static func interfaceTitles(for bsdNames: [String], localizedNames: [String: String]) -> [String] {
+        bsdNames.map { bsd in
+            if bsd == "auto" { return "自动 · 当前主接口" }
+            if let localized = localizedNames[bsd] { return "\(localized) (\(bsd))" }
+            if bsd.hasPrefix("utun") { return "VPN / 隧道 (\(bsd))" }
+            return bsd
         }
-        if bsd.hasPrefix("utun") { return "VPN / 隧道 (\(bsd))" }
-        return bsd
+    }
+    private static func systemInterfaceNames() -> [String: String] {
+        var names: [String: String] = [:]
+        for interface in (SCNetworkInterfaceCopyAll() as? [SCNetworkInterface]) ?? [] {
+            if let bsd = SCNetworkInterfaceGetBSDName(interface) as String?,
+               let localized = SCNetworkInterfaceGetLocalizedDisplayName(interface) as String? { names[bsd] = localized }
+        }
+        return names
     }
 
     private func updateNetworkSelector(_ metrics: SystemMetrics) {
@@ -975,7 +1042,7 @@ final class NativePanelController: NSViewController {
         if networkOptions != options || selector.numberOfItems == 0 {
             networkOptions = options
             selector.removeAllItems()
-            selector.addItems(withTitles: options.map(Self.formatInterfaceTitle))
+            selector.addItems(withTitles: Self.interfaceTitles(for: options, localizedNames: Self.systemInterfaceNames()))
         }
         if let index = options.firstIndex(of: metrics.network.selection) { selector.selectItem(at: index) }
     }
