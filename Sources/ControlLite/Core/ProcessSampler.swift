@@ -32,6 +32,21 @@ final class ProcessSampler {
         return timebase.denom > 0 ? Double(timebase.numer) / Double(timebase.denom) : 1
     }()
 
+    /// 枚举全部进程号。注意 proc_listallpids 返回的是进程**个数**而不是字节数（与 proc_listpids 不同），
+    /// 缓冲区按个数估算；若返回数恰好填满缓冲区则可能被截断，翻倍后重试。
+    static func listPIDs() -> [Int32] {
+        var capacity = max(1024, Int(proc_listallpids(nil, 0)) + 256)
+        var pids: [Int32] = []
+        for _ in 0..<5 {
+            pids = [Int32](repeating: 0, count: capacity)
+            let count = Int(pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) })
+            guard count > 0 else { return [] }
+            if count < capacity { return Array(pids.prefix(count)).filter { $0 > 0 } }
+            capacity *= 2
+        }
+        return pids.filter { $0 > 0 }
+    }
+
     func reset() {
         previous.removeAll(keepingCapacity: true)
         timestamp = 0; mode = nil; cached = Result()
@@ -63,16 +78,11 @@ final class ProcessSampler {
         if requested != mode { reset(); mode = requested }
         let now = ProcessInfo.processInfo.systemUptime
         if timestamp > 0, now - timestamp < 2 { return cached }
-        let byteCapacity = proc_listallpids(nil, 0)
-        guard byteCapacity > 0 else { return Result() }
-        let pidCapacity = Int(byteCapacity) / MemoryLayout<Int32>.stride + 64
-        var pids = [Int32](repeating: 0, count: pidCapacity)
-        let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
-        guard count > 0 else { reset(); return Result() }
-        let numPids = Int(count) / MemoryLayout<Int32>.stride
+        let pids = Self.listPIDs()
+        guard !pids.isEmpty else { reset(); return Result() }
         var counters: [Counter] = []
-        counters.reserveCapacity(numPids)
-        for pid in pids.prefix(min(numPids, pids.count)) where pid > 0 {
+        counters.reserveCapacity(pids.count)
+        for pid in pids {
             var usage = rusage_info_v2()
             let result = withUnsafeMutablePointer(to: &usage) {
                 $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }
