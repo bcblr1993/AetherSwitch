@@ -12,49 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var menuBarSettings: MenuBarSettingsController?
 
     static func main() {
-        if CommandLine.arguments.contains("--keep-awake-status") {
-            let manager = SwitchManager.shared
-            let restored = manager.restoreKeepAwakePreference()
-            let result: [String: Any] = ["saved": UserDefaults.standard.bool(forKey: SwitchManager.keepAwakePreferenceKey),
-                                         "active": manager.getCurrentStates().isKeepAwakeActive, "restored": restored]
-            if let data = try? JSONSerialization.data(withJSONObject: result, options: .sortedKeys),
-               let json = String(data: data, encoding: .utf8) { print(json) }
-            return
-        }
-        if CommandLine.arguments.contains("--acceptance-brightness-following") || CommandLine.arguments.contains("--brightness-status") || CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") || CommandLine.arguments.contains("--acceptance-brightness-system-sync") || CommandLine.arguments.contains("--acceptance-brightness-restore") {
-            let app = NSApplication.shared
-            app.setActivationPolicy(.prohibited)
-            Task { @MainActor in
-                let result: [String: Any]
-                if let index = CommandLine.arguments.firstIndex(of: "--acceptance-brightness-restore"), index + 1 < CommandLine.arguments.count {
-                    result = await BrightnessAcceptance.restore(from: CommandLine.arguments[index + 1])
-                } else if CommandLine.arguments.contains("--acceptance-brightness-following") {
-                    result = await BrightnessAcceptance.runFollowing()
-                } else if CommandLine.arguments.contains("--acceptance-brightness-system-sync") {
-                    result = await BrightnessAcceptance.runSystemSync()
-                } else if CommandLine.arguments.contains("--acceptance-brightness-cycle") || CommandLine.arguments.contains("--acceptance-brightness-blackout") {
-                    result = await BrightnessAcceptance.run(includeBlackout: CommandLine.arguments.contains("--acceptance-brightness-blackout"))
-                } else {
-                    result = ["displays": BrightnessAcceptance.record(await SystemBrightnessHardware(recoverPower: false).discover())]
-                }
-                if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]),
-                   let json = String(data: data, encoding: .utf8) { print(json) }
-                exit(result["passed"] as? Bool == false ? 1 : 0)
-            }
-            app.run()
-            return
-        }
-        if CommandLine.arguments.contains("--login-item-status") {
-            print(LoginItemManager.shared.snapshot.status.rawValue)
-            return
-        }
-        if CommandLine.arguments.contains("--diagnose") {
-            _ = SystemMonitor.shared.sample(fullMetrics: false)
-            Thread.sleep(forTimeInterval: 1)
-            let m = SystemMonitor.shared.sample(fullMetrics: true)
-            print("CPU=\(m.cpuUsage) GPU=\(m.gpuUsage) GPU_CORES=\(m.gpuCoreCount) RAM_USED_GB=\(m.ramUsedGB) RAM_AVAILABLE_GB=\(m.ramFreeGB) RAM_TOTAL_GB=\(m.ramTotalGB) DISK_USED_GB=\(m.diskUsedGB) DISK_TOTAL_GB=\(m.diskTotalGB)")
-            return
-        }
+        if RuntimeAcceptance.handleLaunchArguments() { return }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -207,17 +165,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 Task { @MainActor in
                     let state = AppState.shared
                     let json: [String: Any] = ["pid": getpid(), "popoverOpen": state.isPopoverOpen, "tab": state.selectedTab, "cpu": state.metrics.cpuUsage, "gpu": state.metrics.gpuUsage, "ramUsedGB": state.metrics.ramUsedGB, "timestamp": Date().timeIntervalSince1970]
-                    if let data = try? JSONSerialization.data(withJSONObject: json, options: .sortedKeys) {
-                        let path = suffix.isEmpty ? "/tmp/AetherSwitch-runtime.json" : "/tmp/AetherSwitch-runtime-\(getpid()).json"
-                        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-                    }
+                    let path = RuntimeAcceptance.runtimeStatusPath(suffix: suffix)
+                    RuntimeAcceptance.writeStatusJSON(json, to: path)
                 }
             }
         }
 
         if CommandLine.arguments.contains("--acceptance-login-item-cycle") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.runLoginItemAcceptance()
+                RuntimeAcceptance.runLoginItemAcceptance()
             }
         } else if CommandLine.arguments.contains("--acceptance-cycle") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -234,50 +190,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
         }
-    }
-
-    /// Exercise the same switch action as the user, then restore the original registration.
-    private func runLoginItemAcceptance() {
-        let manager = LoginItemManager.shared
-        manager.refresh()
-        let original = manager.snapshot.status
-        var results: [String: Any] = ["original": original.rawValue]
-        defer {
-            manager.setEnabled(original.isEnabled)
-            results["restored"] = manager.snapshot.status.rawValue
-            let path = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_LOG"] ?? "/tmp/AetherSwitch-login-item.json"
-            if let data = try? JSONSerialization.data(withJSONObject: results, options: [.sortedKeys, .prettyPrinted]) {
-                try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-            }
-            NSApp.terminate(nil)
-        }
-        guard original == .enabled || original == .disabled else { results["error"] = "Login item is unavailable or requires approval"; return }
-        // Use the real panel action without taking focus from another app or requiring a display.
-        let controller = NativePanelController()
-        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
-        guard let control = descendants(controller.view).compactMap({ $0 as? NSSwitch }).first(where: { $0.accessibilityLabel() == "开机自启动" }) else { results["error"] = "Login switch was not found"; return }
-        for enabled in [true, false] {
-            control.state = enabled ? .on : .off
-            _ = control.target?.perform(control.action, with: control)
-            let expected: LoginItemStatus = enabled ? .enabled : .disabled
-            let process = Process()
-            process.executableURL = Bundle.main.executableURL
-            process.arguments = ["--login-item-status"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let freshStatus = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                results[enabled ? "enabled" : "disabled"] = ["system": manager.snapshot.status.rawValue, "freshProcess": freshStatus ?? "missing", "switchOn": control.state == .on]
-                guard process.terminationStatus == 0, manager.snapshot.status == expected, freshStatus == expected.rawValue,
-                      (control.state == .on) == enabled, manager.snapshot.error == nil else {
-                    results["error"] = manager.snapshot.message ?? "System or UI state did not match"
-                    return
-                }
-            } catch { results["error"] = error.localizedDescription; return }
-        }
-        results["passed"] = true
     }
 
     /// Release-gate UI exercise: change tabs on the app's own main thread, without
@@ -308,8 +220,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 "tab": tab,
                 "popoverShown": self.popover?.isShown == true,
                 "height": self.popover?.contentSize.height ?? 0,
-                "footprintMB": self.physicalFootprintMB() ?? -1,
-                "peakFootprintMB": self.physicalFootprintMB(peak: true) ?? -1,
+                "footprintMB": RuntimeAcceptance.physicalFootprintMB() ?? -1,
+                "peakFootprintMB": RuntimeAcceptance.physicalFootprintMB(peak: true) ?? -1,
                 "updaterRunning": UpdateManager.shared.isRunning,
                 "menuBarSettingsShown": self.menuBarSettings?.window?.isVisible == true,
                 "timestamp": Date().timeIntervalSince1970
@@ -326,19 +238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             self.runAcceptanceCycle(at: index + 1)
         }
-    }
-
-    /// peak 为 true 时返回进程生命周期内的物理内存峰值，便于定位是哪一步推高了峰值。
-    private func physicalFootprintMB(peak: Bool = false) -> Double? {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return nil }
-        return Double(peak ? UInt64(info.ledger_phys_footprint_peak) : info.phys_footprint) / 1_048_576
     }
 
     func applicationWillTerminate(_ notification: Notification) {
