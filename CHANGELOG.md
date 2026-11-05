@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.3] - 2026-11-05
+
+### Fixed
+- 修复采样进行中切换标签页或调整菜单栏指标时刷新请求被丢弃的问题，现在会在当次采样完成后自动补跑一次最新状态采样。
+- 修复 `ReportChannels`（`libIOReport.dylib`）释放时未调用 `dlclose` 导致的动态库引用计数累积。
+- 修复菜单栏外观设置中存在隐藏指标时，点击「向左 / 向右」移动可见指标需多次点击才能越过隐藏项的问题。
+- 修复外接磁盘卷在 10 秒缓存期内被拔出时未立即重扫并回退到启动盘的问题，并在切换磁盘卷时立即触发面板刷新。
+
+### Performance
+- `SystemMonitor.selectDisk` 与 `selectNetwork` 改为非阻塞登记，避免深度采样持有 `sampleLock` 期间阻塞主线程交互。
+- `Palette` 图标缓存增加颜色区分与容量上限保护；`SystemBrightnessHardware` 移除重复的 `DisplayServices`/`IOKit` 动态库加载与死代码，统一复用 `NativeBrightnessControl`。
+
+### Security & Refactoring
+- 抽离 CLI 诊断与验收逻辑至 `RuntimeAcceptance`，并在写入运行状态回执前通过 `lstat` 拒绝符号链接路径。
+
+### Tests
+- 新增采样合并、动态库句柄释放、隐藏指标跳过排序、非阻塞磁盘/网络选择、符号链接防护、图标缓存上限与外接卷拔出即时回退等 8 项 TDD 单元测试（总计 160 项测试全部通过）。
+
 ## [1.9.2] - 2026-10-21
 
 ### Fixed
