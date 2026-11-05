@@ -92,17 +92,22 @@ enum Palette {
     static let value = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
     static let valueLarge = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
 
-    // MARK: 图标（按名称与颜色缓存，绘制时不再重复创建）
+    // MARK: 图标（按名称与颜色缓存，绘制时不再重复创建，带容量上限防止动态颜色无限增长）
 
+    static let maxSymbolCacheEntries = 128
     private static var symbolCache: [String: NSImage] = [:]
+    static var symbolCacheCount: Int { symbolCache.count }
 
     static func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight = .semibold, tint: NSColor) -> NSImage? {
-        let key = "\(name)|\(size)|\(weight.rawValue)|\(tint.hashValue)"
+        let key = "\(name)|\(size)|\(weight.rawValue)|\(tint.hashValue)|\(tint.description)"
         if let cached = symbolCache[key] { return cached }
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
             .applying(.init(paletteColors: [tint]))
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
             .withSymbolConfiguration(configuration) else { return nil }
+        if symbolCache.count >= maxSymbolCacheEntries {
+            symbolCache.removeAll(keepingCapacity: true)
+        }
         symbolCache[key] = image
         return image
     }

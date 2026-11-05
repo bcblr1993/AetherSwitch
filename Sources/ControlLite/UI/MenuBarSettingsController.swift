@@ -183,9 +183,27 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         let metric = MenuBarMetric.allCases[metricOrder.indexOfSelectedItem]
         var preferences = state.menuBarPreferences
         guard let index = preferences.order.firstIndex(of: metric) else { return }
-        let destination = index + (sender === moveLeft ? -1 : 1)
-        guard preferences.order.indices.contains(destination) else { return }
-        preferences.order.swapAt(index, destination)
+        let step = sender === moveLeft ? -1 : 1
+        let visible = state.menuBarMetrics
+        let destination: Int?
+        if visible.contains(metric) {
+            var candidate = index + step
+            var found: Int?
+            while preferences.order.indices.contains(candidate) {
+                if visible.contains(preferences.order[candidate]) {
+                    found = candidate
+                    break
+                }
+                candidate += step
+            }
+            destination = found
+        } else {
+            let adjacent = index + step
+            destination = preferences.order.indices.contains(adjacent) ? adjacent : nil
+        }
+        guard let destination else { return }
+        let removed = preferences.order.remove(at: index)
+        preferences.order.insert(removed, at: destination)
         state.menuBarPreferences = preferences
     }
     @objc private func resetPreferences() { state.menuBarPreferences = MenuBarPreferences() }
