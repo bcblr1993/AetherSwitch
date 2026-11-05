@@ -180,12 +180,43 @@ public final class SystemMonitor: @unchecked Sendable {
     private let networkMonitor = NetworkMonitor()
     private let batteryMonitor = BatteryMonitor()
     private var selectedDiskPath = "/"
+    private let selectionLock = NSLock()
+    private var pendingDiskPath: String?
+    private var pendingNetworkInterface: String?
+
     public func selectDisk(path: String) {
-        sampleLock.lock(); defer { sampleLock.unlock() }
-        if selectedDiskPath != path {
-            selectedDiskPath = path; disks.reset()
-            diskReadHistoryBuffer.removeAll(); diskWriteHistoryBuffer.removeAll()
+        selectionLock.lock()
+        pendingDiskPath = path
+        selectionLock.unlock()
+        if sampleLock.try() {
+            defer { sampleLock.unlock() }
+            applyPendingSelections()
         }
+    }
+
+    private func applyPendingSelections() {
+        selectionLock.lock()
+        let diskPath = pendingDiskPath
+        pendingDiskPath = nil
+        let netInterface = pendingNetworkInterface
+        pendingNetworkInterface = nil
+        selectionLock.unlock()
+
+        if let diskPath, selectedDiskPath != diskPath {
+            selectedDiskPath = diskPath
+            disks.reset()
+            diskReadHistoryBuffer.removeAll()
+            diskWriteHistoryBuffer.removeAll()
+        }
+        if let netInterface {
+            networkMonitor.select(netInterface)
+        }
+    }
+
+    func withSampleLockForTesting<T>(_ body: () -> T) -> T {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
+        return body()
     }
 
 
@@ -244,6 +275,7 @@ public final class SystemMonitor: @unchecked Sendable {
     public func sample(fullMetrics: Bool = true, activeTab: String = "overview", includeProcesses: Bool = false, visibleMetrics: Set<MenuBarMetric> = Set(MenuBarMetric.allCases)) -> SystemMetrics {
         sampleLock.lock()
         defer { sampleLock.unlock() }
+        applyPendingSelections()
         var m = SystemMetrics()
         m.gpuModelName = chipName
         m.gpuCoreCount = gpuCores
@@ -698,8 +730,14 @@ public final class SystemMonitor: @unchecked Sendable {
     }
 
     func selectNetwork(interface: String) {
-        sampleLock.lock(); defer { sampleLock.unlock() }
-        networkMonitor.select(interface)
+        UserDefaults.standard.set(interface, forKey: "networkInterface")
+        selectionLock.lock()
+        pendingNetworkInterface = interface
+        selectionLock.unlock()
+        if sampleLock.try() {
+            defer { sampleLock.unlock() }
+            applyPendingSelections()
+        }
     }
 
 }

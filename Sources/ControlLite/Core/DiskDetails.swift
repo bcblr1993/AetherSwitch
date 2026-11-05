@@ -39,6 +39,8 @@ final class DiskDetails {
     private var counters: (UInt64, UInt64, Double)?
     private var health: DiskHealth?
     private var healthRead: Double = -100
+    var cachedVolumesForTesting: [DiskVolume] { volumes }
+    func injectCachedVolumeForTesting(_ volume: DiskVolume) { volumes.append(volume) }
     func reset() {
         if driver != 0 { IOObjectRelease(driver); driver = 0 }
         if media != 0 { IOObjectRelease(media); media = 0 }
@@ -47,17 +49,26 @@ final class DiskDetails {
     deinit { reset() }
     func sample(path: String) -> (volumes: [DiskVolume], selected: DiskVolume?, available: Bool, pending: Bool, read: Double, write: Double, health: DiskHealth?) {
         let now = ProcessInfo.processInfo.systemUptime
-        if now - refreshed >= 10 {
+        func rescanVolumes() {
             let roots = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeIsLocalKey], options: .skipHiddenVolumes) ?? []
             volumes = ([URL(fileURLWithPath: "/")] + roots.filter {
                 $0.path.hasPrefix("/Volumes/") && ((try? $0.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal ?? false)
             }).compactMap { volume($0) }
             refreshed = now
         }
-        let actual = volumes.contains { $0.path == path } ? path : "/"
+        if now - refreshed >= 10 {
+            rescanVolumes()
+        }
+        var actual = volumes.contains { $0.path == path } ? path : "/"
+        var currentVolume = volume(URL(fileURLWithPath: actual))
+        if currentVolume == nil && actual != "/" {
+            rescanVolumes()
+            actual = "/"
+            currentVolume = volume(URL(fileURLWithPath: "/"))
+        }
         if selected != actual || media == 0 { resetDevice(); selected = actual; openDevice(path: actual) }
         // Re-read capacity only for the selected volume, not all mounted volumes every second.
-        if let current = volume(URL(fileURLWithPath: actual)), let index = volumes.firstIndex(where: { $0.path == actual }) { volumes[index] = current }
+        if let currentVolume, let index = volumes.firstIndex(where: { $0.path == actual }) { volumes[index] = currentVolume }
         if now - healthRead >= 60 { health = readHealth(); healthRead = now }
         guard driver != 0,
               let stats = IORegistryEntryCreateCFProperty(driver, "Statistics" as CFString, nil, 0)?.takeRetainedValue() as? [String: Any],

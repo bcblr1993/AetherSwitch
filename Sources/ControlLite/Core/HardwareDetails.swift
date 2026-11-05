@@ -1,10 +1,13 @@
 import Foundation
 import Darwin
 import IOKit
+import os
 
 // Native system interfaces are loaded optionally: unsupported hardware must stay unavailable.
 // Channel names and sensor keys were checked against exelban/stats v3.0.20 (MIT).
-private final class ReportChannels {
+final class ReportChannels {
+    private static let instanceCounter = OSAllocatedUnfairLock(initialState: 0)
+    static var activeInstanceCount: Int { instanceCounter.withLock { $0 } }
     typealias Copy = @convention(c) (CFString?, CFString?, UInt64, UInt64, UInt64) -> Unmanaged<CFDictionary>?
     typealias Subscribe = @convention(c) (UnsafeRawPointer?, CFMutableDictionary?, UnsafeMutablePointer<Unmanaged<CFMutableDictionary>?>?, UInt64, CFTypeRef?) -> Unmanaged<CFTypeRef>?
     typealias Samples = @convention(c) (CFTypeRef?, CFMutableDictionary?, CFTypeRef?) -> Unmanaged<CFDictionary>?
@@ -57,6 +60,11 @@ private final class ReportChannels {
         self.samples = samples; self.delta = delta; self.name = name; self.group = group
         self.subgroup = subgroup; self.unit = unit; self.stateName = stateName
         self.count = count; self.residency = residency; self.integer = integer
+        Self.instanceCounter.withLock { $0 += 1 }
+    }
+    deinit {
+        Self.instanceCounter.withLock { $0 -= 1 }
+        dlclose(library)
     }
     func read() -> (items: [CFDictionary], elapsed: Double)? {
         guard let sample = samples(subscription, channels, nil)?.takeRetainedValue() else { previous = nil; return nil }
