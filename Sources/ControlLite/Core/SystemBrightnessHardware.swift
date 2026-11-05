@@ -141,8 +141,6 @@ final class BrightnessDDCTransport: @unchecked Sendable {
 /// Blocking I2C calls stay on this actor, off the AppKit main thread. CF services live
 /// only here and are released by ARC on rediscovery; all registry ports are balanced.
 actor SystemBrightnessHardware: BrightnessHardware {
-    private typealias NativeGet = @Sendable @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
-    private typealias NativeSet = @Sendable @convention(c) (UInt32, Float) -> Int32
     private typealias Endpoint = BrightnessDDCEndpoint
     private struct Target { let identity: BrightnessDDC.Identity; let endpoint: Endpoint? }
     private var targets: [UInt32: Target] = [:]
@@ -151,8 +149,6 @@ actor SystemBrightnessHardware: BrightnessHardware {
     private let transport = BrightnessDDCTransport.shared
     private var lastExternal: [UInt32: BrightnessDisplay] = [:]
     private let recoverPower: Bool
-    private nonisolated let transition = BrightnessTransition()
-    private(set) var lastTransition: BrightnessTransition.Result?
     private nonisolated let nativeControl = NativeBrightnessControl.shared
     private nonisolated let runtimes = OSAllocatedUnfairLock(initialState: [UInt32: ExternalBrightnessRuntime]())
     private nonisolated let requests = OSAllocatedUnfairLock(initialState: [UInt32: Double]())
@@ -160,7 +156,6 @@ actor SystemBrightnessHardware: BrightnessHardware {
     private nonisolated let cancellation = OSAllocatedUnfairLock(initialState: UInt64(0))
     nonisolated func cancelPendingTransition() {
         cancellation.withLock { $0 &+= 1 }
-        transition.cancel()
         runtimes.withLock { state in
             for runtime in state.values { runtime.stop() }
             state.removeAll()
@@ -178,7 +173,6 @@ actor SystemBrightnessHardware: BrightnessHardware {
                CGDisplayVendorNumber(display.id) == key.vendor, CGDisplayModelNumber(display.id) == key.product,
                CGDisplaySerialNumber(display.id) == key.serial,
                nativeControl.set(value, on: display.id, animated: animated) {
-                transition.cancel()
                 scheduled.insert(display.id)
             } else if display.control == .ddc, !DisplayBacklightControl.shared.hasRecovery(display.id),
                       let runtime = runtimes.withLock({ $0[display.id] }), !runtime.isStopped,
@@ -190,14 +184,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
     }
 
     init(recoverPower: Bool = true) { self.recoverPower = recoverPower }
-    // Keep loaded framework handles alive for the actor's lifetime.
-    private let displayServices = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY)
-    private let ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY)
 
-    private func function<T>(_ handle: UnsafeMutableRawPointer?, _ name: String, as type: T.Type) -> T? {
-        guard let handle, let pointer = dlsym(handle, name) else { return nil }
-        return unsafeBitCast(pointer, to: type)
-    }
     private nonisolated func identity(_ id: UInt32) -> BrightnessDDC.Identity {
         .init(vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id))
     }
@@ -207,12 +194,6 @@ actor SystemBrightnessHardware: BrightnessHardware {
         var ids = [UInt32](repeating: 0, count: Int(count))
         guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
         return Array(ids.prefix(Int(count)))
-    }
-    private func nativeValue(_ id: UInt32) -> Double? {
-        guard let get = function(displayServices, "DisplayServicesGetBrightness", as: NativeGet.self) else { return nil }
-        var value: Float = -1
-        guard get(id, &value) == 0, value.isFinite, (0...1).contains(value) else { return nil }
-        return Double(value)
     }
 
     func discover() -> [BrightnessDisplay] {
@@ -226,7 +207,7 @@ actor SystemBrightnessHardware: BrightnessHardware {
         let displays = ids.map { id in
             let key = online.contains(id) ? identity(id) : previousTargets[id]!.identity
             let name = CGDisplayIsBuiltin(id) != 0 ? "内置屏幕" : endpoints.first(where: { $0.identity == key })?.name ?? "外接屏幕 \(id)"
-            if let value = nativeValue(id), function(displayServices, "DisplayServicesSetBrightness", as: NativeSet.self) != nil {
+            if let value = nativeControl.read(id) {
                 targets[id] = Target(identity: key, endpoint: nil)
                 return BrightnessDisplay(id: id, name: name, control: .native, value: value)
             }
@@ -397,18 +378,9 @@ actor SystemBrightnessHardware: BrightnessHardware {
         let matching = externalEndpoints().filter { $0.identity == key }
         return matching.count == 1 ? matching[0] : nil
     }
-    private func writeHardware(_ raw: UInt16, endpoint: Endpoint, before: BrightnessDDC.Reading) -> BrightnessDDC.Reading? {
-        if before.current == raw { return before }
-        guard transferWrite(endpoint, packet: BrightnessDDC.write(raw)) else { return nil }
-        usleep(50_000)
-        return readBrightness(endpoint)
-    }
 
     private func externalEndpoints() -> [Endpoint] { transport.endpoints() }
 
-    private func transferWrite(_ endpoint: Endpoint, packet: [UInt8]) -> Bool {
-        transport.write(endpoint, packet: packet)
-    }
     private func readBrightness(_ endpoint: Endpoint) -> BrightnessDDC.Reading? {
         transport.read(endpoint)
     }

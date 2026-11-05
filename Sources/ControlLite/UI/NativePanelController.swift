@@ -1050,6 +1050,7 @@ final class NativePanelController: NSViewController {
     @objc private func selectDisk(_ sender: NSPopUpButton) {
         guard diskOptions.indices.contains(sender.indexOfSelectedItem) else { return }
         SystemMonitor.shared.selectDisk(path: diskOptions[sender.indexOfSelectedItem].path)
+        state.refreshFull()
     }
     private func updateDiskSelector(_ metrics: SystemMetrics) {
         guard state.selectedTab == "disk", let selector = diskSelector else { return }

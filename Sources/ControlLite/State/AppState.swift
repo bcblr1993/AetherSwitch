@@ -106,6 +106,8 @@ public final class AppState: ObservableObject {
     @Published public private(set) var pendingSwitches: Set<Int> = []
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
+    private var needsResample = false
+    var sampleOverride: (@Sendable (Bool, String, Bool, Set<MenuBarMetric>) -> (SystemMetrics, SwitchStates?))?
     private var timer: Timer?
     private var wakeSubscription: AnyCancellable?
     private let monitor = SystemMonitor.shared
@@ -166,16 +168,25 @@ public final class AppState: ObservableObject {
     }
 
     private func tick() {
-        guard !samplingInFlight else { return }
-        if !isPopoverOpen && SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty { return }
+        if !isPopoverOpen && SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty {
+            needsResample = false
+            return
+        }
+        guard !samplingInFlight else {
+            needsResample = true
+            return
+        }
         samplingInFlight = true
+        needsResample = false
         let isFull = isPopoverOpen
         let tab = selectedTab
         let visible = SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics)
         let revision = switchRevision
+        let override = sampleOverride
         Task {
             let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
                 autoreleasepool {
+                    if let override { return override(isFull, tab, isFull, visible) }
                     let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull, visibleMetrics: visible)
                     let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
                     return (m, s)
@@ -185,6 +196,10 @@ public final class AppState: ObservableObject {
             self.samplingInFlight = false
             if let s = sampledSwitches, revision == self.switchRevision, self.pendingSwitches.isEmpty { self.switches = s }
             self.metrics = sampledMetrics
+            if self.needsResample {
+                self.needsResample = false
+                self.tick()
+            }
         }
     }
 
