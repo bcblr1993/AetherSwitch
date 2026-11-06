@@ -4,12 +4,14 @@ import Combine
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
-    private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    var statusItem: NSStatusItem!
+    var popover: NSPopover!
     private var cancellables = Set<AnyCancellable>()
     private var menuBarStatusView: MenuBarStatusView?
     private var appliedMenuBarStyle: MenuBarStyle?
     private var menuBarSettings: MenuBarSettingsController?
+    private var statusWindowResizeObserver: NSObjectProtocol?
+    var onShowContextMenu: ((NSMenu) -> Void)?
 
     static func main() {
         if RuntimeAcceptance.handleLaunchArguments() { return }
@@ -30,25 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Observe native brightness even while the panel is folded, without polling.
         BrightnessManager.shared.refresh()
 
-        // 2. 初始化 Popover 下拉毛玻璃面板
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = false
-        popover.delegate = self
-        self.popover = popover
-
-        // 3. 初始化 NSStatusItem
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        
-        if let button = statusItem.button {
-            button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-            button.target = self
-            button.action = #selector(statusItemClicked(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
-
-        // 关键修复：主动测量并同步 statusItem 宽度，杜绝 NSStatusBarButton 默认 16px 导致内容被截断！
-        updateStatusItemWidth()
+        // 2. 初始化 Popover 与 NSStatusItem
+        setupStatusItem()
 
         // 监听系统指标与样式变更，自适应动态调整状态栏宽度
         AppState.shared.$metrics
@@ -248,9 +233,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         SwitchManager.shared.releaseKeepAwake()
     }
 
+    func setupStatusItem() {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.animates = false
+        popover.delegate = self
+        self.popover = popover
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+            button.target = self
+            button.action = #selector(statusItemClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        updateStatusItemWidth()
+        ensureStatusBarWindowInteractable()
+    }
+
+    func tearDownStatusItem() {
+        if let observer = statusWindowResizeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            statusWindowResizeObserver = nil
+        }
+        if popover?.isShown == true {
+            popover?.performClose(nil)
+        }
+        popover = nil
+        AppState.shared.isPopoverOpen = false
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
+        statusItem = nil
+        menuBarStatusView = nil
+        appliedMenuBarStyle = nil
+    }
+
+    /// macOS 27 `NSSceneStatusItem` 在 `MenuBarAgent` 尚未完成异步场景握手或处于 `XX-None[0]` 状态时，
+    /// 会将宿主 `NSStatusBarWindow` 的 `menuBarHeight` 设为 `0`，导致窗口高度坍缩为 `0` 且合成点击事件在 `hitTest` 阶段全部丢失。
+    /// 此处主动将窗口最小菜单栏高度锁定在 `>= 22pt` 并监听窗口尺寸重置以自愈。
+    private static func applyMinimumMenuBarHeight(to window: NSWindow) {
+        let minHeight = max(NSStatusBar.system.thickness, 22)
+        guard window.frame.height < minHeight else { return }
+        let setHeightSel = NSSelectorFromString("setMenuBarHeight:")
+        if let method = class_getInstanceMethod(object_getClass(window), setHeightSel) {
+            typealias SetHeightFn = @convention(c) (AnyObject, Selector, CGFloat) -> Void
+            let setHeight = unsafeBitCast(method_getImplementation(method), to: SetHeightFn.self)
+            setHeight(window, setHeightSel, minHeight)
+            window.layoutIfNeeded()
+        }
+        if window.frame.height < minHeight {
+            window.setFrame(
+                NSRect(x: window.frame.origin.x, y: -minHeight, width: max(window.frame.width, 24), height: minHeight),
+                display: false
+            )
+        }
+    }
+
+    private func ensureStatusBarWindowInteractable() {
+        guard let window = statusItem?.button?.window else { return }
+        Self.applyMinimumMenuBarHeight(to: window)
+        if statusWindowResizeObserver == nil {
+            statusWindowResizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: nil
+            ) { note in
+                guard let resizedWindow = note.object as? NSWindow else { return }
+                MainActor.assumeIsolated {
+                    guard resizedWindow.frame.height < 22 else { return }
+                    Self.applyMinimumMenuBarHeight(to: resizedWindow)
+                }
+            }
+        }
+    }
+
+    private static func fixedStatusItemWidth(for style: MenuBarStyle, button: NSStatusBarButton) -> CGFloat {
+        let font = button.font ?? .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        let templateTitle: String
+        switch style {
+        case .statsColumns:
+            return button.bounds.width
+        case .compact:
+            templateTitle = "◈ 100%  ↓ 1023 KB/s"
+        case .iconOnly:
+            return 28
+        case .iconAndSpeed:
+            templateTitle = "↓ 1023 KB/s  ↑ 1023 KB/s"
+        case .iconAndRAM:
+            templateTitle = "100%"
+        case .iconAndTemperature:
+            templateTitle = "100°C"
+        }
+        let textWidth = ceil((templateTitle as NSString).size(withAttributes: [.font: font]).width)
+        return textWidth + 28
+    }
+
     // MARK: - 动态调整状态栏宽度
 
-    private func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil, visible: Set<MenuBarMetric>? = nil, preferences: MenuBarPreferences? = nil) {
+    func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil, visible: Set<MenuBarMetric>? = nil, preferences: MenuBarPreferences? = nil) {
         guard let button = statusItem.button else { return }
         let state = AppState.shared
         // @Published emits before the stored property changes; render the emitted value.
@@ -259,7 +340,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let visible = visible ?? state.menuBarMetrics
         let preferences = preferences ?? state.menuBarPreferences
         let styleChanged = appliedMenuBarStyle != style
-        if !styleChanged && style == .iconOnly { return }
+        if !styleChanged && style == .iconOnly {
+            ensureStatusBarWindowInteractable()
+            return
+        }
         switch style {
         case .statsColumns:
             if styleChanged {
@@ -284,42 +368,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             if display.frame != frame { display.frame = frame }
         case .compact:
             menuBarStatusView?.removeFromSuperview()
-            button.title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"
+            let title = "◈ \(m.ramPercent)%  ↓ \(m.menuBarDownloadFormatted)"
+            if button.title != title { button.title = title }
         case .iconOnly:
             menuBarStatusView?.removeFromSuperview()
-            button.title = ""
+            if !button.title.isEmpty { button.title = "" }
         case .iconAndSpeed:
             menuBarStatusView?.removeFromSuperview()
-            button.title = "↓ \(m.menuBarDownloadFormatted)  ↑ \(m.menuBarUploadFormatted)"
+            let title = "↓ \(m.menuBarDownloadFormatted)  ↑ \(m.menuBarUploadFormatted)"
+            if button.title != title { button.title = title }
         case .iconAndRAM:
             menuBarStatusView?.removeFromSuperview()
-            button.title = "\(m.ramPercent)%"
+            let title = "\(m.ramPercent)%"
+            if button.title != title { button.title = title }
+        case .iconAndTemperature:
+            menuBarStatusView?.removeFromSuperview()
+            let title = m.cpuTemperature.map { String(format: "%.0f°C", $0) } ?? "—"
+            if button.title != title { button.title = title }
         }
-        if styleChanged && style != .statsColumns {
-            button.image = BrandGlyph.templateImage(size: NSSize(width: 18, height: 16))
-            statusItem.length = NSStatusItem.variableLength
+        if style != .statsColumns {
+            if styleChanged {
+                button.image = BrandGlyph.templateImage(size: NSSize(width: 18, height: 16))
+            }
+            let fixedWidth = Self.fixedStatusItemWidth(for: style, button: button)
+            if statusItem.length != fixedWidth {
+                statusItem.length = fixedWidth
+            }
         }
         if styleChanged {
             button.imagePosition = .imageLeading
             button.toolTip = "AetherSwitch · 点击查看系统状态"
             appliedMenuBarStyle = style
         }
-
+        ensureStatusBarWindowInteractable()
     }
 
     // MARK: - 交互事件
 
-    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+    @objc func statusItemClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
-        if event?.type == .rightMouseUp {
-            // 右键快捷菜单（关于/官网/样式/更新/退出）
+        let isContextClick = event?.type == .rightMouseUp
+            || event?.type == .rightMouseDown
+            || ((event?.type == .leftMouseUp || event?.type == .leftMouseDown)
+                && event?.modifierFlags.contains(.control) == true)
+        if isContextClick {
+            // 右键或 Control+左键快捷菜单（关于/官网/样式/更新/退出）
             showContextMenu(sender)
         } else {
             togglePopover()
         }
     }
 
-    private func togglePopover() {
+    func togglePopover() {
         guard let button = statusItem.button else { return }
 
         if popover?.isShown == true {
@@ -344,7 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    private func showContextMenu(_ sender: NSStatusBarButton) {
+    func showContextMenu(_ sender: NSStatusBarButton) {
         LoginItemManager.shared.refresh()
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "AetherSwitch v\(UpdateManager.shared.currentVersion)", action: #selector(showAboutAction), keyEquivalent: ""))
@@ -387,9 +487,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "退出 AetherSwitch", action: #selector(quitAction), keyEquivalent: "q"))
 
-        statusItem.menu = menu
-        statusItem.button?.performClick(nil)
-        statusItem.menu = nil // 恢复点击行为
+        if let onShowContextMenu {
+            onShowContextMenu(menu)
+            return
+        }
+        if popover?.isShown == true {
+            popover?.performClose(nil)
+            AppState.shared.isPopoverOpen = false
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
 
     @objc private func showAboutAction() {
@@ -467,7 +573,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         AppState.shared.isPopoverOpen = false
         AppState.shared.showAbout = false
-        popover.contentViewController = nil
+        popover?.contentViewController = nil
         popover = nil
         malloc_zone_pressure_relief(nil, 0)
     }
