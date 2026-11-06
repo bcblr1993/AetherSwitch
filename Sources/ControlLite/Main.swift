@@ -273,8 +273,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// 会将宿主 `NSStatusBarWindow` 的 `menuBarHeight` 设为 `0`，导致窗口高度坍缩为 `0` 且合成点击事件在 `hitTest` 阶段全部丢失。
     /// 此处主动将窗口最小菜单栏高度锁定在 `>= 22pt` 并监听窗口尺寸重置以自愈。
     private static func applyMinimumMenuBarHeight(to window: NSWindow) {
+        guard window.frame.height < 22 else { return }
         let minHeight = max(NSStatusBar.system.thickness, 22)
-        guard window.frame.height < minHeight else { return }
         let setHeightSel = NSSelectorFromString("setMenuBarHeight:")
         if let method = class_getInstanceMethod(object_getClass(window), setHeightSel) {
             typealias SetHeightFn = @convention(c) (AnyObject, Selector, CGFloat) -> Void

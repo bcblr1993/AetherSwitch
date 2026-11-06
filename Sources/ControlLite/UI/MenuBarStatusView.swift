@@ -7,12 +7,13 @@ final class MenuBarStatusView: NSView {
     private var rasterColumns: Set<MenuBarMetric>?
     private var dirtyColumns = Set<MenuBarMetric>()
     private var rasterCache: (width: Int, height: Int, scale: CGFloat, context: CGContext)?
+    private var cachedLayerImage: CGImage?
     override var wantsUpdateLayer: Bool { true }
     override func updateLayer() {
         guard let layer else { return }
         let scale = window?.backingScaleFactor ?? 2
         let width = Int(ceil(bounds.width * scale)), height = Int(ceil(bounds.height * scale))
-        guard width > 0, height > 0 else { layer.contents = nil; return }
+        guard width > 0, height > 0 else { cachedLayerImage = nil; layer.contents = nil; return }
         let context: CGContext
         let full: Bool
         if let cache = rasterCache, cache.width == width, cache.height == height, cache.scale == scale {
@@ -21,10 +22,11 @@ final class MenuBarStatusView: NSView {
             context = cache.context
             full = false
         } else {
-            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+            let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            guard let space = window?.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
                   let bitmap = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                                         space: space, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
-            else { layer.contents = nil; return }
+                                         space: space, bitmapInfo: bitmapInfo)
+            else { cachedLayerImage = nil; layer.contents = nil; return }
             bitmap.scaleBy(x: scale, y: scale)
             rasterCache = (width, height, scale, bitmap)
             context = bitmap
@@ -48,11 +50,14 @@ final class MenuBarStatusView: NSView {
         context.restoreGState()
         NSGraphicsContext.restoreGraphicsState()
         layer.contentsScale = scale
-        layer.contents = context.makeImage()
+        let image = context.makeImage()
+        cachedLayerImage = image
+        layer.contents = image
     }
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         rasterCache = nil
+        cachedLayerImage = nil
         needsDisplay = true
     }
     static let padding: CGFloat = 2
@@ -67,21 +72,27 @@ final class MenuBarStatusView: NSView {
                 let old = Self.percent(for: metric, metrics: oldValue).map { $0.rounded() >= 100 } ?? false
                 let new = Self.percent(for: metric, metrics: metrics).map { $0.rounded() >= 100 } ?? false
                 return old != new
-            }) { rasterCache = nil; needsDisplay = true; return }
+            }) { rasterCache = nil; cachedLayerImage = nil; needsDisplay = true; return }
             var offset = 0
+            let canDirectUpdate = rasterCache != nil && window != nil && layer != nil
             for (metric, x, width) in frames(height: bounds.height) {
                 let count = metric == .network ? 4 : 2
                 let range = offset..<(offset + count)
                 if previous[range] != current[range] {
                     dirtyColumns.insert(metric)
-                    setNeedsDisplay(NSRect(x: x, y: 0, width: width, height: bounds.height))
+                    if !canDirectUpdate {
+                        setNeedsDisplay(NSRect(x: x, y: 0, width: width, height: bounds.height))
+                    }
                 }
                 offset += count
             }
+            if canDirectUpdate && !dirtyColumns.isEmpty {
+                updateLayer()
+            }
         }
     }
-    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { rasterCache = nil; needsDisplay = true } } }
-    var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { rasterCache = nil; needsDisplay = true } } }
+    var visible: Set<MenuBarMetric> = Set(MenuBarMetric.allCases) { didSet { if oldValue != visible { rasterCache = nil; cachedLayerImage = nil; needsDisplay = true } } }
+    var preferences = MenuBarPreferences() { didSet { if oldValue != preferences { rasterCache = nil; cachedLayerImage = nil; needsDisplay = true } } }
 
     private var cachedLayout: (visible: Set<MenuBarMetric>, preferences: MenuBarPreferences, height: CGFloat, threeDigits: Set<MenuBarMetric>, frames: [(MenuBarMetric, CGFloat, CGFloat)])?
     private func frames(height: CGFloat) -> [(MenuBarMetric, CGFloat, CGFloat)] {
@@ -202,7 +213,7 @@ final class MenuBarStatusView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); rasterCache = nil; needsDisplay = true }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); rasterCache = nil; cachedLayerImage = nil; needsDisplay = true }
 
     private func text(_ value: String, rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor, alignment: MenuBarAlignment = .left) {
         let style = Self.textStyles[alignment]!
@@ -210,6 +221,10 @@ final class MenuBarStatusView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if !rasterizingLayer, dirtyColumns.isEmpty, let cachedLayerImage, let ctx = NSGraphicsContext.current?.cgContext {
+            ctx.draw(cachedLayerImage, in: bounds)
+            return
+        }
         autoreleasepool {
             let frames = frames(height: bounds.height)
             guard !frames.isEmpty else {

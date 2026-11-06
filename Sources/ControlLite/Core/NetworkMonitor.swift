@@ -27,6 +27,7 @@ struct NetworkCounter: Equatable {
 /// Interface-local baselines prevent spikes on reconnect, selection and wake.
 final class NetworkMonitor {
     private var selection = UserDefaults.standard.string(forKey: "networkInterface") ?? "auto"
+    private let dynamicStore = SCDynamicStoreCreate(nil, "com.aethernative.aetherswitch.network" as CFString, nil, nil)
     private var previous: NetworkCounter?
     private var timestamp = 0.0
     private var active = ""
@@ -110,22 +111,27 @@ final class NetworkMonitor {
                 }
             }
         }
-        result.interfaces = counters.keys.filter { $0.hasPrefix("en") || $0.hasPrefix("utun") || $0.hasPrefix("ppp") }.sorted()
         let now = ProcessInfo.processInfo.systemUptime
+        let primaryTTL = (detailed || counters[cachedPrimary] == nil) ? 3.0 : 30.0
         let primary: String
-        if now - primaryTimestamp < 3.0, !cachedPrimary.isEmpty {
+        if selection != "auto" {
+            primary = ""
+        } else if now - primaryTimestamp < primaryTTL, !cachedPrimary.isEmpty {
             primary = cachedPrimary
         } else {
-            let globalV4 = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
+            let globalV4 = SCDynamicStoreCopyValue(dynamicStore, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
             let p4 = globalV4?["PrimaryInterface"] as? String
             if let p4, !p4.isEmpty {
                 primary = p4
             } else {
-                let globalV6 = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv6" as CFString) as? [String: Any]
+                let globalV6 = SCDynamicStoreCopyValue(dynamicStore, "State:/Network/Global/IPv6" as CFString) as? [String: Any]
                 primary = globalV6?["PrimaryInterface"] as? String ?? ""
             }
             cachedPrimary = primary
             primaryTimestamp = now
+        }
+        if detailed || (selection == "auto" && primary.isEmpty) {
+            result.interfaces = counters.keys.filter { $0.hasPrefix("en") || $0.hasPrefix("utun") || $0.hasPrefix("ppp") }.sorted()
         }
         let selected = selection == "auto" ? (!primary.isEmpty ? primary : result.interfaces.first(where: { $0.hasPrefix("en") }) ?? "") : selection
         result.interface = selected.isEmpty ? "不可用" : selected
