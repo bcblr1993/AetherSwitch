@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-11-06
+
+### Added
+- 菜单栏与面板新增全方位硬件温度监控：Stats 菜单栏新增可独立开关与排序的「温度（TMP）」列（支持数值、柱状图、饼图组件），并新增「图标 + 实时温度」显示样式。
+- 概览页新增硬件温度卡片（汇总 CPU、GPU、电池温度与系统热状态等级）及 CPU / 内存占用 Top 进程速览；CPU、GPU 与电池详情页补齐 Apple Silicon（M1–M5）SMC 传感器温度、风扇转速与电池温度回退采样。
+
+### Fixed
+- 修复 macOS 27（`NSSceneStatusItem`）下状态栏图标仅能显示网速等数据波动但无法点击的问题：当 `MenuBarAgent` 尚未完成异步场景握手或处于 `XX-None[0]` 状态将宿主 `NSStatusBarWindow` 的 `menuBarHeight` 置零时，自动锁定窗口最小高度 `>= 22pt` 并监听尺寸重置自愈，确保合成点击事件始终命中按钮。
+- 修复 macOS 27 下右键菜单通过临时修改 `statusItem.menu` 触发导致的场景导航状态翻转问题，改用直接锚定按钮弹出菜单，并补齐 `rightMouseDown` 与 `Control + 左键` 唤起快捷菜单支持。
+- 修复紧凑单行（`.compact`）、图标加网速（`.iconAndSpeed`）等文本菜单栏样式随网速字符长度变化频繁触发状态栏宽度重算与抖动的问题。
+
+### Tests
+- 新增 `StatusBarInteractionTests` 等 7 项 TDD 单元测试，覆盖 macOS 27 `_performOneShotAction:` 左键面板切换、`XX-None[0]` 窗口零高度自愈、`_performSecondaryAction:type:` 右键及 `Control + 左键` 快捷菜单、文本样式宽度防抖及温度/进程采样（总计 167 项测试全部通过）。
+
 ## [1.9.3] - 2026-11-05
 
 ### Fixed
