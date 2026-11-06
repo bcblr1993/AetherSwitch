@@ -18,7 +18,7 @@ final class MenuBarMetricsTests: XCTestCase {
         state.menuBarMetrics = Set(MenuBarMetric.allCases)
         state.setMenuBarMetric(.gpu, visible: false)
         XCTAssertFalse(state.menuBarMetrics.contains(.gpu))
-        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey), ["cpu", "ram", "disk", "network"])
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey), ["cpu", "ram", "disk", "temperature", "network"])
         state.setMenuBarMetric(.gpu, visible: true)
         XCTAssertEqual(MenuBarMetric.decode(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)), Set(MenuBarMetric.allCases))
     }
@@ -58,7 +58,10 @@ final class MenuBarMetricsTests: XCTestCase {
             return footer.frame.minY // NSStackView 原点在左下，minY 即底部栏距弹窗底边的距离
         }
         let overviewGap = footerBottomGap()
-        for (tab, metric) in zip(["cpu", "gpu", "ram", "disk", "network"], MenuBarMetric.allCases) {
+        let pageMetrics: [(String, MenuBarMetric)] = [
+            ("cpu", .cpu), ("gpu", .gpu), ("ram", .ram), ("disk", .disk), ("network", .network)
+        ]
+        for (tab, metric) in pageMetrics {
             state.selectedTab = tab
             let toggle = try XCTUnwrap(switches(root).first { $0.accessibilityLabel()?.hasPrefix("在菜单栏显示") == true }, tab)
             state.menuBarMetrics = Set(MenuBarMetric.allCases)
@@ -68,5 +71,12 @@ final class MenuBarMetricsTests: XCTestCase {
             XCTAssertFalse(state.menuBarMetrics.contains(metric), tab)
             XCTAssertEqual(footerBottomGap(), overviewGap, accuracy: 0.5, "\(tab) 页底部栏位置应与概览页一致")
         }
+        state.selectedTab = "cpu"
+        state.menuBarMetrics = Set(MenuBarMetric.allCases)
+        let tempToggle = try XCTUnwrap(switches(root).first { $0.accessibilityLabel() == "在菜单栏显示温度" })
+        XCTAssertEqual(tempToggle.state, .on)
+        tempToggle.state = .off
+        _ = tempToggle.target?.perform(tempToggle.action, with: tempToggle)
+        XCTAssertFalse(state.menuBarMetrics.contains(.temperature))
     }
 }

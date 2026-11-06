@@ -7,6 +7,7 @@ final class SamplingPlanTests: XCTestCase {
         XCTAssertTrue(SamplingPlan.metrics(visible: visible, full: false, tab: "cpu").isEmpty)
         XCTAssertEqual(SamplingPlan.metrics(visible: visible, full: true, tab: "cpu"), [.cpu])
         XCTAssertEqual(SamplingPlan.metrics(visible: visible, full: true, tab: "overview"), Set(MenuBarMetric.allCases))
+        XCTAssertEqual(SamplingPlan.visible(style: .iconAndTemperature, metrics: []), [.temperature])
     }
     func testVisibleMetricsRemainLiveOnAnotherPage() {
         XCTAssertEqual(SamplingPlan.metrics(visible: [.network, .ram], full: true, tab: "gpu"), [.network, .ram, .gpu])
@@ -37,7 +38,7 @@ final class SamplingPlanTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: "SamplingPlanTests.order") }
         defaults.set(["order": ["network", "network", "unknown", "ram"]], forKey: MenuBarPreferences.defaultsKey)
         let preferences = MenuBarPreferences.load(from: defaults)
-        XCTAssertEqual(preferences.order, [.network, .ram, .cpu, .gpu, .disk])
+        XCTAssertEqual(preferences.order, [.network, .ram, .cpu, .gpu, .disk, .temperature])
         preferences.save(to: defaults)
         XCTAssertEqual(MenuBarPreferences.load(from: defaults).order, preferences.order)
     }

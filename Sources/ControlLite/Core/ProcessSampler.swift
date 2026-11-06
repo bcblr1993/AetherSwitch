@@ -3,7 +3,7 @@ import Darwin
 
 /// 直接读取 libproc；仅在进程面板展开时维护差分，不启动 ps/top 子进程。
 final class ProcessSampler {
-    enum Mode: Equatable { case cpu, memory, disk }
+    enum Mode: Equatable { case cpu, memory, disk, overview }
     struct Counter {
         let pid: Int32
         let started: UInt64
@@ -26,6 +26,7 @@ final class ProcessSampler {
     private var timestamp: TimeInterval = 0
     private var mode: Mode?
     private var cached = Result()
+    private var cachedOverview: (cpu: Result, memory: Result) = (Result(), Result())
     private let nanosecondsPerTick: Double = {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
@@ -49,7 +50,20 @@ final class ProcessSampler {
 
     func reset() {
         previous.removeAll(keepingCapacity: true)
-        timestamp = 0; mode = nil; cached = Result()
+        timestamp = 0; mode = nil; cached = Result(); cachedOverview = (Result(), Result())
+    }
+
+    static func resolveName(pid: Int32) -> String {
+        var pathBuffer = [CChar](repeating: 0, count: 4096)
+        let pathLen = pathBuffer.withUnsafeMutableBytes { proc_pidpath(pid, $0.baseAddress, UInt32($0.count)) }
+        if pathLen > 0 {
+            let fullPath = String(decoding: pathBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            let last = (fullPath as NSString).lastPathComponent
+            if !last.isEmpty { return last }
+        }
+        var buffer = [CChar](repeating: 0, count: 1024)
+        let length = buffer.withUnsafeMutableBytes { proc_name(pid, $0.baseAddress, UInt32($0.count)) }
+        return length > 0 ? String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) : "PID \(pid)"
     }
 
     static func rank(_ counters: [Counter], previous: [Int32: Counter], elapsed: Double, mode: Mode, nanosecondsPerTick: Double = 1) -> [Ranked] {
@@ -95,12 +109,10 @@ final class ProcessSampler {
         let pending = requested != .memory && timestamp == 0 && !counters.isEmpty
         let ranked = Self.rank(counters, previous: previous, elapsed: now - timestamp, mode: requested, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
         let items = ranked.map { item in
-            var buffer = [CChar](repeating: 0, count: 1024)
-            let length = buffer.withUnsafeMutableBytes { proc_name(item.pid, $0.baseAddress, UInt32($0.count)) }
-            let name = length > 0 ? String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self) : "PID \(item.pid)"
+            let name = Self.resolveName(pid: item.pid)
             let value: String
             switch requested {
-            case .cpu: value = String(format: "%.1f%%", item.value)
+            case .cpu, .overview: value = String(format: "%.1f%%", item.value)
             case .memory: value = Self.memoryString(item.value)
             case .disk: value = Self.rateString(item.value)
             }
@@ -111,6 +123,38 @@ final class ProcessSampler {
         timestamp = now
         cached = Result(items: items, available: !counters.isEmpty && !pending, pending: pending)
         return cached
+    }
+
+    /// 概览页单次遍历同时提取 CPU 与内存 Top 进程，不增加额外系统调用开销。
+    func sampleOverview(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> (cpu: Result, memory: Result) {
+        if mode != .overview { reset(); mode = .overview }
+        if timestamp > 0, now - timestamp < 2 { return cachedOverview }
+        let pids = Self.listPIDs()
+        guard !pids.isEmpty else { reset(); return (Result(), Result()) }
+        var counters: [Counter] = []
+        counters.reserveCapacity(pids.count)
+        for pid in pids {
+            var usage = rusage_info_v2()
+            let result = withUnsafeMutablePointer(to: &usage) {
+                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }
+            }
+            guard result == 0 else { continue }
+            counters.append(Counter(pid: pid, started: usage.ri_proc_start_abstime,
+                cpuTicks: usage.ri_user_time &+ usage.ri_system_time, footprint: usage.ri_phys_footprint,
+                readBytes: usage.ri_diskio_bytesread, writeBytes: usage.ri_diskio_byteswritten))
+        }
+        let cpuPending = timestamp == 0 && !counters.isEmpty
+        let elapsed = now - timestamp
+        let cpuRanked = Self.rank(counters, previous: previous, elapsed: elapsed, mode: .cpu, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
+        let memRanked = Self.rank(counters, previous: previous, elapsed: elapsed, mode: .memory, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
+        let cpuItems = cpuRanked.map { ProcessUsageItem(name: Self.resolveName(pid: $0.pid), valueString: String(format: "%.1f%%", $0.value), pid: $0.pid) }
+        let memItems = memRanked.map { ProcessUsageItem(name: Self.resolveName(pid: $0.pid), valueString: Self.memoryString($0.value), pid: $0.pid) }
+        previous = Dictionary(counters.map { ($0.pid, $0) }, uniquingKeysWith: { _, new in new })
+        timestamp = now
+        let cpuResult = Result(items: cpuItems, available: !counters.isEmpty && !cpuPending, pending: cpuPending)
+        let memResult = Result(items: memItems, available: !counters.isEmpty, pending: false)
+        cachedOverview = (cpuResult, memResult)
+        return cachedOverview
     }
 
     private static func memoryString(_ bytes: Double) -> String {

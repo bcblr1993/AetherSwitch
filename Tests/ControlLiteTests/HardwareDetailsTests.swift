@@ -44,12 +44,28 @@ final class HardwareDetailsTests: XCTestCase {
     func testFoldedMetricsReleaseDeepHardwareSampling() {
         let monitor = SystemMonitor.shared
         _ = monitor.sample(fullMetrics: true, activeTab: "cpu")
-        let folded = monitor.sample(fullMetrics: false)
+        let folded = monitor.sample(fullMetrics: false, visibleMetrics: [.cpu, .gpu, .ram, .disk, .network])
         XCTAssertNil(folded.cpuTemperature)
+        XCTAssertNil(folded.cpuMaxTemperature)
+        XCTAssertNil(folded.gpuTemperature)
         XCTAssertNil(folded.cpuFrequencyMHz)
         XCTAssertNil(folded.screenFPS)
         XCTAssertTrue(folded.diskVolumes.isEmpty)
+        let foldedWithTemp = monitor.sample(fullMetrics: false, visibleMetrics: [.temperature])
+        XCTAssertNil(foldedWithTemp.cpuFrequencyMHz, "菜单栏仅开启温度时不得唤醒重度 IOReport 频点采样")
+        XCTAssertNil(foldedWithTemp.screenFPS)
+        XCTAssertEqual(ReportChannels.activeInstanceCount, 0)
         let opened = monitor.sample(fullMetrics: true, activeTab: "gpu")
         XCTAssertNil(opened.screenFPS, "首个帧计数仅建立基线")
+    }
+    func testThermalStateMappingAndBatteryTemperatureDecoding() {
+        XCTAssertEqual(HardwareMath.thermalStateDescription(.nominal).label, "正常")
+        XCTAssertEqual(HardwareMath.thermalStateDescription(.fair).label, "温热")
+        XCTAssertEqual(HardwareMath.thermalStateDescription(.serious).label, "降频警告")
+        XCTAssertEqual(HardwareMath.thermalStateDescription(.critical).label, "严重受限")
+        XCTAssertEqual(BatteryMonitor.decodeTemperature(3120) ?? 0, 31.2, accuracy: 0.01)
+        XCTAssertEqual(BatteryMonitor.decodeTemperature(3044) ?? 0, 30.44, accuracy: 0.01)
+        XCTAssertNil(BatteryMonitor.decodeTemperature(0))
+        XCTAssertNil(BatteryMonitor.decodeTemperature(20000))
     }
 }

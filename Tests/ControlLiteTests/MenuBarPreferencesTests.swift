@@ -40,6 +40,9 @@ final class MenuBarPreferencesTests: XCTestCase {
         XCTAssertEqual(MenuBarStatusView.color(for: .pressure, percent: 90, pressure: 1), .systemGreen)
         XCTAssertEqual(MenuBarStatusView.color(for: .pressure, percent: 50, pressure: 2), .systemOrange)
         XCTAssertEqual(MenuBarStatusView.color(for: .pressure, percent: 10, pressure: 4), .systemRed)
+        XCTAssertNil(MenuBarStatusView.percent(for: .temperature, metrics: metrics))
+        metrics.cpuTemperature = 54.6
+        XCTAssertEqual(MenuBarStatusView.percent(for: .temperature, metrics: metrics) ?? 0, 54.6, accuracy: 0.01)
     }
 
     @MainActor
@@ -50,7 +53,7 @@ final class MenuBarPreferencesTests: XCTestCase {
         let compact = MenuBarStatusView.width(for: visible, preferences: preferences)
         preferences.spacing = 12
         let wide = MenuBarStatusView.width(for: visible, preferences: preferences)
-        XCTAssertEqual(wide - compact, 48)
+        XCTAssertEqual(wide - compact, CGFloat(visible.count - 1) * 12)
         let frames = MenuBarStatusView.layout(for: visible, preferences: preferences)
         for (left, right) in zip(frames, frames.dropFirst()) { XCTAssertGreaterThanOrEqual(right.1 - left.1 - left.2, 12) }
         let numberWidth = MenuBarStatusView.widgetWidth(.cpu, preferences: preferences, height: 24)

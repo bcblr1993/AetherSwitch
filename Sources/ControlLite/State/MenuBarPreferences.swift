@@ -90,5 +90,5 @@ struct MenuBarPreferences: Equatable, Sendable {
 }
 
 extension MenuBarMetric {
-    var title: String { switch self { case .cpu: "CPU"; case .gpu: "GPU"; case .ram: "RAM"; case .disk: "SSD"; case .network: "网络" } }
+    var title: String { switch self { case .cpu: "CPU"; case .gpu: "GPU"; case .ram: "RAM"; case .disk: "SSD"; case .temperature: "TMP"; case .network: "网络" } }
 }

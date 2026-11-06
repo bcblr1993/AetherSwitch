@@ -3,26 +3,28 @@ import Combine
 import AppKit
 
 public enum MenuBarStyle: String, CaseIterable, Codable {
-    case statsColumns = "statsColumns"     // Stats 顶级监控（CPU / GPU / RAM / SSD / 速率）
+    case statsColumns = "statsColumns"     // Stats 顶级监控（CPU / GPU / RAM / SSD / 温度 / 速率）
     case compact = "compact"               // 紧凑单行（图标 + 内存 + 实时网速）
     case iconOnly = "iconOnly"             // 仅应用图标 (极简 OneSwitch)
     case iconAndSpeed = "iconAndSpeed"     // 图标 + 实时网速
     case iconAndRAM = "iconAndRAM"         // 图标 + 内存占用
+    case iconAndTemperature = "iconAndTemperature" // 图标 + 实时温度
 
     public var title: String {
         switch self {
-        case .statsColumns: return "Stats 状态栏 (CPU/GPU/RAM/SSD/网速)"
+        case .statsColumns: return "Stats 状态栏 (CPU/GPU/RAM/SSD/温度/网速)"
         case .compact: return "紧凑单行 (图标 + 内存 + 网速)"
         case .iconOnly: return "仅应用图标 (极简)"
         case .iconAndSpeed: return "图标 + 实时网速"
         case .iconAndRAM: return "图标 + 内存占用"
+        case .iconAndTemperature: return "图标 + 实时温度"
         }
     }
 }
 
 /// Stats 样式菜单栏中可单独开关的指标列（按显示顺序排列）。
 public enum MenuBarMetric: String, CaseIterable, Codable, Sendable {
-    case cpu, gpu, ram, disk, network
+    case cpu, gpu, ram, disk, temperature, network
 
     static let defaultsKey = "menuBarMetrics"
 

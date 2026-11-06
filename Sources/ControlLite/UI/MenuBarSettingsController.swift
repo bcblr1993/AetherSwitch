@@ -27,7 +27,7 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     private let networkOrder = NSButton(checkboxWithTitle: "下载在上", target: nil, action: nil)
 
     init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 510), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 548), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "菜单栏外观"
         window.isReleasedWhenClosed = false
         super.init(window: window)

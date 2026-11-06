@@ -19,21 +19,28 @@ final class PanelAccessibilityTests: XCTestCase {
 
     private func sampleMetrics() -> SystemMetrics {
         var m = SystemMetrics()
-        m.cpuUsage = 36; m.cpuUserUsage = 26; m.cpuSystemUsage = 10
-        m.gpuAvailable = true; m.gpuUsage = 13; m.gpuCoreCount = 24
+        m.cpuUsage = 36; m.cpuUserUsage = 26; m.cpuSystemUsage = 10; m.cpuTemperature = 52
+        m.gpuAvailable = true; m.gpuUsage = 13; m.gpuCoreCount = 24; m.gpuTemperature = 48
         m.ramPercent = 71; m.ramUsedGB = 45.6; m.ramTotalGB = 64; m.ramPressureLevel = "正常"
         m.diskPercent = 89; m.diskUsedGB = 828; m.diskTotalGB = 926
         m.netDownloadBytesSec = 12 * 1024; m.netUploadBytesSec = 900
+        m.topProcessesAvailable = true; m.topProcessesPending = false
+        m.cpuTopProcesses = [ProcessUsageItem(name: "WindowServer", valueString: "18.4%", pid: 101)]
+        m.ramTopProcesses = [ProcessUsageItem(name: "Xcode", valueString: "2.4 GB", pid: 202)]
         return m
     }
 
-    /// 回归：概览的四张指标卡和网络卡是整块自绘的，之前没有任何无障碍描述，VoiceOver 读不到数值。
+    /// 回归：概览的四张指标卡、网络卡和高占用进程卡是整块自绘的，VoiceOver 必须能读到数值与进程项。
     @MainActor
     func testOverviewCardsExposeValuesToVoiceOver() {
         let original = AppState.shared.selectedTab
         defer { AppState.shared.selectedTab = original }
         let texts = accessibleSummaries(tab: "overview", metrics: sampleMetrics())
-        for expected in [("CPU", "36"), ("GPU", "13"), ("内存", "71"), ("磁盘", "89"), ("网络", "12")] {
+        for expected in [
+            ("CPU", "36"), ("CPU", "52°C"), ("GPU", "13"), ("GPU", "48°C"),
+            ("内存", "71"), ("磁盘", "89"), ("网络", "12"),
+            ("高占用进程", "WindowServer 18.4%"), ("高占用进程", "Xcode 2.4 GB")
+        ] {
             XCTAssertTrue(texts.contains { $0.contains(expected.0) && $0.contains(expected.1) },
                           "概览缺少 \(expected.0) 的无障碍数值（\(expected.1)）：\(texts)")
         }

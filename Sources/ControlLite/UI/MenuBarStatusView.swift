@@ -138,9 +138,10 @@ final class MenuBarStatusView: NSView {
         switch widget.widget {
         case .mini:
             let font = font(size: widget.label ? 12 : 14, weight: .regular, preferences: preferences)
-            // 普通读数固定预留两位数，避免每次采样宽度抖动；100% 时才扩展。
+            // 普通读数固定预留两位数，避免每次采样宽度抖动；100% / 100°C 时才扩展。
             let threeDigits = metrics.map { Self.percent(for: metric, metrics: $0).map { $0.rounded() >= 100 } ?? false } ?? true
-            let value = threeDigits ? "100%" : "99%"
+            let unit = metric == .temperature ? "°C" : "%"
+            let value = (threeDigits ? "100" : "99") + unit
             let labelWidth = widget.label ? (metric.title as NSString).size(withAttributes: [.font: Self.font(size: 7, weight: .light, preferences: preferences)]).width : 0
             return ceil(max(labelWidth, (value as NSString).size(withAttributes: [.font: font]).width))
         case .bar: return 11 + (widget.label ? 8 : 0)
@@ -192,6 +193,9 @@ final class MenuBarStatusView: NSView {
         case .gpu: guard metrics.gpuAvailable else { return nil }; raw = metrics.gpuUsage
         case .ram: raw = Double(metrics.ramPercent)
         case .disk: raw = Double(metrics.diskPercent)
+        case .temperature:
+            guard let temp = metrics.cpuTemperature, temp.isFinite, temp > 0 else { return nil }
+            return min(150, max(0, temp))
         case .network: return nil
         }
         return raw.isFinite ? min(100, max(0, raw)) : nil
@@ -224,7 +228,8 @@ final class MenuBarStatusView: NSView {
                 if widget.widget == .mini {
                     if widget.label { text(metric.title, rect: NSRect(x: x, y: origin + 12, width: width, height: 9), size: 7, weight: .light, color: .labelColor, alignment: widget.alignment) }
                     let size: CGFloat = widget.label ? 12 : 14
-                    let number = percent.map { "\(Int($0.rounded(.toNearestOrEven)))%" } ?? "—"
+                    let unit = metric == .temperature ? "°C" : "%"
+                    let number = percent.map { "\(Int($0.rounded(.toNearestOrEven)))\(unit)" } ?? "—"
                     text(number, rect: NSRect(x: x, y: widget.label ? origin + 1 : (bounds.height - size) / 2, width: width, height: size + 3), size: size, weight: .regular, color: color, alignment: widget.label ? widget.alignment : .center)
                     continue
                 }
@@ -241,21 +246,22 @@ final class MenuBarStatusView: NSView {
                     text("—", rect: chart, size: 12, weight: .regular, color: .secondaryLabelColor, alignment: .center)
                     continue
                 }
+                let chartPercent = min(100, max(0, percent))
                 if widget.widget == .bar {
                     let outline = NSBezierPath(roundedRect: chart.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
                     NSColor.labelColor.setFill(); outline.fill()
                     NSGraphicsContext.saveGraphicsState(); outline.addClip()
                     (widget.color == .monochrome ? NSColor.windowBackgroundColor : color).setFill()
-                    NSBezierPath(rect: NSRect(x: chart.minX, y: chart.minY, width: chart.width, height: chart.height * percent / 100)).fill()
+                    NSBezierPath(rect: NSRect(x: chart.minX, y: chart.minY, width: chart.width, height: chart.height * chartPercent / 100)).fill()
                     NSGraphicsContext.restoreGraphicsState()
                     NSColor.labelColor.setStroke(); outline.lineWidth = 0.5; outline.stroke()
                 } else {
                     NSColor.labelColor.withAlphaComponent(0.2).setFill(); NSBezierPath(ovalIn: chart).fill()
-                    guard percent > 0 else { continue }
+                    guard chartPercent > 0 else { continue }
                     let path = NSBezierPath()
                     let center = NSPoint(x: chart.midX, y: chart.midY)
                     path.move(to: center)
-                    path.appendArc(withCenter: center, radius: chart.width / 2, startAngle: 90, endAngle: 90 - CGFloat(percent) * 3.6, clockwise: true)
+                    path.appendArc(withCenter: center, radius: chart.width / 2, startAngle: 90, endAngle: 90 - CGFloat(chartPercent) * 3.6, clockwise: true)
                     path.close(); color.setFill(); path.fill()
                 }
             }

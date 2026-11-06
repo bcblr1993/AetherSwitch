@@ -49,6 +49,9 @@ public struct SystemMetrics: Sendable {
     public var cpuECoreCount = 0
     public var cpuPCoreCount = 0
     public var cpuTemperature: Double?
+    public var cpuMaxTemperature: Double?
+    public var thermalStateLevel: String = "正常"
+    public var thermalStateCode: Int = 0
     public var cpuFrequencyMHz: Double?
     public var cpuFrequencyMaximumMHz: Double?
     public var cpuEFrequencyMHz: Double?
@@ -67,6 +70,7 @@ public struct SystemMetrics: Sendable {
     public var gpuTilerUsage: Double = 0.0
     public var gpuRenderAvailable = false
     public var gpuTilerAvailable = false
+    public var gpuTemperature: Double?
     public var gpuHistory: [Double] = []
     public var screenFPS: Double?
     public var aneWatts: Double?
@@ -266,7 +270,7 @@ public final class SystemMonitor: @unchecked Sendable {
         networkMonitor.pause()
         disks.reset()
         processes.reset()
-        hardware.reset()
+        hardware.resetAll()
         batteryMonitor.reset()
     }
 
@@ -373,9 +377,19 @@ public final class SystemMonitor: @unchecked Sendable {
         } else {
             disks.reset()
         }
+        if requested.contains(.temperature) || (fullMetrics && ["overview", "cpu", "gpu"].contains(activeTab)) {
+            let includeGPU = fullMetrics && ["overview", "gpu"].contains(activeTab)
+            let temps = hardware.sampleTemperature(chip: chipName, includeGPU: includeGPU)
+            m.cpuTemperature = temps.cpuAverage
+            m.cpuMaxTemperature = temps.cpuMaximum
+            m.gpuTemperature = temps.gpu
+            let thermal = HardwareMath.thermalStateDescription(ProcessInfo.processInfo.thermalState)
+            m.thermalStateLevel = thermal.label
+            m.thermalStateCode = thermal.code
+        }
         if fullMetrics && ["cpu", "gpu"].contains(activeTab) {
             let details = hardware.sample(tab: activeTab, chip: chipName, efficiencyCount: eCoreCount, performanceCount: pCoreCount)
-            m.cpuTemperature = details.temperature
+            if m.cpuTemperature == nil { m.cpuTemperature = details.temperature }
             m.cpuFrequencyMHz = details.frequency.total
             m.cpuFrequencyMaximumMHz = details.frequency.maximum
             m.cpuEFrequencyMHz = details.frequency.efficiency
@@ -383,7 +397,10 @@ public final class SystemMonitor: @unchecked Sendable {
             m.screenFPS = details.fps
             m.aneWatts = details.aneWatts
         } else { hardware.reset() }
-        if fullMetrics && ["overview", "battery"].contains(activeTab) { m.battery = batteryMonitor.sample() }
+        if fullMetrics && ["overview", "battery"].contains(activeTab) {
+            let chip = chipName
+            m.battery = batteryMonitor.sample(fallbackTemperature: { [hardware] in hardware.sampleBatteryTemperature(chip: chip) })
+        }
         guard fullMetrics else {
             processes.reset()
             cpuHistoryBuffer.removeAll(keepingCapacity: true)
@@ -411,7 +428,13 @@ public final class SystemMonitor: @unchecked Sendable {
         m.ramHistory = ramHistoryBuffer
 
         // 仅在对应 Tab 需要时才抓取 TOP 进程，确保极度省电
-        if includeProcesses && ["cpu", "ram", "disk"].contains(activeTab) {
+        if includeProcesses && activeTab == "overview" {
+            let overviewProcesses = processes.sampleOverview()
+            m.cpuTopProcesses = overviewProcesses.cpu.items
+            m.ramTopProcesses = overviewProcesses.memory.items
+            m.topProcessesAvailable = overviewProcesses.cpu.available || overviewProcesses.memory.available
+            m.topProcessesPending = overviewProcesses.cpu.pending
+        } else if includeProcesses && ["cpu", "ram", "disk"].contains(activeTab) {
             let result = processes.sample(activeTab == "cpu" ? .cpu : activeTab == "ram" ? .memory : .disk)
             m.topProcessesAvailable = result.available
             m.topProcessesPending = result.pending

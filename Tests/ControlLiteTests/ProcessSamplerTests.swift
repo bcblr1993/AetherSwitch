@@ -32,4 +32,28 @@ final class ProcessSamplerTests: XCTestCase {
         // 当前测试进程至少占用数十 MB；榜单必须能反映内存占用最大的真实进程，而不是只看低 PID。
         XCTAssertFalse(result.items.allSatisfy { ($0.pid ?? 0) < 400 }, "榜单全部来自低 PID，说明进程列表被截断")
     }
+
+    func testSampleOverviewComputesBothCPUAndMemoryTopProcesses() {
+        let sampler = ProcessSampler()
+        let t0 = ProcessInfo.processInfo.systemUptime
+        let first = sampler.sampleOverview(now: t0)
+        XCTAssertFalse(first.cpu.available)
+        XCTAssertTrue(first.cpu.pending, "首次概览采样需建立 CPU 基线")
+        XCTAssertTrue(first.memory.available)
+        XCTAssertFalse(first.memory.pending, "内存驻留集无需历史基线，首次即可返回")
+        XCTAssertEqual(first.memory.items.count, 5)
+
+        usleep(50_000)
+        let second = sampler.sampleOverview(now: t0 + 2.1)
+        XCTAssertTrue(second.cpu.available)
+        XCTAssertFalse(second.cpu.pending)
+        XCTAssertFalse(second.cpu.items.isEmpty)
+        XCTAssertEqual(second.memory.items.count, 5)
+    }
+
+    func testResolveNamePrefersFullExecutableNameOverTruncatedComm() {
+        let currentName = ProcessSampler.resolveName(pid: getpid())
+        XCTAssertFalse(currentName.isEmpty)
+        XCTAssertNotEqual(currentName, "PID \(getpid())")
+    }
 }

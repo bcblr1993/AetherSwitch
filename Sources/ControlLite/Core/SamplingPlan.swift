@@ -9,6 +9,7 @@ enum SamplingPlan {
         case .iconOnly: []
         case .iconAndRAM: [.ram]
         case .iconAndSpeed: [.network]
+        case .iconAndTemperature: [.temperature]
         }
     }
     static func metrics(visible: Set<MenuBarMetric>, full: Bool, tab: String) -> Set<MenuBarMetric> {

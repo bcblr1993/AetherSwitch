@@ -9,6 +9,7 @@ struct BatterySnapshot: Sendable {
     var remainingMinutes: Int?
     var healthPercentage: Int?
     var cycleCount: Int?
+    var temperature: Double?
     var summary: String {
         guard available else { return "无内置电池" }
         let value = percentage.map { "\($0)%" } ?? "不可用"
@@ -24,7 +25,11 @@ final class BatteryMonitor {
         timestamp = -Double.infinity
         cached = BatterySnapshot()
     }
-    func sample() -> BatterySnapshot {
+    static func decodeTemperature(_ raw: Int) -> Double? {
+        let value = Double(raw) / 100.0
+        return value.isFinite && value > 5 && value < 95 ? value : nil
+    }
+    func sample(fallbackTemperature: () -> Double? = { nil }) -> BatterySnapshot {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - timestamp >= 30 else { return cached }
         timestamp = now
@@ -55,6 +60,12 @@ final class BatteryMonitor {
                let design = integer("DesignCapacity") ?? batteryData?["DesignCapacity"] as? Int, design > 0 {
                 result.healthPercentage = min(100, max(0, Int(Double(maximum) / Double(design) * 100)))
             }
+            if let rawTemp = integer("Temperature") ?? integer("VirtualTemperature") {
+                result.temperature = Self.decodeTemperature(rawTemp)
+            }
+        }
+        if result.available && result.temperature == nil {
+            result.temperature = fallbackTemperature()
         }
         cached = result
         return result
