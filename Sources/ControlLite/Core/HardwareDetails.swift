@@ -127,6 +127,12 @@ enum HardwareMath {
 }
 
 final class TemperatureSensor {
+    private static let instanceLock = NSLock()
+    nonisolated(unsafe) private static var _activeInstanceCount = 0
+    static var activeInstanceCount: Int {
+        instanceLock.lock(); defer { instanceLock.unlock() }
+        return _activeInstanceCount
+    }
     private var connection: io_connect_t = 0
     private var cpuKeys: [String] = []
     private var gpuKeys: [String] = []
@@ -137,6 +143,7 @@ final class TemperatureSensor {
         guard service != 0 else { return }
         defer { IOObjectRelease(service) }
         guard IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS else { connection = 0; return }
+        Self.instanceLock.lock(); Self._activeInstanceCount += 1; Self.instanceLock.unlock()
         batteryKeys = ["TB0T", "TB1T", "TB2T"].filter { read($0) != nil }
         for key in ["TC0D", "TC0E", "TC0F", "TC0P", "TC0H"] where read(key) != nil {
             cpuKeys = [key]
@@ -167,7 +174,12 @@ final class TemperatureSensor {
         cpuKeys = cpuCandidates.filter { read($0) != nil }
         gpuKeys = gpuCandidates.filter { read($0) != nil }
     }
-    deinit { if connection != 0 { IOServiceClose(connection) } }
+    deinit {
+        if connection != 0 {
+            IOServiceClose(connection)
+            Self.instanceLock.lock(); Self._activeInstanceCount -= 1; Self.instanceLock.unlock()
+        }
+    }
     func sampleCPU() -> (average: Double?, maximum: Double?) {
         let values = cpuKeys.compactMap { read($0) }
         guard !values.isEmpty else { return (nil, nil) }
@@ -215,7 +227,8 @@ final class HardwareDetails {
     private var active = ""
     private var efficiency: [Double] = [], performance: [Double] = []
     func reset() { cpu = nil; frames = nil; energy = nil; active = "" }
-    func resetAll() { reset(); temperature = nil }
+    func resetTemperature() { temperature = nil }
+    func resetAll() { reset(); resetTemperature() }
     private func sensor(chip: String) -> TemperatureSensor {
         if let temperature { return temperature }
         let created = TemperatureSensor(chip: chip)

@@ -104,7 +104,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    @Published public private(set) var switchError: String?
+    @Published public internal(set) var switchError: String?
     @Published public private(set) var pendingSwitches: Set<Int> = []
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
@@ -190,7 +190,7 @@ public final class AppState: ObservableObject {
                 autoreleasepool {
                     if let override { return override(isFull, tab, isFull, visible) }
                     let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull, visibleMetrics: visible)
-                    let s = isFull ? SwitchManager.shared.getCurrentStates() : nil
+                    let s = (isFull && tab == "overview") ? SwitchManager.shared.getCurrentStates() : nil
                     return (m, s)
                 }
             }.value

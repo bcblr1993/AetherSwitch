@@ -83,7 +83,10 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         refreshInterval.target = self; refreshInterval.action = #selector(changeRefresh)
         refreshInterval.setAccessibilityLabel("面板关闭时刷新间隔")
         root.addArrangedSubview(row([label("后台刷新"), refreshInterval, label("展开时每秒刷新", size: 11)]))
-        metricOrder.addItems(withTitles: MenuBarMetric.allCases.map(\.title))
+        for metric in MenuBarMetric.allCases {
+            metricOrder.addItem(withTitle: metric.title)
+            metricOrder.lastItem?.representedObject = metric.rawValue
+        }
         metricOrder.setAccessibilityLabel("调整顺序的指标")
         for control in [moveLeft, moveRight] { control.target = self; control.action = #selector(moveMetric(_:)); control.bezelStyle = .rounded }
         root.addArrangedSubview(row([label("指标顺序"), metricOrder, moveLeft, moveRight]))
@@ -125,6 +128,15 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
 
     private func update(_ preferences: MenuBarPreferences) {
         preview.preferences = preferences
+        let selectedMetric = (metricOrder.selectedItem?.representedObject as? String).flatMap(MenuBarMetric.init(rawValue:))
+            ?? metricOrder.titleOfSelectedItem.flatMap { title in MenuBarMetric.allCases.first { $0.title == title } }
+            ?? preferences.order.first ?? .cpu
+        metricOrder.removeAllItems()
+        for metric in preferences.order {
+            metricOrder.addItem(withTitle: metric.title)
+            metricOrder.lastItem?.representedObject = metric.rawValue
+        }
+        metricOrder.selectItem(withTitle: selectedMetric.title)
         spacing.selectItem(at: min(12, max(0, preferences.spacing))); font.selectItem(at: preferences.monospacedDigits ? 1 : 0)
         networkIcon.selectItem(withTitle: preferences.networkIcon.title)
         networkUnits.state = preferences.networkUnits ? .on : .off; networkColor.state = preferences.networkColor ? .on : .off; networkOrder.state = preferences.networkDownloadFirst ? .on : .off
@@ -179,8 +191,9 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         state.backgroundInterval = values[refreshInterval.indexOfSelectedItem]
     }
     @objc private func moveMetric(_ sender: NSButton) {
-        guard MenuBarMetric.allCases.indices.contains(metricOrder.indexOfSelectedItem) else { return }
-        let metric = MenuBarMetric.allCases[metricOrder.indexOfSelectedItem]
+        let selectedMetric = (metricOrder.selectedItem?.representedObject as? String).flatMap(MenuBarMetric.init(rawValue:))
+            ?? metricOrder.titleOfSelectedItem.flatMap { title in MenuBarMetric.allCases.first { $0.title == title } }
+        guard let metric = selectedMetric else { return }
         var preferences = state.menuBarPreferences
         guard let index = preferences.order.firstIndex(of: metric) else { return }
         let step = sender === moveLeft ? -1 : 1

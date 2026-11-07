@@ -214,4 +214,245 @@ final class ReviewImprovementsTests: XCTestCase {
         let readings = await hardware.readNativeBrightness(displays: displays)
         XCTAssertLessThanOrEqual(readings.count, displays.count)
     }
+
+    func testSelectedDiskVolumePersistsAcrossOverviewAndFoldedMenuBarSampling() {
+        let monitor = SystemMonitor.shared
+        defer {
+            monitor.clearCachedDiskVolumesForTesting()
+            monitor.selectDisk(path: "/")
+        }
+
+        let customVolume = DiskVolume(
+            path: "/System/Volumes/Data",
+            name: "DataVolume",
+            fileSystem: "APFS",
+            model: "InternalSSD",
+            totalGB: 777.0,
+            freeGB: 333.0
+        )
+        monitor.injectCachedDiskVolumeForTesting(customVolume)
+        monitor.selectDisk(path: customVolume.path)
+
+        let diskTabMetrics = monitor.sample(fullMetrics: true, activeTab: "disk")
+        XCTAssertEqual(diskTabMetrics.diskTotalGB, 777.0, accuracy: 0.1)
+        XCTAssertEqual(diskTabMetrics.diskFreeGB, 333.0, accuracy: 0.1)
+
+        let overviewMetrics = monitor.sample(fullMetrics: true, activeTab: "overview")
+        XCTAssertEqual(overviewMetrics.diskTotalGB, 777.0, accuracy: 0.1, "Overview tab must use the selected disk volume capacity instead of reverting to '/'")
+        XCTAssertEqual(overviewMetrics.diskFreeGB, 333.0, accuracy: 0.1)
+
+        let foldedMetrics = monitor.sample(fullMetrics: false, visibleMetrics: [.disk])
+        XCTAssertEqual(foldedMetrics.diskTotalGB, 777.0, accuracy: 0.1, "Folded menu bar SSD metric must use the selected disk volume capacity")
+    }
+
+    func testProcessSamplerPreservesBaselineAcrossOverviewAndDetailTabSwitches() {
+        let sampler = ProcessSampler()
+        let t0 = ProcessInfo.processInfo.systemUptime
+        let first = sampler.sampleOverview(now: t0)
+        XCTAssertTrue(first.cpu.pending)
+
+        usleep(50_000)
+        let cpuDetail = sampler.sample(.cpu, now: t0 + 1.0)
+        XCTAssertTrue(cpuDetail.available, "Switching from overview to CPU tab must reuse existing baseline instead of resetting")
+        XCTAssertFalse(cpuDetail.pending)
+        XCTAssertFalse(cpuDetail.items.isEmpty)
+
+        usleep(50_000)
+        let diskDetail = sampler.sample(.disk, now: t0 + 2.0)
+        XCTAssertTrue(diskDetail.available, "Switching from CPU to Disk tab must reuse existing baseline")
+        XCTAssertFalse(diskDetail.pending)
+
+        usleep(50_000)
+        let backToOverview = sampler.sampleOverview(now: t0 + 3.0)
+        XCTAssertTrue(backToOverview.cpu.available, "Switching back to Overview must reuse existing baseline")
+        XCTAssertFalse(backToOverview.cpu.pending)
+    }
+
+    @MainActor
+    func testTemperatureUsesDedicatedColorAndGaugeScaleInsteadOfPercentageThresholds() {
+        XCTAssertEqual(LoadLevel(temperatureCelsius: 52), .low, "52°C is normal operating temperature and must not trigger moderate warning")
+        XCTAssertEqual(LoadLevel(temperatureCelsius: 68), .moderate)
+        XCTAssertEqual(LoadLevel(temperatureCelsius: 82), .elevated)
+        XCTAssertEqual(LoadLevel(temperatureCelsius: 95), .critical)
+
+        XCTAssertEqual(Palette.temperatureTint(for: 52), Palette.levelLow)
+        XCTAssertEqual(Palette.temperatureTint(for: 95), Palette.levelCritical)
+        XCTAssertEqual(Palette.temperaturePercent(for: 25), 0, accuracy: 0.01)
+        XCTAssertEqual(Palette.temperaturePercent(for: 67.5), 50, accuracy: 0.01)
+        XCTAssertEqual(Palette.temperaturePercent(for: 110), 100, accuracy: 0.01)
+
+        XCTAssertEqual(MenuBarStatusView.temperatureUtilizationColor(55), .systemBlue)
+        XCTAssertEqual(MenuBarStatusView.temperatureUtilizationColor(70), .orange)
+        XCTAssertEqual(MenuBarStatusView.temperatureUtilizationColor(90), .red)
+    }
+
+    @MainActor
+    func testNetworkVisualResetsHistoryWhenInterfaceChanges() {
+        var metrics = SystemMetrics()
+        metrics.network.selection = "auto"
+        metrics.network.interface = "en0"
+        metrics.netDownloadBytesSec = 1024
+        let view = DetailVisualView(kind: "network", metrics: metrics)
+        for i in 1...15 {
+            metrics.netDownloadBytesSec = Double(i) * 1024
+            view.metrics = metrics
+        }
+        XCTAssertGreaterThan(view.networkHistoryCount, 10)
+
+        metrics.network.interface = "en1"
+        metrics.netDownloadBytesSec = 512
+        view.metrics = metrics
+        XCTAssertLessThanOrEqual(view.networkHistoryCount, 2, "Switching active network interface must reset chart history so old interface rates are not spliced")
+    }
+
+    func testFoldedModeWithoutTemperatureReleasesSMCTemperatureSensor() {
+        let monitor = SystemMonitor.shared
+        _ = monitor.sample(fullMetrics: true, activeTab: "cpu")
+        _ = monitor.sample(fullMetrics: false, visibleMetrics: [.cpu, .ram])
+        XCTAssertEqual(TemperatureSensor.activeInstanceCount, 0, "AppleSMC connection must be closed when folded and temperature metric is not visible")
+    }
+
+    @MainActor
+    func testStatusWindowResizeObserverRebindsWhenButtonMovesToNewWindow() throws {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let delegate = AppDelegate()
+        delegate.setupStatusItem()
+        defer { delegate.tearDownStatusItem() }
+
+        let button = try XCTUnwrap(delegate.statusItem?.button)
+        let initialWindow = try XCTUnwrap(button.window)
+        XCTAssertTrue(delegate.observedStatusWindowForTesting === initialWindow)
+
+        let replacementWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 24), styleMask: .borderless, backing: .buffered, defer: false)
+        replacementWindow.isReleasedWhenClosed = false
+        defer { replacementWindow.close() }
+        replacementWindow.contentView?.addSubview(button)
+        delegate.refreshStatusWindowObservationForTesting(button: button)
+
+        XCTAssertTrue(delegate.observedStatusWindowForTesting === replacementWindow, "Observer must rebind when status bar button moves to a new NSWindow instance")
+    }
+
+    func testDisplayBacklightReadQueriesDoNotBlockWhileVerifySleeps() {
+        let suite = "AetherSwitch.PowerConcurrency.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let enteredVerify = DispatchSemaphore(value: 0)
+        let readCount = OSAllocatedUnfairLock(initialState: 0)
+        let link = DisplayBacklightLink(
+            identity: .init(vendor: 10, product: 20, serial: 30),
+            isCurrent: { true },
+            read: {
+                let step = readCount.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                if step == 1 { return 1 } // Initial read before write(4)
+                enteredVerify.signal()
+                Thread.sleep(forTimeInterval: 0.25)
+                return 4
+            },
+            write: { _ in true }
+        )
+
+        let power = DisplayBacklightControl(defaults: defaults)
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = power.turnOff(7, link: link)
+            done.signal()
+        }
+        XCTAssertEqual(enteredVerify.wait(timeout: .now() + 2), .success)
+
+        let start = ProcessInfo.processInfo.systemUptime
+        _ = power.hasRecovery(7)
+        _ = power.isOff(7)
+        let elapsedMs = (ProcessInfo.processInfo.systemUptime - start) * 1000
+        _ = done.wait(timeout: .now() + 2)
+
+        XCTAssertLessThan(elapsedMs, 30, "hasRecovery/isOff must not block on slow I2C verification sleep (took \(elapsedMs)ms)")
+    }
+
+    @MainActor
+    func testPanelPreferredHeightRecoversAfterTemporaryErrorBannerClears() {
+        let state = AppState.shared
+        let originalTab = state.selectedTab
+        let originalError = state.switchError
+        defer {
+            state.switchError = originalError
+            state.selectedTab = originalTab
+        }
+        state.showAbout = false
+        state.selectedTab = "overview"
+        state.switchError = nil
+
+        let controller = NativePanelController(maximumHeight: 900)
+        _ = controller.view
+        let baselineHeight = controller.preferredContentSize.height
+        XCTAssertEqual(baselineHeight, 800, accuracy: 1.0)
+
+        state.switchError = Array(repeating: "权限受限：无法控制 System Events 执行外观切换，请在系统设置中开启自动化权限。", count: 8).joined(separator: "\n")
+        let expandedHeight = controller.preferredContentSize.height
+        XCTAssertGreaterThan(expandedHeight, baselineHeight)
+
+        state.switchError = nil
+        XCTAssertEqual(controller.preferredContentSize.height, baselineHeight, accuracy: 1.0, "Preferred height must shrink back to baseline once temporary error banner hides")
+    }
+
+    @MainActor
+    func testOverviewAccessibilityDoesNotReportMemoryProcessesAsPendingWhenReady() {
+        let state = AppState.shared
+        let originalTab = state.selectedTab
+        let originalMetrics = state.metrics
+        defer {
+            state.selectedTab = originalTab
+            state.updateForSnapshot(metrics: originalMetrics, switches: state.switches)
+        }
+        var m = SystemMetrics()
+        m.topProcessesAvailable = true
+        m.topProcessesPending = true // CPU still waiting for second tick
+        m.cpuTopProcesses = []
+        m.ramTopProcesses = []
+        state.showAbout = false
+        state.selectedTab = "overview"
+        state.updateForSnapshot(metrics: m, switches: state.switches)
+
+        let controller = NativePanelController()
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let values = descendants(controller.view)
+            .filter { $0.isAccessibilityElement() && $0.accessibilityLabel() == "高占用进程" }
+            .compactMap { $0.accessibilityValue() as? String }
+        XCTAssertEqual(values.first, "CPU：采样中；内存：暂无")
+    }
+
+    @MainActor
+    func testMenuBarSettingsMetricOrderPopupReflectsCurrentOrder() throws {
+        let state = AppState.shared
+        let originalPrefs = state.menuBarPreferences
+        let originalVisible = state.menuBarMetrics
+        defer {
+            state.menuBarPreferences = originalPrefs
+            state.menuBarMetrics = originalVisible
+        }
+        var prefs = MenuBarPreferences()
+        prefs.order = [.cpu, .gpu, .ram, .disk, .temperature, .network]
+        state.menuBarPreferences = prefs
+        state.menuBarMetrics = Set(MenuBarMetric.allCases)
+
+        let controller = MenuBarSettingsController()
+        defer { controller.close() }
+        let content = try XCTUnwrap(controller.window?.contentView)
+        func controls(_ view: NSView) -> [NSControl] {
+            ((view as? NSControl).map { [$0] } ?? []) + view.subviews.flatMap { controls($0) }
+        }
+        let all = controls(content)
+        let orderPopup = try XCTUnwrap(all.first { $0.accessibilityLabel() == "调整顺序的指标" } as? NSPopUpButton)
+        let leftButton = try XCTUnwrap(all.compactMap { $0 as? NSButton }.first { $0.title == "向左" })
+
+        orderPopup.selectItem(withTitle: MenuBarMetric.gpu.title)
+        _ = leftButton.target?.perform(leftButton.action, with: leftButton)
+
+        XCTAssertEqual(orderPopup.itemTitles, state.menuBarPreferences.order.map(\.title), "Order popup items must reflect the updated metric order")
+        XCTAssertEqual(orderPopup.titleOfSelectedItem, MenuBarMetric.gpu.title, "Selected metric must remain selected after moving")
+    }
 }

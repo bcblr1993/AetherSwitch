@@ -116,7 +116,10 @@ final class MenuBarStatusView: NSView {
             let value = percent.map { preferences[metric].widget == .mini ? String(Int($0.rounded(.toNearestOrEven))) : String($0) } ?? "unavailable"
             let color = preferences[metric].color
             let colorKey = color == .pressure ? String(metrics.ramPressureCode ?? -1)
-                : color == .utilization ? String(percent.map { $0 <= 60 ? 0 : $0 <= 80 ? 1 : 2 } ?? -1) : "fixed"
+                : color == .utilization ? String(percent.map {
+                    if metric == .temperature { return $0 <= 65 ? 0 : $0 <= 85 ? 1 : 2 }
+                    return $0 <= 60 ? 0 : $0 <= 80 ? 1 : 2
+                } ?? -1) : "fixed"
             return [value, colorKey]
         }
     }
@@ -184,10 +187,18 @@ final class MenuBarStatusView: NSView {
         return .red
     }
 
-    static func color(for mode: MenuBarColor, percent: Double?, pressure: Int32?) -> NSColor {
+    /// 菜单栏温度着色：<=65°C 正常蓝色，65~85°C 橙色，>85°C 红色。
+    static func temperatureUtilizationColor(_ celsius: Double) -> NSColor {
+        guard celsius.isFinite else { return .secondaryLabelColor }
+        if celsius <= 65 { return .systemBlue }
+        if celsius <= 85 { return .orange }
+        return .red
+    }
+
+    static func color(for mode: MenuBarColor, percent: Double?, pressure: Int32?, metric: MenuBarMetric = .cpu) -> NSColor {
         guard let percent, percent.isFinite else { return .secondaryLabelColor }
         switch mode {
-        case .utilization: return utilizationColor(percent)
+        case .utilization: return metric == .temperature ? temperatureUtilizationColor(percent) : utilizationColor(percent)
         case .monochrome: return .labelColor
         case .accent: return .controlAccentColor
         case .pressure:
@@ -238,7 +249,7 @@ final class MenuBarStatusView: NSView {
                 if metric == .network { drawNetwork(x: x, width: width); continue }
                 let widget = preferences[metric]
                 let percent = Self.percent(for: metric, metrics: metrics)
-                let color = Self.color(for: widget.color, percent: percent, pressure: metric == .ram ? metrics.ramPressureCode : nil)
+                let color = Self.color(for: widget.color, percent: percent, pressure: metric == .ram ? metrics.ramPressureCode : nil, metric: metric)
                 let origin = (bounds.height - 22) / 2
                 if widget.widget == .mini {
                     if widget.label { text(metric.title, rect: NSRect(x: x, y: origin + 12, width: width, height: 9), size: 7, weight: .light, color: .labelColor, alignment: widget.alignment) }
@@ -261,7 +272,7 @@ final class MenuBarStatusView: NSView {
                     text("—", rect: chart, size: 12, weight: .regular, color: .secondaryLabelColor, alignment: .center)
                     continue
                 }
-                let chartPercent = min(100, max(0, percent))
+                let chartPercent = min(100, max(0, metric == .temperature ? Palette.temperaturePercent(for: percent) : percent))
                 if widget.widget == .bar {
                     let outline = NSBezierPath(roundedRect: chart.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
                     NSColor.labelColor.setFill(); outline.fill()

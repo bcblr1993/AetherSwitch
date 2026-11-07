@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.1] - 2026-11-07
+
+### Fixed
+- 修复磁盘页切换分卷（`selectedDiskPath`）后，概览页与折叠态菜单栏 `SSD` 指标仍回退读取根分区 `/` 的容量不一致问题。
+- 修复在「概览」与「CPU / 内存 / 磁盘」详情页之间切换时清空进程差分基线的问题，切页时直接复用已有基线，消除 1 秒空白等待。
+- 修复温度指标直接套用 0–100% 负载阈值与量程导致 50°C 正常温度显示黄色警告的问题，为温度圆环、柱状图、饼图与按利用率着色建立独立量程（25–110°C）与分级阈值。
+- 修复网络详情页切换活动网络接口时历史速率曲线与旧接口采样点拼接的问题。
+- 修复状态栏宿主窗口（`NSStatusBarWindow`）实例变更后 `didResizeNotification` 高度自愈监听未重绑定的问题。
+- 修复面板被临时多行错误提示撑高后，错误消失时窗口高度无法自动回落的问题。
+- 修复概览页首次展开时无障碍（VoiceOver）与占位文本将已就绪的内存进程误报为「采样中」的问题。
+- 修复「菜单栏外观」设置窗口中「指标顺序」下拉列表不随左右移动实时更新顺序的问题。
+
+### Performance & Concurrency
+- 折叠态未开启菜单栏温度显示或切离温度相关页面时，主动关闭 `AppleSMC` 内核连接（`TemperatureSensor`），实现零冗余内核句柄常驻。
+- 仅在「概览」页查询快捷开关状态，并将 `SystemFinderControl` 的桌面图标与隐藏文件查询合并为单次 `CFPreferencesAppSynchronize`，大幅降低主线程偏好设置同步开销；`killall Finder` 超时回收补充 `SIGKILL` 兜底与空设备重定向。
+- `DisplayBacklightControl` 将 `hasRecovery` / `isOff` 高频只读查询拆分为独立的无阻塞 `OSAllocatedUnfairLock` 状态，消除外屏 DPMS 背光验证期间对主线程亮度滑块的阻塞。
+
+### Tests
+- 新增 10 项 TDD 单元测试覆盖分卷持久化、跨页进程基线复用、温度独立量程与着色、网络接口切换重置、SMC 连接释放、状态栏窗口重绑、背光锁并发无阻塞、面板高度回落、无障碍状态与指标顺序同步（总计 177 项测试全部通过）。
+
 ## [1.10.0] - 2026-11-06
 
 ### Added

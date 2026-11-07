@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 struct DisplayBacklightLink: Sendable {
     let identity: BrightnessDDC.Identity
@@ -13,10 +14,13 @@ struct DisplayBacklightLink: Sendable {
 /// termination are serialized by the lock, including calls from AppKit on exit.
 final class DisplayBacklightControl: @unchecked Sendable {
     static let shared = DisplayBacklightControl(defaults: .standard)
-    private struct Recovery { let link: DisplayBacklightLink; var confirmedOff: Bool }
+    private struct Recovery: Sendable { let link: DisplayBacklightLink; var confirmedOff: Bool }
+    private struct FastState: Sendable {
+        var recovery: [UInt32: Recovery] = [:]
+        var stopped = false
+    }
     private let lock = NSRecursiveLock()
-    private var recovery: [UInt32: Recovery] = [:]
-    private var stopped = false
+    private let fastState = OSAllocatedUnfairLock(initialState: FastState())
     private let defaults: UserDefaults
     private static let defaultsKey = "backlightRecoveryIdentities"
     private static let blockedKey = "backlightUnsupportedIdentities"
@@ -50,8 +54,8 @@ final class DisplayBacklightControl: @unchecked Sendable {
         defaults.synchronize()
     }
 
-    func hasRecovery(_ id: UInt32) -> Bool { lock.lock(); defer { lock.unlock() }; return recovery[id] != nil }
-    func isOff(_ id: UInt32) -> Bool { lock.lock(); defer { lock.unlock() }; return recovery[id]?.confirmedOff == true }
+    func hasRecovery(_ id: UInt32) -> Bool { fastState.withLock { $0.recovery[id] != nil } }
+    func isOff(_ id: UInt32) -> Bool { fastState.withLock { $0.recovery[id]?.confirmedOff == true } }
     private func verify(_ mode: UInt16, link: DisplayBacklightLink) -> Bool {
         for _ in 0..<3 {
             if link.read() == mode { return true }
@@ -62,17 +66,18 @@ final class DisplayBacklightControl: @unchecked Sendable {
 
     func turnOff(_ id: UInt32, link: DisplayBacklightLink) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        let stopped = fastState.withLock { $0.stopped }
         guard !stopped, canTurnOff(link.identity), link.isCurrent() else { return false }
-        if recovery[id]?.link.identity == link.identity, link.read() == 4 {
-            recovery[id] = Recovery(link: link, confirmedOff: true)
+        if fastState.withLock({ $0.recovery[id]?.link.identity == link.identity }), link.read() == 4 {
+            fastState.withLock { $0.recovery[id] = Recovery(link: link, confirmedOff: true) }
             return true
         }
         // Do not take ownership of a screen already asleep or send hard-off (5).
         guard link.read() == 1 else { return false }
         persist(link.identity, needed: true)
-        recovery[id] = Recovery(link: link, confirmedOff: false)
+        fastState.withLock { $0.recovery[id] = Recovery(link: link, confirmedOff: false) }
         if link.write(4), verify(4, link: link) {
-            recovery[id]?.confirmedOff = true
+            fastState.withLock { $0.recovery[id]?.confirmedOff = true }
             return true
         }
         // Failed/unverifiable off requests fall back to Gamma, after attempting
@@ -85,31 +90,34 @@ final class DisplayBacklightControl: @unchecked Sendable {
     @discardableResult
     func restore(_ id: UInt32) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard let pending = recovery[id] else { return true }
+        guard let pending = fastState.withLock({ $0.recovery[id] }) else { return true }
         guard pending.link.isCurrent() else { return false }
         guard pending.link.read() == 1 || (pending.link.write(1) && verify(1, link: pending.link)) else {
             block(pending.link.identity)
             return false
         }
         persist(pending.link.identity, needed: false)
-        recovery.removeValue(forKey: id)
+        _ = fastState.withLock { $0.recovery.removeValue(forKey: id) }
         return true
     }
 
     func recoverPreviousSession(_ id: UInt32, link: DisplayBacklightLink) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard recovery[id] == nil else { return true }
+        guard fastState.withLock({ $0.recovery[id] == nil }) else { return true }
         guard (defaults.stringArray(forKey: Self.defaultsKey) ?? []).contains(key(link.identity)) else { return true }
-        recovery[id] = Recovery(link: link, confirmedOff: false)
+        fastState.withLock { $0.recovery[id] = Recovery(link: link, confirmedOff: false) }
         return restore(id)
     }
 
     @discardableResult
     func shutdownAndRestore() -> Bool {
         lock.lock(); defer { lock.unlock() }
-        stopped = true
+        let ids = fastState.withLock { state -> [UInt32] in
+            state.stopped = true
+            return Array(state.recovery.keys)
+        }
         var success = true
-        for id in Array(recovery.keys) { if !restore(id) { success = false } }
+        for id in ids { if !restore(id) { success = false } }
         return success
     }
 }

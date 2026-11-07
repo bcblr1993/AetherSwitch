@@ -16,8 +16,15 @@ public struct SwitchStates: Sendable {
 protocol FinderControlling: Sendable {
     func isDesktopHidden() -> Bool
     func isHiddenFilesVisible() -> Bool
+    func currentStates() -> (desktopHidden: Bool, hiddenFilesVisible: Bool)
     func write(_ key: String, value: Bool) -> Bool
     func restart()
+}
+
+extension FinderControlling {
+    func currentStates() -> (desktopHidden: Bool, hiddenFilesVisible: Bool) {
+        (isDesktopHidden(), isHiddenFilesVisible())
+    }
 }
 
 struct SystemFinderControl: FinderControlling {
@@ -31,6 +38,12 @@ struct SystemFinderControl: FinderControlling {
         CFPreferencesAppSynchronize(domain)
         return (CFPreferencesCopyAppValue("AppleShowAllFiles" as CFString, domain) as? NSNumber)?.boolValue ?? false
     }
+    func currentStates() -> (desktopHidden: Bool, hiddenFilesVisible: Bool) {
+        CFPreferencesAppSynchronize(domain)
+        let desktopHidden = (CFPreferencesCopyAppValue("CreateDesktop" as CFString, domain) as? NSNumber).map { !$0.boolValue } ?? false
+        let hiddenFiles = (CFPreferencesCopyAppValue("AppleShowAllFiles" as CFString, domain) as? NSNumber)?.boolValue ?? false
+        return (desktopHidden, hiddenFiles)
+    }
     func write(_ key: String, value: Bool) -> Bool {
         CFPreferencesSetAppValue(key as CFString, value as CFBoolean, domain)
         guard CFPreferencesAppSynchronize(domain) else { return false }
@@ -40,13 +53,19 @@ struct SystemFinderControl: FinderControlling {
         let killTask = Process()
         killTask.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         killTask.arguments = ["Finder"]
+        killTask.standardOutput = FileHandle.nullDevice
+        killTask.standardError = FileHandle.nullDevice
         do {
             try killTask.run()
             let deadline = ProcessInfo.processInfo.systemUptime + 3.0
             while killTask.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
-            if killTask.isRunning { killTask.terminate() }
+            if killTask.isRunning {
+                killTask.terminate()
+                Thread.sleep(forTimeInterval: 0.05)
+                if killTask.isRunning { kill(killTask.processIdentifier, SIGKILL) }
+            }
         } catch {}
     }
 }
@@ -81,8 +100,9 @@ public final class SwitchManager: @unchecked Sendable {
         lock.lock()
         s.isKeepAwakeActive = (keepAwakeAssertionID != 0)
         lock.unlock()
-        s.isDesktopHidden = finder.isDesktopHidden()
-        s.isHiddenFilesVisible = finder.isHiddenFilesVisible()
+        let finderStates = finder.currentStates()
+        s.isDesktopHidden = finderStates.desktopHidden
+        s.isHiddenFilesVisible = finderStates.hiddenFilesVisible
         s.isDarkModeActive = checkIsDarkMode()
         return s
     }

@@ -233,7 +233,8 @@ private final class DashboardProcessesView: DashboardCardView {
         let cpuText = metrics.cpuTopProcesses.prefix(3).map { "\($0.name) \($0.valueString)" }.joined(separator: "、")
         let ramText = metrics.ramTopProcesses.prefix(3).map { "\($0.name) \($0.valueString)" }.joined(separator: "、")
         let cpuSummary = cpuText.isEmpty ? (metrics.topProcessesPending ? "采样中" : "暂无") : cpuText
-        let ramSummary = ramText.isEmpty ? (metrics.topProcessesPending ? "采样中" : "暂无") : ramText
+        let ramPending = metrics.topProcessesPending && !metrics.topProcessesAvailable
+        let ramSummary = ramText.isEmpty ? (ramPending ? "采样中" : "暂无") : ramText
         return "CPU：\(cpuSummary)；内存：\(ramSummary)"
     }
     override func draw(_ dirtyRect: NSRect) {
@@ -250,7 +251,8 @@ private final class DashboardProcessesView: DashboardCardView {
             NSBezierPath(ovalIn: NSRect(x: x + 10, y: 11, width: 6, height: 6)).fill()
             text(column.title, in: NSRect(x: x + 20, y: 7, width: half - 28, height: 15), font: Palette.captionStrong, color: .secondaryLabelColor)
             if column.items.isEmpty {
-                let placeholder = metrics.topProcessesPending ? "正在采集进程…" : (metrics.topProcessesAvailable ? "暂无活跃进程" : "不可用")
+                let isPending = col == 0 ? metrics.topProcessesPending : (metrics.topProcessesPending && !metrics.topProcessesAvailable)
+                let placeholder = isPending ? "正在采集进程…" : (metrics.topProcessesAvailable ? "暂无活跃进程" : "不可用")
                 text(placeholder, in: NSRect(x: x + 10, y: 28, width: half - 18, height: 16), font: Palette.caption, color: .tertiaryLabelColor)
             } else {
                 for (row, item) in column.items.enumerated() {
@@ -321,10 +323,17 @@ final class DetailVisualView: DashboardCardView {
     private var uploadHistory: [Double] = []
     var metrics: SystemMetrics { didSet {
         if kind == "network" {
-            downloadHistory.append(metrics.netDownloadBytesSec)
-            uploadHistory.append(metrics.netUploadBytesSec)
-            if downloadHistory.count > 60 { downloadHistory.removeFirst() }
-            if uploadHistory.count > 60 { uploadHistory.removeFirst() }
+            let interfaceChanged = oldValue.network.selection != metrics.network.selection
+                || (!oldValue.network.interface.isEmpty && !metrics.network.interface.isEmpty && oldValue.network.interface != metrics.network.interface)
+            if interfaceChanged {
+                downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
+                uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+            } else {
+                downloadHistory.append(metrics.netDownloadBytesSec)
+                uploadHistory.append(metrics.netUploadBytesSec)
+                if downloadHistory.count > 60 { downloadHistory.removeFirst() }
+                if uploadHistory.count > 60 { uploadHistory.removeFirst() }
+            }
         }
         needsDisplay = true
     } }
@@ -381,7 +390,7 @@ final class DetailVisualView: DashboardCardView {
         switch kind {
         case "cpu":
             trio([
-                (metrics.cpuTemperature ?? 0, "温度", Palette.tint(for: metrics.cpuTemperature ?? 0)),
+                (Palette.temperaturePercent(for: metrics.cpuTemperature ?? 0), "温度", Palette.temperatureTint(for: metrics.cpuTemperature ?? 0)),
                 (metrics.cpuUsage, "总负载", Palette.tint(for: metrics.cpuUsage)),
                 ((metrics.cpuFrequencyMHz ?? 0) / max(1, metrics.cpuFrequencyMaximumMHz ?? 1) * 100, "频率", Palette.secondarySeries)
             ], available: [metrics.cpuTemperature != nil, true, metrics.cpuFrequencyMHz != nil], formatted: [metrics.cpuTemperature.map { String(format: "%.0f°", $0) } ?? "—", String(format: "%.0f%%", metrics.cpuUsage), metrics.cpuFrequencyMHz.map { String(format: "%.2f", $0 / 1000) } ?? "—"])
@@ -1130,7 +1139,7 @@ final class NativePanelController: NSViewController {
         // Reserve room for synchronized brightness and login-item status on every page.
         // Older macOS control metrics can make the overview slightly taller.
         // Retain the measured size when changing tabs or opening About.
-        let size = NSSize(width: 294, height: min(maximumHeight, max(min(800, maximumHeight), max(height, preferredContentSize.height))))
+        let size = NSSize(width: 294, height: min(maximumHeight, max(min(800, maximumHeight), height)))
         if let rootHeight { rootHeight.constant = size.height }
         else {
             let constraint = root.heightAnchor.constraint(equalToConstant: size.height)
