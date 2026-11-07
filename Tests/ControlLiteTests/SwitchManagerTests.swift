@@ -62,6 +62,7 @@ private final class FakeFinder: FinderControlling, @unchecked Sendable {
     private var desktopHidden = false
     private var hiddenFiles = false
     private(set) var restartCount = 0
+    private(set) var currentStatesQueryCount = 0
     private(set) var maxConcurrentRestarts = 0
     private var runningRestarts = 0
     let restartEntered = DispatchSemaphore(value: 0)
@@ -70,6 +71,11 @@ private final class FakeFinder: FinderControlling, @unchecked Sendable {
 
     func isDesktopHidden() -> Bool { state.lock(); defer { state.unlock() }; return desktopHidden }
     func isHiddenFilesVisible() -> Bool { state.lock(); defer { state.unlock() }; return hiddenFiles }
+    func currentStates() -> (desktopHidden: Bool, hiddenFilesVisible: Bool) {
+        state.lock(); defer { state.unlock() }
+        currentStatesQueryCount += 1
+        return (desktopHidden, hiddenFiles)
+    }
     func write(_ key: String, value: Bool) -> Bool {
         state.lock(); defer { state.unlock() }
         if key == "CreateDesktop" { desktopHidden = !value } else if key == "AppleShowAllFiles" { hiddenFiles = value } else { return false }
@@ -101,6 +107,7 @@ final class SwitchManagerFinderTests: XCTestCase {
         XCTAssertTrue(manager.getCurrentStates().isHiddenFilesVisible)
         XCTAssertFalse(manager.toggleHiddenFiles())
         XCTAssertEqual(finder.restartCount, 4, "每次成功修改都需要重启 Finder")
+        XCTAssertEqual(finder.currentStatesQueryCount, 2, "getCurrentStates() 必须合并单次查询 Finder 状态")
     }
 
     /// 回归：重启 Finder 最多等待 3 秒。该等待曾发生在与 getCurrentStates() 共用的锁内，

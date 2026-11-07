@@ -8,10 +8,22 @@ enum LoadLevel: Equatable, CaseIterable {
     static let elevatedThreshold = 70.0
     static let criticalThreshold = 85.0
 
+    static let temperatureModerateThreshold = 65.0
+    static let temperatureElevatedThreshold = 80.0
+    static let temperatureCriticalThreshold = 92.0
+
     init(percent: Double) {
         if percent >= Self.criticalThreshold { self = .critical }
         else if percent >= Self.elevatedThreshold { self = .elevated }
         else if percent >= Self.moderateThreshold { self = .moderate }
+        else { self = .low }
+    }
+
+    init(temperatureCelsius: Double) {
+        guard temperatureCelsius.isFinite else { self = .low; return }
+        if temperatureCelsius >= Self.temperatureCriticalThreshold { self = .critical }
+        else if temperatureCelsius >= Self.temperatureElevatedThreshold { self = .elevated }
+        else if temperatureCelsius >= Self.temperatureModerateThreshold { self = .moderate }
         else { self = .low }
     }
 }
@@ -53,6 +65,13 @@ enum Palette {
 
     /// 面板指标色（数字、进度条、环形图共用）。
     static func tint(for percent: Double) -> NSColor { color(for: LoadLevel(percent: percent)) }
+
+    /// 面板温度指标色与归一化进度（25°C ~ 110°C 映射至 0% ~ 100%）。
+    static func temperatureTint(for celsius: Double) -> NSColor { color(for: LoadLevel(temperatureCelsius: celsius)) }
+    static func temperaturePercent(for celsius: Double) -> Double {
+        guard celsius.isFinite else { return 0 }
+        return min(100, max(0, (celsius - 25.0) / (110.0 - 25.0) * 100.0))
+    }
 
     /// 弹窗使用毛玻璃（vibrant）外观，次要文字色依赖系统实时混合才可见；
     /// 自绘位图时改按对应的普通深 / 浅色外观解析颜色。

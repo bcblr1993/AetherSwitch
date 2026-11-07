@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var appliedMenuBarStyle: MenuBarStyle?
     private var menuBarSettings: MenuBarSettingsController?
     private var statusWindowResizeObserver: NSObjectProtocol?
+    private weak var observedStatusWindow: NSWindow?
+    var observedStatusWindowForTesting: NSWindow? { observedStatusWindow }
     var onShowContextMenu: ((NSMenu) -> Void)?
 
     static func main() {
@@ -256,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NotificationCenter.default.removeObserver(observer)
             statusWindowResizeObserver = nil
         }
+        observedStatusWindow = nil
         if popover?.isShown == true {
             popover?.performClose(nil)
         }
@@ -293,7 +296,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func ensureStatusBarWindowInteractable() {
         guard let window = statusItem?.button?.window else { return }
         Self.applyMinimumMenuBarHeight(to: window)
-        if statusWindowResizeObserver == nil {
+        if statusWindowResizeObserver == nil || observedStatusWindow !== window {
+            if let observer = statusWindowResizeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                statusWindowResizeObserver = nil
+            }
+            observedStatusWindow = window
+            statusWindowResizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: nil
+            ) { note in
+                guard let resizedWindow = note.object as? NSWindow else { return }
+                MainActor.assumeIsolated {
+                    guard resizedWindow.frame.height < 22 else { return }
+                    Self.applyMinimumMenuBarHeight(to: resizedWindow)
+                }
+            }
+        }
+    }
+
+    func refreshStatusWindowObservationForTesting(button: NSStatusBarButton) {
+        guard let window = button.window else { return }
+        Self.applyMinimumMenuBarHeight(to: window)
+        if statusWindowResizeObserver == nil || observedStatusWindow !== window {
+            if let observer = statusWindowResizeObserver {
+                NotificationCenter.default.removeObserver(observer)
+                statusWindowResizeObserver = nil
+            }
+            observedStatusWindow = window
             statusWindowResizeObserver = NotificationCenter.default.addObserver(
                 forName: NSWindow.didResizeNotification,
                 object: window,

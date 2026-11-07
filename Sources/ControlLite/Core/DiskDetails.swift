@@ -39,8 +39,26 @@ final class DiskDetails {
     private var counters: (UInt64, UInt64, Double)?
     private var health: DiskHealth?
     private var healthRead: Double = -100
+    private var volumeOverridesForTesting: [String: DiskVolume] = [:]
     var cachedVolumesForTesting: [DiskVolume] { volumes }
-    func injectCachedVolumeForTesting(_ volume: DiskVolume) { volumes.append(volume) }
+    func injectCachedVolumeForTesting(_ volume: DiskVolume) {
+        if FileManager.default.fileExists(atPath: volume.path) {
+            volumeOverridesForTesting[volume.path] = volume
+        }
+        refreshed = ProcessInfo.processInfo.systemUptime
+        volumes.removeAll { $0.path == volume.path }
+        volumes.append(volume)
+    }
+    func clearVolumeOverridesForTesting() {
+        volumeOverridesForTesting.removeAll()
+        refreshed = -100
+    }
+    func cachedVolume(for path: String) -> DiskVolume? {
+        if let override = volumeOverridesForTesting[path], FileManager.default.fileExists(atPath: path) {
+            return override
+        }
+        return volumes.first { $0.path == path }
+    }
     func reset() {
         if driver != 0 { IOObjectRelease(driver); driver = 0 }
         if media != 0 { IOObjectRelease(media); media = 0 }
@@ -51,9 +69,14 @@ final class DiskDetails {
         let now = ProcessInfo.processInfo.systemUptime
         func rescanVolumes() {
             let roots = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeIsLocalKey], options: .skipHiddenVolumes) ?? []
-            volumes = ([URL(fileURLWithPath: "/")] + roots.filter {
+            var scanned = ([URL(fileURLWithPath: "/")] + roots.filter {
                 $0.path.hasPrefix("/Volumes/") && ((try? $0.resourceValues(forKeys: [.volumeIsLocalKey]))?.volumeIsLocal ?? false)
             }).compactMap { volume($0) }
+            for (_, override) in volumeOverridesForTesting where FileManager.default.fileExists(atPath: override.path) {
+                scanned.removeAll { $0.path == override.path }
+                scanned.append(override)
+            }
+            volumes = scanned
             refreshed = now
         }
         if now - refreshed >= 10 {
@@ -84,6 +107,9 @@ final class DiskDetails {
         return (volumes, volumes.first { $0.path == actual }, true, false, Double(current.0-old.0)/(now-old.2), Double(current.1-old.1)/(now-old.2), health)
     }
     private func volume(_ url: URL) -> DiskVolume? {
+        if let override = volumeOverridesForTesting[url.path], FileManager.default.fileExists(atPath: url.path) {
+            return override
+        }
         guard let session, let disk = DADiskCreateFromVolumePath(nil, session, url as CFURL),
               let desc = DADiskCopyDescription(disk) as? [String: Any] else { return nil }
         var fs = statfs()

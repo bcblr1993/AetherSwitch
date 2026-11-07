@@ -88,10 +88,10 @@ final class ProcessSampler {
         }
     }
 
-    func sample(_ requested: Mode) -> Result {
-        if requested != mode { reset(); mode = requested }
-        let now = ProcessInfo.processInfo.systemUptime
-        if timestamp > 0, now - timestamp < 2 { return cached }
+    func sample(_ requested: Mode, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Result {
+        let sameMode = requested == mode
+        mode = requested
+        if sameMode, timestamp > 0, now - timestamp < 2 { return cached }
         let pids = Self.listPIDs()
         guard !pids.isEmpty else { reset(); return Result() }
         var counters: [Counter] = []
@@ -106,8 +106,9 @@ final class ProcessSampler {
                 cpuTicks: usage.ri_user_time &+ usage.ri_system_time, footprint: usage.ri_phys_footprint,
                 readBytes: usage.ri_diskio_bytesread, writeBytes: usage.ri_diskio_byteswritten))
         }
-        let pending = requested != .memory && timestamp == 0 && !counters.isEmpty
-        let ranked = Self.rank(counters, previous: previous, elapsed: now - timestamp, mode: requested, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
+        let pending = requested != .memory && (timestamp == 0 || now - timestamp < 0.05 || now - timestamp > 15) && !counters.isEmpty
+        let elapsed = max(0.001, now - timestamp)
+        let ranked = (pending ? [] : Self.rank(counters, previous: previous, elapsed: elapsed, mode: requested, nanosecondsPerTick: nanosecondsPerTick)).prefix(5)
         let items = ranked.map { item in
             let name = Self.resolveName(pid: item.pid)
             let value: String
@@ -127,8 +128,9 @@ final class ProcessSampler {
 
     /// 概览页单次遍历同时提取 CPU 与内存 Top 进程，不增加额外系统调用开销。
     func sampleOverview(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> (cpu: Result, memory: Result) {
-        if mode != .overview { reset(); mode = .overview }
-        if timestamp > 0, now - timestamp < 2 { return cachedOverview }
+        let sameMode = mode == .overview
+        mode = .overview
+        if sameMode, timestamp > 0, now - timestamp < 2 { return cachedOverview }
         let pids = Self.listPIDs()
         guard !pids.isEmpty else { reset(); return (Result(), Result()) }
         var counters: [Counter] = []
@@ -143,9 +145,9 @@ final class ProcessSampler {
                 cpuTicks: usage.ri_user_time &+ usage.ri_system_time, footprint: usage.ri_phys_footprint,
                 readBytes: usage.ri_diskio_bytesread, writeBytes: usage.ri_diskio_byteswritten))
         }
-        let cpuPending = timestamp == 0 && !counters.isEmpty
-        let elapsed = now - timestamp
-        let cpuRanked = Self.rank(counters, previous: previous, elapsed: elapsed, mode: .cpu, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
+        let cpuPending = (timestamp == 0 || now - timestamp < 0.05 || now - timestamp > 15) && !counters.isEmpty
+        let elapsed = max(0.001, now - timestamp)
+        let cpuRanked = (cpuPending ? [] : Self.rank(counters, previous: previous, elapsed: elapsed, mode: .cpu, nanosecondsPerTick: nanosecondsPerTick)).prefix(5)
         let memRanked = Self.rank(counters, previous: previous, elapsed: elapsed, mode: .memory, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
         let cpuItems = cpuRanked.map { ProcessUsageItem(name: Self.resolveName(pid: $0.pid), valueString: String(format: "%.1f%%", $0.value), pid: $0.pid) }
         let memItems = memRanked.map { ProcessUsageItem(name: Self.resolveName(pid: $0.pid), valueString: Self.memoryString($0.value), pid: $0.pid) }

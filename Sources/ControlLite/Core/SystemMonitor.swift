@@ -208,6 +208,8 @@ public final class SystemMonitor: @unchecked Sendable {
 
         if let diskPath, selectedDiskPath != diskPath {
             selectedDiskPath = diskPath
+            cachedCapacity = nil
+            capacityTimestamp = -Double.infinity
             disks.reset()
             diskReadHistoryBuffer.removeAll()
             diskWriteHistoryBuffer.removeAll()
@@ -221,6 +223,22 @@ public final class SystemMonitor: @unchecked Sendable {
         sampleLock.lock()
         defer { sampleLock.unlock() }
         return body()
+    }
+
+    func injectCachedDiskVolumeForTesting(_ volume: DiskVolume) {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
+        disks.injectCachedVolumeForTesting(volume)
+        cachedCapacity = nil
+        capacityTimestamp = -Double.infinity
+    }
+
+    func clearCachedDiskVolumesForTesting() {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
+        disks.clearVolumeOverridesForTesting()
+        cachedCapacity = nil
+        capacityTimestamp = -Double.infinity
     }
 
 
@@ -354,6 +372,7 @@ public final class SystemMonitor: @unchecked Sendable {
             let io = disks.sample(path: selectedDiskPath)
             m.diskVolumes = io.volumes
             if let volume = io.selected {
+                selectedDiskPath = volume.path
                 m.diskSelectedPath = volume.path
                 m.diskVolumeName = volume.name
                 m.diskFileSystem = volume.fileSystem
@@ -362,6 +381,8 @@ public final class SystemMonitor: @unchecked Sendable {
                 m.diskFreeGB = volume.freeGB
                 m.diskUsedGB = volume.totalGB - volume.freeGB
                 m.diskPercent = Int(m.diskUsedGB / m.diskTotalGB * 100)
+                cachedCapacity = (m.diskUsedGB, m.diskTotalGB, m.diskPercent, m.diskFreeGB)
+                capacityTimestamp = ProcessInfo.processInfo.systemUptime
             }
             m.diskHealth = io.health
             m.diskIOAvailable = io.available
@@ -386,6 +407,8 @@ public final class SystemMonitor: @unchecked Sendable {
             let thermal = HardwareMath.thermalStateDescription(ProcessInfo.processInfo.thermalState)
             m.thermalStateLevel = thermal.label
             m.thermalStateCode = thermal.code
+        } else if !fullMetrics || activeTab != "battery" {
+            hardware.resetTemperature()
         }
         if fullMetrics && ["cpu", "gpu"].contains(activeTab) {
             let details = hardware.sample(tab: activeTab, chip: chipName, efficiencyCount: eCoreCount, performanceCount: pCoreCount)
@@ -705,8 +728,18 @@ public final class SystemMonitor: @unchecked Sendable {
     private func fetchDisk() -> (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double) {
         let now = ProcessInfo.processInfo.systemUptime
         if let cachedCapacity, now - capacityTimestamp < 30 { return cachedCapacity }
+        if let volume = disks.cachedVolume(for: selectedDiskPath), volume.totalGB > 0 {
+            let usedGB = max(0, volume.totalGB - volume.freeGB)
+            let percent = min(100, max(0, Int((usedGB / volume.totalGB) * 100)))
+            let result = (usedGB, volume.totalGB, percent, volume.freeGB)
+            cachedCapacity = result; capacityTimestamp = now
+            return result
+        }
         var stat = statfs()
-        guard statfs("/", &stat) == 0 else { return (0, 0, 0, 0) }
+        if selectedDiskPath.withCString({ statfs($0, &stat) }) != 0 {
+            selectedDiskPath = "/"
+            guard statfs("/", &stat) == 0 else { return (0, 0, 0, 0) }
+        }
         let totalBytes = Double(stat.f_blocks) * Double(stat.f_bsize)
         let freeBytes = Double(stat.f_bavail) * Double(stat.f_bsize)
         let usedBytes = max(0, totalBytes - freeBytes)
