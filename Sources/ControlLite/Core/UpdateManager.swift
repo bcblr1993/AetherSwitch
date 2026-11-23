@@ -62,7 +62,7 @@ public final class UpdateManager: NSObject, ObservableObject {
             NSWorkspace.shared.open(Self.releasesPage)
             return
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         controller.checkForUpdates(nil)
     }
 
