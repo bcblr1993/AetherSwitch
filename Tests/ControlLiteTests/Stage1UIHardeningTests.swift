@@ -402,4 +402,46 @@ final class Stage1UIHardeningTests: XCTestCase {
         let dualFan = SystemStatusStripSummary.make(from: metrics, fanRPMs: [1850, 2050])
         XCTAssertTrue(dualFan.displayLine.contains("风扇 1850/2050 RPM"), "Dual fan format mismatch: \(dualFan.displayLine)")
     }
+
+    func testFanRPMsWiredIntoOverviewStripAndCPUDetailsWithin800ptBudget() throws {
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        func render(tab: String, fanRPMs: [Int], maximumHeight: CGFloat = 800) throws -> (strip: String?, details: String?, height: CGFloat) {
+            let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
+            var metrics = SystemMetrics()
+            metrics.thermalStateLevel = "正常"
+            metrics.cpuTemperature = 50.0
+            metrics.uptimeString = "1天2小时"
+            metrics.fanRPMs = fanRPMs
+            state.updateForSnapshot(metrics: metrics, switches: SwitchStates())
+            state.selectedTab = tab
+            // Production caps the popover at min(800, screen - 60); taller detail pages scroll inside it.
+            let controller = NativePanelController(state: state, maximumHeight: maximumHeight)
+            let views = descendants(controller.view)
+            let strip = views.first { $0.isAccessibilityElement() && $0.accessibilityLabel() == "系统状态" }?
+                .accessibilityValue() as? String
+            let details = views.first { ($0.accessibilityLabel() ?? "").hasPrefix("型号 ") && ($0.accessibilityLabel() ?? "").contains("逻辑核心") }?
+                .accessibilityLabel()
+            return (strip, details, controller.preferredContentSize.height)
+        }
+
+        // Fan-equipped Mac (dual fans): overview strip + CPU detail row both show RPM.
+        let fanOverview = try render(tab: "overview", fanRPMs: [1850, 2050])
+        XCTAssertTrue(try XCTUnwrap(fanOverview.strip).contains("风扇 1850/2050 RPM"), "Overview strip must show fan RPMs")
+        XCTAssertLessThanOrEqual(fanOverview.height, 800.5)
+        // Even with headroom, the fan-equipped overview's natural height stays inside the 800pt budget.
+        XCTAssertLessThanOrEqual(try render(tab: "overview", fanRPMs: [1850, 2050], maximumHeight: 900).height, 800.5)
+
+        let fanCPU = try render(tab: "cpu", fanRPMs: [1850])
+        XCTAssertTrue(try XCTUnwrap(fanCPU.details).contains("风扇转速 1850 RPM"), "CPU details must include fan row")
+        XCTAssertLessThanOrEqual(fanCPU.height, 800.5)
+
+        // Fanless Mac (e.g. MacBook Air): fan segment and row auto-hide.
+        let fanlessOverview = try render(tab: "overview", fanRPMs: [])
+        XCTAssertFalse(try XCTUnwrap(fanlessOverview.strip).contains("风扇"))
+        XCTAssertLessThanOrEqual(fanlessOverview.height, 800.5)
+
+        let fanlessCPU = try render(tab: "cpu", fanRPMs: [])
+        XCTAssertFalse(try XCTUnwrap(fanlessCPU.details).contains("风扇转速"))
+        XCTAssertLessThanOrEqual(fanlessCPU.height, 800.5)
+    }
 }

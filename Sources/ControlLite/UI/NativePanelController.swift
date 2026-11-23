@@ -216,8 +216,8 @@ struct SystemStatusStripSummary: Equatable {
         return "风扇 " + fanRPMs.map(String.init).joined(separator: "/") + " RPM"
     }
 
-    /// 预留 `fanRPMs` 参数供集成阶段接入 `metrics.fanRPMs`（无风扇机型传空数组自动隐藏）。
-    static func make(from metrics: SystemMetrics, fanRPMs: [Int] = []) -> SystemStatusStripSummary {
+    /// 默认读取 `metrics.fanRPMs`；无风扇机型为空数组时自动隐藏风扇段。`fanRPMs` 仅供测试覆盖。
+    static func make(from metrics: SystemMetrics, fanRPMs: [Int]? = nil) -> SystemStatusStripSummary {
         let thermalLevel: LoadLevel
         switch metrics.thermalStateCode {
         case 1: thermalLevel = .moderate
@@ -243,7 +243,7 @@ struct SystemStatusStripSummary: Equatable {
         return SystemStatusStripSummary(
             thermalDotLevel: thermalLevel,
             thermalText: thermalText,
-            fanText: formatFanRPMs(fanRPMs),
+            fanText: formatFanRPMs(fanRPMs ?? metrics.fanRPMs),
             swapText: swapText,
             uptimeText: "运行 \(uptime)"
         )
@@ -801,7 +801,18 @@ private final class DetailRowsView: DashboardCardView {
     }
     private func computeEntries() -> [(String, String)] {
         switch kind {
-        case "cpu": return [
+        case "cpu":
+            var entries = cpuEntries()
+            if let fanText = SystemStatusStripSummary.formatFanRPMs(metrics.fanRPMs) {
+                let insertIndex = entries.firstIndex { $0.0 == "系统热状态" }.map { $0 + 1 } ?? entries.endIndex
+                entries.insert(("风扇转速", String(fanText.dropFirst("风扇 ".count))), at: insertIndex)
+            }
+            return entries
+        default: return nonCPUEntries()
+        }
+    }
+    private func cpuEntries() -> [(String, String)] {
+        [
             ("型号", metrics.cpuModelName),
             ("逻辑核心", "\(metrics.cpuLogicalCoreCount)"),
             ("系统", String(format: "%.1f%%", metrics.cpuSystemUsage)),
@@ -821,6 +832,9 @@ private final class DetailRowsView: DashboardCardView {
             ("性能核心频率", metrics.cpuPFrequencyMHz.map { String(format: "%.2f GHz", $0 / 1000) } ?? "采样中或不可用"),
             ("运行时间", metrics.uptimeString)
         ]
+    }
+    private func nonCPUEntries() -> [(String, String)] {
+        switch kind {
         case "gpu": return [
             ("型号", metrics.gpuModelName), ("核心数", metrics.gpuCoreCount > 0 ? "\(metrics.gpuCoreCount)" : "不可用"),
             ("设备利用率", metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : "不可用"),
