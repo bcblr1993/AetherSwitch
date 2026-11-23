@@ -1,4 +1,5 @@
 import AppKit
+import ObjectiveC.runtime
 import XCTest
 @testable import ControlLite
 
@@ -41,31 +42,100 @@ final class StatusBarInteractionTests: XCTestCase {
         }
     }
 
-    private func invokeSceneOneShotAction(on item: NSStatusItem) {
-        typealias OneShotFn = @convention(c) (AnyObject, Selector, Double) -> Void
-        let sel = NSSelectorFromString("_performOneShotAction:")
-        guard let method = class_getInstanceMethod(object_getClass(item), sel) else {
-            XCTFail("NSStatusItem missing _performOneShotAction:")
+    /// Runtime probe: returns true only on macOS 26/27+ where `NSStatusItem` routes through
+    /// `_sceneActionHandler`, `_performOneShotAction:`, and `_performSecondaryAction:type:`.
+    /// On macOS 14/15 (e.g. GitHub Actions `macos-15`) or when `forceLegacyButtonRouting` is true,
+    /// returns false so tests exercise the standard `NSStatusBarButton` click/mouse event stack.
+    private func supportsSceneActionRouting(on item: NSStatusItem, forceLegacyButtonRouting: Bool = false) -> Bool {
+        if forceLegacyButtonRouting { return false }
+        guard let cls = object_getClass(item) else { return false }
+        let hasSceneHandler = class_getInstanceMethod(cls, NSSelectorFromString("_sceneActionHandler")) != nil
+            || class_getInstanceVariable(cls, "_sceneActionHandler") != nil
+            || item.responds(to: NSSelectorFromString("_sceneActionHandler"))
+        guard hasSceneHandler,
+              let oneShot = class_getInstanceMethod(cls, NSSelectorFromString("_performOneShotAction:")),
+              method_getNumberOfArguments(oneShot) == 3,
+              let secondary = class_getInstanceMethod(cls, NSSelectorFromString("_performSecondaryAction:type:")),
+              method_getNumberOfArguments(secondary) == 4 else {
+            return false
+        }
+        return true
+    }
+
+    private func postAndSetCurrentMouseEvent(
+        type: NSEvent.EventType,
+        modifiers: NSEvent.ModifierFlags = [],
+        in window: NSWindow
+    ) -> NSEvent? {
+        guard let event = NSEvent.mouseEvent(
+            with: type,
+            location: NSPoint(x: max(1, window.frame.width * 0.5), y: max(1, window.frame.height * 0.5)),
+            modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        ) else {
+            return nil
+        }
+        NSApplication.shared.postEvent(event, atStart: true)
+        _ = NSApplication.shared.nextEvent(matching: .any, until: nil, inMode: .default, dequeue: true)
+        return event
+    }
+
+    private func performPrimaryStatusItemClick(
+        on item: NSStatusItem,
+        forceLegacyButtonRouting: Bool = false
+    ) throws {
+        if supportsSceneActionRouting(on: item, forceLegacyButtonRouting: forceLegacyButtonRouting),
+           let cls = object_getClass(item),
+           let method = class_getInstanceMethod(cls, NSSelectorFromString("_performOneShotAction:")) {
+            typealias OneShotFn = @convention(c) (AnyObject, Selector, Double) -> Void
+            let sel = NSSelectorFromString("_performOneShotAction:")
+            let imp = unsafeBitCast(method_getImplementation(method), to: OneShotFn.self)
+            imp(item, sel, 0.0)
+            drainPostedEvents()
             return
         }
-        let imp = unsafeBitCast(method_getImplementation(method), to: OneShotFn.self)
-        imp(item, sel, 0.0)
+
+        let button = try XCTUnwrap(item.button)
+        let window = try XCTUnwrap(button.window)
+        _ = postAndSetCurrentMouseEvent(type: .leftMouseUp, modifiers: [], in: window)
+        button.performClick(nil)
         drainPostedEvents()
     }
 
-    private func invokeSceneSecondaryAction(on item: NSStatusItem) {
-        typealias SecondaryFn = @convention(c) (AnyObject, Selector, Double, Int) -> Void
-        let sel = NSSelectorFromString("_performSecondaryAction:type:")
-        guard let method = class_getInstanceMethod(object_getClass(item), sel) else {
-            XCTFail("NSStatusItem missing _performSecondaryAction:type:")
+    private func performSecondaryStatusItemClick(
+        on item: NSStatusItem,
+        forceLegacyButtonRouting: Bool = false
+    ) throws {
+        if supportsSceneActionRouting(on: item, forceLegacyButtonRouting: forceLegacyButtonRouting),
+           let cls = object_getClass(item),
+           let method = class_getInstanceMethod(cls, NSSelectorFromString("_performSecondaryAction:type:")) {
+            typealias SecondaryFn = @convention(c) (AnyObject, Selector, Double, Int) -> Void
+            let sel = NSSelectorFromString("_performSecondaryAction:type:")
+            let imp = unsafeBitCast(method_getImplementation(method), to: SecondaryFn.self)
+            imp(item, sel, 0.0, 1)
+            drainPostedEvents()
             return
         }
-        let imp = unsafeBitCast(method_getImplementation(method), to: SecondaryFn.self)
-        imp(item, sel, 0.0, 1)
+
+        let button = try XCTUnwrap(item.button)
+        let window = try XCTUnwrap(button.window)
+        _ = postAndSetCurrentMouseEvent(type: .rightMouseUp, modifiers: [], in: window)
+        _ = button.sendAction(button.action, to: button.target)
         drainPostedEvents()
     }
 
-    func testStatusItemLeftClickViaSceneOneShotActionTogglesPopover() throws {
+    private func performControlLeftClick(on button: NSStatusBarButton, window: NSWindow) {
+        if postAndSetCurrentMouseEvent(type: .leftMouseUp, modifiers: [.control], in: window) != nil {
+            _ = button.sendAction(button.action, to: button.target)
+        }
+    }
+
+    func testStatusItemLeftClickTogglesPopoverOnCurrentRuntimeStack() throws {
         let item = try XCTUnwrap(delegate.statusItem)
         let button = try XCTUnwrap(item.button)
         let window = try XCTUnwrap(button.window)
@@ -73,42 +143,87 @@ final class StatusBarInteractionTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(
             window.frame.height,
             22,
-            "macOS 27 status bar offscreen window must have non-zero height immediately so synthetic scene clicks hit NSStatusBarButton"
+            "Status bar host window must have >= 22pt height immediately so clicks hit NSStatusBarButton"
         )
         XCTAssertFalse(AppState.shared.isPopoverOpen)
 
-        invokeSceneOneShotAction(on: item)
-        XCTAssertTrue(AppState.shared.isPopoverOpen, "First scene one-shot click must open popover")
+        try performPrimaryStatusItemClick(on: item)
+        XCTAssertTrue(AppState.shared.isPopoverOpen, "First primary click must open popover")
         XCTAssertEqual(delegate.popover?.isShown, true)
 
-        invokeSceneOneShotAction(on: item)
-        XCTAssertFalse(AppState.shared.isPopoverOpen, "Second scene one-shot click must close popover")
+        try performPrimaryStatusItemClick(on: item)
+        XCTAssertFalse(AppState.shared.isPopoverOpen, "Second primary click must close popover")
     }
 
-    func testStatusItemSelfHealsWhenMenuBarAgentResetsWindowHeightToZero() throws {
+    func testStatusItemLegacyButtonStackTogglesPopoverAndTriggersContextMenuWhenSceneUnavailable() throws {
         let item = try XCTUnwrap(delegate.statusItem)
         let button = try XCTUnwrap(item.button)
         let window = try XCTUnwrap(button.window)
 
-        typealias SetHeightFn = @convention(c) (AnyObject, Selector, CGFloat) -> Void
+        XCTAssertFalse(
+            supportsSceneActionRouting(on: item, forceLegacyButtonRouting: true),
+            "Forced legacy mode must bypass macOS 26+ scene selectors to exercise macos-15 CI path"
+        )
+
+        var presentedMenus: [NSMenu] = []
+        delegate.onShowContextMenu = { menu in
+            presentedMenus.append(menu)
+        }
+
+        // 1. Legacy NSStatusBarButton left-click opens and closes popover
+        try performPrimaryStatusItemClick(on: item, forceLegacyButtonRouting: true)
+        XCTAssertTrue(AppState.shared.isPopoverOpen, "Legacy button click must open popover")
+        XCTAssertEqual(delegate.popover?.isShown, true)
+
+        try performPrimaryStatusItemClick(on: item, forceLegacyButtonRouting: true)
+        XCTAssertFalse(AppState.shared.isPopoverOpen, "Second legacy button click must close popover")
+
+        // 2. Legacy rightMouseUp opens context menu without opening popover
+        try performSecondaryStatusItemClick(on: item, forceLegacyButtonRouting: true)
+        XCTAssertEqual(presentedMenus.count, 1, "Legacy rightMouseUp must present context menu")
+        XCTAssertFalse(AppState.shared.isPopoverOpen)
+
+        // 3. Control + Left-click opens context menu
+        performControlLeftClick(on: button, window: window)
+        XCTAssertEqual(presentedMenus.count, 2, "Legacy Control+leftMouseUp must present context menu")
+        XCTAssertFalse(AppState.shared.isPopoverOpen)
+
+        // 4. Subsequent normal left-click clears modifier state and reopens popover
+        try performPrimaryStatusItemClick(on: item, forceLegacyButtonRouting: true)
+        XCTAssertTrue(AppState.shared.isPopoverOpen, "Normal left-click after context menu must open popover")
+    }
+
+    func testStatusItemSelfHealsWhenWindowHeightCollapsesToZero() throws {
+        let item = try XCTUnwrap(delegate.statusItem)
+        let button = try XCTUnwrap(item.button)
+        let window = try XCTUnwrap(button.window)
+
         let setHeightSel = NSSelectorFromString("setMenuBarHeight:")
-        if let method = class_getInstanceMethod(object_getClass(window), setHeightSel) {
+        if let cls = object_getClass(window),
+           let method = class_getInstanceMethod(cls, setHeightSel),
+           AppDelegate.menuBarHeightArgumentScalarType(for: method) == "d" {
+            typealias SetHeightFn = @convention(c) (AnyObject, Selector, Double) -> Void
             let setHeight = unsafeBitCast(method_getImplementation(method), to: SetHeightFn.self)
             setHeight(window, setHeightSel, 0.0)
             window.layoutIfNeeded()
+        } else {
+            window.setFrame(
+                NSRect(x: window.frame.origin.x, y: window.frame.origin.y, width: window.frame.width, height: 0),
+                display: false
+            )
         }
 
         XCTAssertGreaterThanOrEqual(
             window.frame.height,
             22,
-            "Status bar window must self-heal when MenuBarAgent resets menuBarHeight to 0 in XX-None[0] scene state"
+            "Status bar window must self-heal when height collapses to 0"
         )
 
-        invokeSceneOneShotAction(on: item)
-        XCTAssertTrue(AppState.shared.isPopoverOpen, "Click after XX-None[0] scene reset must still open popover")
+        try performPrimaryStatusItemClick(on: item)
+        XCTAssertTrue(AppState.shared.isPopoverOpen, "Click after zero-height self-heal must still open popover")
     }
 
-    func testStatusItemRightClickViaSceneSecondaryActionAndControlClickTriggerContextMenu() throws {
+    func testStatusItemRightClickAndControlClickTriggerContextMenuOnCurrentRuntimeStack() throws {
         let item = try XCTUnwrap(delegate.statusItem)
         let button = try XCTUnwrap(item.button)
         let window = try XCTUnwrap(button.window)
@@ -118,33 +233,19 @@ final class StatusBarInteractionTests: XCTestCase {
             presentedMenus.append(menu)
         }
 
-        // 1. macOS 27 MenuBarAgent secondary action (right-click)
-        invokeSceneSecondaryAction(on: item)
-        XCTAssertEqual(presentedMenus.count, 1, "Scene secondary action must open context menu")
+        // 1. Secondary action (Scene secondary action on macOS 26/27, rightMouseUp on macOS 14/15)
+        try performSecondaryStatusItemClick(on: item)
+        XCTAssertEqual(presentedMenus.count, 1, "Secondary action must open context menu")
         XCTAssertFalse(AppState.shared.isPopoverOpen, "Right-click must not open popover")
         XCTAssertNil(item.menu, "statusItem.menu must remain nil so left-click action routing is not hijacked")
 
         // 2. Control + Left-click
-        if let ctrlClick = NSEvent.mouseEvent(
-            with: .leftMouseUp,
-            location: NSPoint(x: window.frame.width * 0.5, y: window.frame.height * 0.5),
-            modifierFlags: [.control],
-            timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: window.windowNumber,
-            context: nil,
-            eventNumber: 0,
-            clickCount: 1,
-            pressure: 1.0
-        ) {
-            NSApplication.shared.postEvent(ctrlClick, atStart: true)
-            _ = NSApplication.shared.nextEvent(matching: .any, until: nil, inMode: .default, dequeue: true)
-            delegate.statusItemClicked(button)
-        }
+        performControlLeftClick(on: button, window: window)
         XCTAssertEqual(presentedMenus.count, 2, "Control+Left-click must open context menu instead of popover")
         XCTAssertFalse(AppState.shared.isPopoverOpen)
 
         // 3. Subsequent left-click must still toggle popover normally
-        invokeSceneOneShotAction(on: item)
+        try performPrimaryStatusItemClick(on: item)
         XCTAssertTrue(AppState.shared.isPopoverOpen, "Left-click after context menu must still open popover")
     }
 
@@ -178,7 +279,7 @@ final class StatusBarInteractionTests: XCTestCase {
                 XCTAssertEqual(
                     item.length,
                     baselineLength,
-                     accuracy: 0.5,
+                    accuracy: 0.5,
                     "\(style.rawValue) statusItem.length must remain stable across network speed fluctuations (\(down) B/s)"
                 )
             }

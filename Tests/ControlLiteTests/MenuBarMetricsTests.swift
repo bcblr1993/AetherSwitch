@@ -3,33 +3,56 @@ import AppKit
 @testable import ControlLite
 
 final class MenuBarMetricsTests: XCTestCase {
-    func testDecodeDefaultsToAllMetricsAndIgnoresUnknownValues() {
-        XCTAssertEqual(MenuBarMetric.decode(nil), Set(MenuBarMetric.allCases))
+    private var suiteName: String!
+    private var testDefaults: UserDefaults!
+
+    override func setUpWithError() throws {
+        suiteName = "com.aethernative.aetherswitch.menubarmetrics.\(UUID().uuidString)"
+        testDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    }
+
+    override func tearDownWithError() throws {
+        if let suiteName {
+            testDefaults?.removePersistentDomain(forName: suiteName)
+        }
+        testDefaults = nil
+        suiteName = nil
+    }
+
+    func testDecodeDefaultsToThreeNotchSafeMetricsAndIgnoresUnknownValues() {
+        XCTAssertEqual(MenuBarMetric.decode(nil), [.cpu, .ram, .network])
         XCTAssertEqual(MenuBarMetric.decode([]), [])
         XCTAssertEqual(MenuBarMetric.decode(["cpu", "bogus", "network"]), [.cpu, .network])
+        XCTAssertEqual(MenuBarMetric.decode(["cpu", "gpu", "ram", "disk", "temperature", "network"]), Set(MenuBarMetric.allCases))
         XCTAssertEqual(MenuBarMetric.encode([.network, .cpu, .ram]), ["cpu", "ram", "network"])
     }
 
     @MainActor
-    func testSettingPersistsToUserDefaults() {
-        let state = AppState.shared
-        let original = state.menuBarMetrics
-        defer { state.menuBarMetrics = original }
+    func testSettingPersistsToIsolatedUserDefaultsWithoutTouchingStandard() {
+        let standardBefore = UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)
+        let state = AppState(defaults: testDefaults, startMonitoring: false)
+        XCTAssertEqual(state.menuBarMetrics, [.cpu, .ram, .network])
+
         state.menuBarMetrics = Set(MenuBarMetric.allCases)
         state.setMenuBarMetric(.gpu, visible: false)
         XCTAssertFalse(state.menuBarMetrics.contains(.gpu))
-        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey), ["cpu", "ram", "disk", "temperature", "network"])
+        XCTAssertEqual(testDefaults.stringArray(forKey: MenuBarMetric.defaultsKey), ["cpu", "ram", "disk", "temperature", "network"])
+
         state.setMenuBarMetric(.gpu, visible: true)
-        XCTAssertEqual(MenuBarMetric.decode(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)), Set(MenuBarMetric.allCases))
+        XCTAssertEqual(MenuBarMetric.decode(testDefaults.stringArray(forKey: MenuBarMetric.defaultsKey)), Set(MenuBarMetric.allCases))
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey), standardBefore)
     }
 
     @MainActor
     func testStatusWidthShrinksWithHiddenColumns() {
         let all = MenuBarStatusView.width(for: Set(MenuBarMetric.allCases))
+        let defaultThree = MenuBarStatusView.width(for: MenuBarMetric.decode(nil))
         let noNetwork = MenuBarStatusView.width(for: [.cpu, .gpu, .ram, .disk])
         let cpuOnly = MenuBarStatusView.width(for: [.cpu])
         let none = MenuBarStatusView.width(for: [])
-        XCTAssertLessThan(all, 260, "5 列全开也应明显窄于旧版的 324pt")
+        XCTAssertLessThan(all, 260, "6 列全开也应明显窄于旧版的 324pt")
+        XCTAssertLessThan(defaultThree, 155, "首次安装默认 3 列（CPU+RAM+网络）应窄于刘海屏安全阈值")
+        XCTAssertLessThan(defaultThree, all)
         XCTAssertLessThan(noNetwork, all)
         XCTAssertLessThan(cpuOnly, noNetwork)
         XCTAssertGreaterThan(none, 0, "全部关闭时仍保留品牌图标入口")
@@ -42,13 +65,10 @@ final class MenuBarMetricsTests: XCTestCase {
 
     @MainActor
     func testDetailPagesOfferMenuBarToggleAndKeepFooterAtBottom() throws {
-        let state = AppState.shared
-        let originalTab = state.selectedTab
-        let originalMetrics = state.menuBarMetrics
-        defer { state.selectedTab = originalTab; state.menuBarMetrics = originalMetrics }
+        let state = AppState(defaults: testDefaults, startMonitoring: false)
         state.showAbout = false
         state.selectedTab = "overview"
-        let controller = NativePanelController()
+        let controller = NativePanelController(state: state)
         let root = try XCTUnwrap(controller.view as? NSStackView)
         func switches(_ view: NSView) -> [NSSwitch] { ((view as? NSSwitch).map { [$0] } ?? []) + view.subviews.flatMap { switches($0) } }
         func footerBottomGap() -> CGFloat {
