@@ -2,28 +2,54 @@ import Foundation
 
 enum MenuBarWidget: String, CaseIterable, Sendable {
     case mini, bar, pie
-    var title: String { switch self { case .mini: "Mini 数值"; case .bar: "柱状图"; case .pie: "饼图" } }
+    var title: String {
+        switch self {
+        case .mini: return L10n.string("menubar.widget.mini")
+        case .bar: return L10n.string("menubar.widget.bar")
+        case .pie: return L10n.string("menubar.widget.pie")
+        }
+    }
 }
 
 enum MenuBarColor: String, CaseIterable, Sendable {
     case utilization, monochrome, accent, pressure, blue, green, yellow, orange, red, purple
     var title: String {
         switch self {
-        case .utilization: "按利用率"; case .monochrome: "黑白"; case .accent: "系统强调色"
-        case .pressure: "按内存压力"; case .blue: "蓝色"; case .green: "绿色"; case .yellow: "黄色"
-        case .orange: "橙色"; case .red: "红色"; case .purple: "紫色"
+        case .utilization: return L10n.string("menubar.color.utilization")
+        case .monochrome: return L10n.string("menubar.color.monochrome")
+        case .accent: return L10n.string("menubar.color.accent")
+        case .pressure: return L10n.string("menubar.color.pressure")
+        case .blue: return L10n.string("menubar.color.blue")
+        case .green: return L10n.string("menubar.color.green")
+        case .yellow: return L10n.string("menubar.color.yellow")
+        case .orange: return L10n.string("menubar.color.orange")
+        case .red: return L10n.string("menubar.color.red")
+        case .purple: return L10n.string("menubar.color.purple")
         }
     }
 }
 
 enum MenuBarAlignment: String, CaseIterable, Sendable {
     case left, center, right
-    var title: String { switch self { case .left: "左对齐"; case .center: "居中"; case .right: "右对齐" } }
+    var title: String {
+        switch self {
+        case .left: return L10n.string("menubar.align.left")
+        case .center: return L10n.string("menubar.align.center")
+        case .right: return L10n.string("menubar.align.right")
+        }
+    }
 }
 
 enum MenuBarNetworkIcon: String, CaseIterable, Sendable {
     case dots, arrows, characters, none
-    var title: String { switch self { case .dots: "圆点"; case .arrows: "箭头"; case .characters: "I / O"; case .none: "隐藏" } }
+    var title: String {
+        switch self {
+        case .dots: return L10n.string("menubar.net_icon.dots")
+        case .arrows: return L10n.string("menubar.net_icon.arrows")
+        case .characters: return L10n.string("menubar.net_icon.characters")
+        case .none: return L10n.string("menubar.net_icon.none")
+        }
+    }
 }
 
 struct MenuBarWidgetPreferences: Equatable, Sendable {
@@ -90,5 +116,14 @@ struct MenuBarPreferences: Equatable, Sendable {
 }
 
 extension MenuBarMetric {
-    var title: String { switch self { case .cpu: "CPU"; case .gpu: "GPU"; case .ram: "RAM"; case .disk: "SSD"; case .temperature: "TMP"; case .network: "网络" } }
+    var title: String {
+        switch self {
+        case .cpu: return L10n.string("menubar.metric.cpu")
+        case .gpu: return L10n.string("menubar.metric.gpu")
+        case .ram: return L10n.string("menubar.metric.ram")
+        case .disk: return L10n.string("menubar.metric.disk")
+        case .temperature: return L10n.string("menubar.metric.temperature")
+        case .network: return L10n.string("menubar.metric.network")
+        }
+    }
 }

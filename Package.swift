@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "ControlLite",
+    defaultLocalization: "zh-Hans",
     platforms: [
         .macOS(.v14)
     ],
@@ -21,6 +22,9 @@ let package = Package(
             name: "ControlLite",
             dependencies: [.product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/ControlLite",
+            resources: [
+                .process("Resources")
+            ],
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("AppKit"),

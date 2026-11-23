@@ -17,19 +17,19 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     private let spacing = NSPopUpButton()
     private let refreshInterval = NSPopUpButton()
     private let metricOrder = NSPopUpButton()
-    private let moveLeft = NSButton(title: "向左", target: nil, action: nil)
-    private let moveRight = NSButton(title: "向右", target: nil, action: nil)
+    private let moveLeft = NSButton(title: L10n.string("settings.move_left"), target: nil, action: nil)
+    private let moveRight = NSButton(title: L10n.string("settings.move_right"), target: nil, action: nil)
     private let font = NSPopUpButton()
     private let networkVisible = NSSwitch()
     private let networkIcon = NSPopUpButton()
-    private let networkUnits = NSButton(checkboxWithTitle: "显示单位", target: nil, action: nil)
-    private let networkColor = NSButton(checkboxWithTitle: "数值着色", target: nil, action: nil)
-    private let networkOrder = NSButton(checkboxWithTitle: "下载在上", target: nil, action: nil)
+    private let networkUnits = NSButton(checkboxWithTitle: L10n.string("settings.network_units"), target: nil, action: nil)
+    private let networkColor = NSButton(checkboxWithTitle: L10n.string("settings.network_color"), target: nil, action: nil)
+    private let networkOrder = NSButton(checkboxWithTitle: L10n.string("settings.network_download_first"), target: nil, action: nil)
 
     init(state: AppState = .shared) {
         self.state = state
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 548), styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "菜单栏外观"
+        window.title = L10n.string("settings.title")
         window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
@@ -66,8 +66,8 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
         root.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView(); window.contentView = container; container.addSubview(root)
         NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18), root.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18), root.topAnchor.constraint(equalTo: container.topAnchor, constant: 18)])
-        root.addArrangedSubview(label("菜单栏外观", size: 18))
-        let subtitle = label("调整后立即生效，重启后保留。预览显示当前真实读数。", size: 11); subtitle.textColor = .secondaryLabelColor
+        root.addArrangedSubview(label(L10n.string("settings.title"), size: 18))
+        let subtitle = label(L10n.string("settings.subtitle"), size: 11); subtitle.textColor = .secondaryLabelColor
         root.addArrangedSubview(subtitle)
         previewContainer.addSubview(preview)
         previewContainer.widthAnchor.constraint(equalToConstant: 540).isActive = true
@@ -76,49 +76,49 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
 
         for value in 0...12 { spacing.addItem(withTitle: "\(value) pt"); spacing.lastItem?.representedObject = value }
         spacing.controlSize = .small; spacing.target = self; spacing.action = #selector(changeSpacing)
-        font.addItems(withTitles: ["Stats 系统字体", "等宽数字"]); font.controlSize = .small; font.target = self; font.action = #selector(changeFont)
-        root.addArrangedSubview(row([label("指标间距"), spacing, label("字体"), font]))
+        font.addItems(withTitles: [L10n.string("settings.font.system"), L10n.string("settings.font.monospaced")]); font.controlSize = .small; font.target = self; font.action = #selector(changeFont)
+        root.addArrangedSubview(row([label(L10n.string("settings.spacing")), spacing, label(L10n.string("settings.font")), font]))
 
-        refreshInterval.addItems(withTitles: ["1 秒", "2 秒", "5 秒", "10 秒"])
+        refreshInterval.addItems(withTitles: [1, 2, 5, 10].map { L10n.format("settings.seconds_format", $0) })
         refreshInterval.selectItem(at: [1.0, 2.0, 5.0, 10.0].firstIndex(of: state.backgroundInterval) ?? 2)
         refreshInterval.target = self; refreshInterval.action = #selector(changeRefresh)
-        refreshInterval.setAccessibilityLabel("面板关闭时刷新间隔")
-        root.addArrangedSubview(row([label("后台刷新"), refreshInterval, label("展开时每秒刷新", size: 11)]))
+        refreshInterval.setAccessibilityLabel(L10n.string("settings.bg_refresh_a11y"))
+        root.addArrangedSubview(row([label(L10n.string("settings.bg_refresh")), refreshInterval, label(L10n.string("settings.bg_refresh_hint"), size: 11)]))
         for metric in MenuBarMetric.allCases {
             metricOrder.addItem(withTitle: metric.title)
             metricOrder.lastItem?.representedObject = metric.rawValue
         }
-        metricOrder.setAccessibilityLabel("调整顺序的指标")
+        metricOrder.setAccessibilityLabel(L10n.string("settings.metric_order_a11y"))
         for control in [moveLeft, moveRight] { control.target = self; control.action = #selector(moveMetric(_:)); control.bezelStyle = .rounded }
-        root.addArrangedSubview(row([label("指标顺序"), metricOrder, moveLeft, moveRight]))
+        root.addArrangedSubview(row([label(L10n.string("settings.metric_order")), metricOrder, moveLeft, moveRight]))
 
-        let heading = label("各项指标", size: 11); heading.textColor = .secondaryLabelColor; root.addArrangedSubview(heading)
+        let heading = label(L10n.string("settings.metrics_heading"), size: 11); heading.textColor = .secondaryLabelColor; root.addArrangedSubview(heading)
         for (index, metric) in MenuBarMetric.allCases.enumerated() where metric != .network {
             let name = label(metric.title); name.widthAnchor.constraint(equalToConstant: 35).isActive = true
             let visible = NSSwitch(); visible.controlSize = .small; visible.tag = index; visible.target = self; visible.action = #selector(changeVisible)
-            visible.setAccessibilityLabel("在菜单栏显示\(metric.title)")
+            visible.setAccessibilityLabel(L10n.format("settings.show_in_menubar_format", metric.title))
             let widget = popup(MenuBarWidget.allCases.map { ($0.rawValue, $0.title) }, action: #selector(changeWidget), width: 105, tag: index)
-            widget.setAccessibilityLabel("\(metric.title)组件")
+            widget.setAccessibilityLabel(L10n.format("settings.widget_a11y_format", metric.title))
             let color = popup(MenuBarColor.allCases.filter { metric == .ram || $0 != .pressure }.map { ($0.rawValue, $0.title) }, action: #selector(changeColor), width: 112, tag: index)
-            color.setAccessibilityLabel("\(metric.title)颜色")
-            let title = NSButton(checkboxWithTitle: "标签", target: self, action: #selector(changeLabel)); title.tag = index; title.controlSize = .small
-            title.setAccessibilityLabel("\(metric.title)标签")
+            color.setAccessibilityLabel(L10n.format("settings.color_a11y_format", metric.title))
+            let title = NSButton(checkboxWithTitle: L10n.string("settings.label_checkbox"), target: self, action: #selector(changeLabel)); title.tag = index; title.controlSize = .small
+            title.setAccessibilityLabel(L10n.format("settings.label_a11y_format", metric.title))
             let alignment = popup(MenuBarAlignment.allCases.map { ($0.rawValue, $0.title) }, action: #selector(changeAlignment), width: 83, tag: index)
-            alignment.setAccessibilityLabel("\(metric.title)对齐方式")
+            alignment.setAccessibilityLabel(L10n.format("settings.alignment_a11y_format", metric.title))
             widgetControls[metric] = [visible, widget, color, title, alignment]
             root.addArrangedSubview(row([name, visible, widget, color, title, alignment]))
         }
-        let network = label("网络", size: 12); network.widthAnchor.constraint(equalToConstant: 35).isActive = true
+        let network = label(MenuBarMetric.network.title, size: 12); network.widthAnchor.constraint(equalToConstant: 35).isActive = true
         networkVisible.controlSize = .small
         networkVisible.tag = MenuBarMetric.allCases.firstIndex(of: .network)!
         networkVisible.target = self; networkVisible.action = #selector(changeVisible)
-        networkVisible.setAccessibilityLabel("在菜单栏显示网络")
+        networkVisible.setAccessibilityLabel(L10n.format("settings.show_in_menubar_format", MenuBarMetric.network.title))
         for icon in MenuBarNetworkIcon.allCases { networkIcon.addItem(withTitle: icon.title); networkIcon.lastItem?.representedObject = icon.rawValue }
         networkIcon.controlSize = .small; networkIcon.target = self; networkIcon.action = #selector(changeNetwork)
-        networkIcon.setAccessibilityLabel("网络图标")
+        networkIcon.setAccessibilityLabel(L10n.string("settings.network_icon_a11y"))
         for control in [networkUnits, networkColor, networkOrder] { control.controlSize = .small; control.target = self; control.action = #selector(changeNetwork) }
         root.addArrangedSubview(row([network, networkVisible, networkIcon, networkUnits, networkColor, networkOrder]))
-        let reset = NSButton(title: "恢复默认外观", target: self, action: #selector(resetPreferences)); reset.bezelStyle = .rounded; reset.controlSize = .small
+        let reset = NSButton(title: L10n.string("settings.reset"), target: self, action: #selector(resetPreferences)); reset.bezelStyle = .rounded; reset.controlSize = .small
         root.addArrangedSubview(reset)
         subscriptions.insert(state.$menuBarMetrics.sink { [weak self] visible in
             guard let self else { return }
