@@ -155,6 +155,9 @@
 "keep_awake.duration.2h" = "2 Hours";
 "keep_awake.auto_release_low_battery" = "Auto-release on low battery (≤ 20%)";
 "keep_awake.options_button_label" = "Keep Awake Options";
+"keep_awake.active_remaining_format" = "Active · %@ left";
+"keep_awake.released_low_battery_format" = "Auto-released at ≤ %d%% battery";
+"keep_awake.released_timeout" = "Timer ended · Released";
 
 "error.keep_awake_restore" = "Unable to restore Keep Awake. Please turn it on again.";
 "error.keep_awake_toggle" = "Unable to update Keep Awake. Please try again.";
@@ -225,8 +228,11 @@
 "detail.gpu_temp" = "GPU Temperature";
 "detail.screen_fps" = "Combined FPS";
 "detail.ane_power" = "ANE Power";
+"detail.cpu_power" = "CPU Power";
+"detail.gpu_power" = "GPU Power";
 "detail.soc_power" = "SoC Power";
 "detail.charging_power" = "Charging Power";
+"detail.battery_power" = "Battery Power";
 "detail.ram_used_total" = "Used / Total";
 "detail.ram_app" = "App Memory";
 "detail.ram_wired" = "Wired Memory";

@@ -46,6 +46,18 @@ final class DetailRowsView: DashboardCardView {
                 let insertIndex = entries.firstIndex { $0.0 == thermalTitle }.map { $0 + 1 } ?? entries.endIndex
                 entries.insert((L10n.string("detail.fan_speed"), rpmValue), at: insertIndex)
             }
+            var powerRows: [(String, String)] = []
+            if let cpuWatts = metrics.cpuPowerWatts {
+                powerRows.append((L10n.string("detail.cpu_power"), String(format: "%.1f W", cpuWatts)))
+            }
+            if let socWatts = metrics.socPowerWatts {
+                powerRows.append((L10n.string("detail.soc_power"), String(format: "%.1f W", socWatts)))
+            }
+            if !powerRows.isEmpty {
+                let uptimeTitle = L10n.string("detail.uptime")
+                let insertIndex = entries.firstIndex { $0.0 == uptimeTitle } ?? entries.endIndex
+                entries.insert(contentsOf: powerRows, at: insertIndex)
+            }
             return entries
         default:
             return nonCPUEntries()
@@ -97,7 +109,7 @@ final class DetailRowsView: DashboardCardView {
         let sampling = L10n.string("detail.sampling_ellipsis")
         switch kind {
         case "gpu":
-            return [
+            var entries: [(String, String)] = [
                 (L10n.string("detail.model"), metrics.gpuModelName),
                 (L10n.string("detail.core_count"), metrics.gpuCoreCount > 0 ? "\(metrics.gpuCoreCount)" : unavailable),
                 (L10n.string("detail.gpu_device"), metrics.gpuAvailable ? String(format: "%.0f%%", metrics.gpuUsage) : unavailable),
@@ -107,6 +119,13 @@ final class DetailRowsView: DashboardCardView {
                 (L10n.string("detail.screen_fps"), metrics.screenFPS.map { String(format: "%.0f FPS", $0) } ?? samplingOrUnavailable),
                 (L10n.string("detail.ane_power"), metrics.aneWatts.map { String(format: "%.3f W", $0) } ?? samplingOrUnavailable)
             ]
+            if let gpuWatts = metrics.gpuPowerWatts {
+                entries.append((L10n.string("detail.gpu_power"), String(format: "%.1f W", gpuWatts)))
+            }
+            if let socWatts = metrics.socPowerWatts {
+                entries.append((L10n.string("detail.soc_power"), String(format: "%.1f W", socWatts)))
+            }
+            return entries
         case "ram":
             return [
                 (L10n.string("detail.ram_used_total"), String(format: "%.2f / %.0f GB", metrics.ramUsedGB, metrics.ramTotalGB)),
@@ -138,13 +157,28 @@ final class DetailRowsView: DashboardCardView {
                 (L10n.string("detail.disk_power_on"), metrics.diskHealth.map { L10n.format("detail.hours_format", $0.powerOnHours) } ?? unavailable)
             ]
         case "battery":
-            return [
+            var entries: [(String, String)] = [
                 (L10n.string("detail.battery_status"), L10n.localizeCoreStatus(metrics.battery.summary)),
                 (L10n.string("detail.battery_temp"), metrics.battery.temperature.map { String(format: "%.1f °C", $0) } ?? unavailable),
                 (L10n.string("detail.battery_remaining"), metrics.battery.remainingMinutes.map { L10n.format("detail.minutes_format", $0) } ?? unavailable),
                 (L10n.string("detail.battery_health"), metrics.battery.healthPercentage.map { "\($0)%" } ?? unavailable),
                 (L10n.string("detail.battery_cycles"), metrics.battery.cycleCount.map(String.init) ?? unavailable)
             ]
+            if let adapterWatts = metrics.adapterWatts {
+                entries.append((L10n.string("detail.charging_power"), "\(adapterWatts) W"))
+            }
+            if let batteryWatts = metrics.batteryPowerWatts {
+                let formatted: String
+                if batteryWatts > 0.05 {
+                    formatted = String(format: "+%.1f W", batteryWatts)
+                } else if batteryWatts < -0.05 {
+                    formatted = String(format: "-%.1f W", abs(batteryWatts))
+                } else {
+                    formatted = "0.0 W"
+                }
+                entries.append((L10n.string("detail.battery_power"), formatted))
+            }
+            return entries
         default:
             return [
                 (L10n.string("detail.net_interface"), metrics.network.interface),

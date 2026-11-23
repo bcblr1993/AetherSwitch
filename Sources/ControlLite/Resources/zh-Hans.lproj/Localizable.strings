@@ -155,6 +155,9 @@
 "keep_awake.duration.2h" = "2 小时";
 "keep_awake.auto_release_low_battery" = "低电量（≤ 20%）自动释放";
 "keep_awake.options_button_label" = "常亮选项";
+"keep_awake.active_remaining_format" = "常亮中 · 剩余 %@";
+"keep_awake.released_low_battery_format" = "低电量（≤ %d%%）已自动释放";
+"keep_awake.released_timeout" = "定时常亮已到期释放";
 
 "error.keep_awake_restore" = "无法恢复保持常亮，请重新开启。";
 "error.keep_awake_toggle" = "无法设置保持常亮，请稍后重试。";
@@ -225,8 +228,11 @@
 "detail.gpu_temp" = "GPU 温度";
 "detail.screen_fps" = "合计呈现帧率";
 "detail.ane_power" = "神经引擎功率";
+"detail.cpu_power" = "CPU 功耗";
+"detail.gpu_power" = "GPU 功耗";
 "detail.soc_power" = "整机功耗";
 "detail.charging_power" = "充电瓦数";
+"detail.battery_power" = "充放电功率";
 "detail.ram_used_total" = "已用 / 总内存";
 "detail.ram_app" = "应用内存";
 "detail.ram_wired" = "联结内存";

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-11-23 (Build 2026112302)
+
+### Added
+- **内核级智能限时常亮与低电量自动释放**：保持常亮开关支持无限期、30 分钟、1 小时、2 小时定时选项与「低电量（≤ 20%）自动释放」开关；定时释放直接通过 `IOPMAssertionCreateWithDescription` 内核超时机制完成，低电量监听使用 `IOPSNotificationCreateRunLoopSource` 系统事件回调（零应用内轮询定时器），面板卡片实时展示剩余倒计时与低电量/到期释放提示。
+- **零额外系统调用 SoC 功耗与充电瓦数监控**：复用既有 `IOReport` `"Energy Model"` 通道解析 CPU / GPU / 整机 SoC 功耗（`W`），并在电池采样单次 `AppleSmartBattery` 读取中解析充电器握手功率（充电瓦数）与瞬时充放电功率，接入 CPU、GPU 与电池详情页（不支持或采样为 `nil` 时自动隐藏）。
+- **原生零依赖中英双语国际化（`zh-Hans` + `en`）**：新增 `L10n` 与 `zh-Hans.lproj` / `en.lproj` `Localizable.strings`（全量双语键 100% 对齐），覆盖菜单栏状态项、设置窗口、全部面板卡片与详情页，并随 `build_app.sh` 自动打入 `.app` 资源目录与自检。
+- **全键盘快捷键与 VoiceOver 无障碍升级**：支持 `⌘1~7` 切换标签页、`⌘,` 打开菜单栏外观设置、`⌘R` 立即刷新、`⌘Q` 退出；概览监控卡与快捷开关卡支持焦点描边、Space/Return 键盘激活与 `accessibilityPerformPress()`，隐藏桌面/隐藏文件开关标注「将重启访达」无障碍提示，状态栏提供实时双语无障碍读数。
+
+### Architecture & Performance
+- **面板 UI 模块化拆分**：将 `NativePanelController` 拆分为 `StatsPrimitives`、`OverviewCards`、`DetailVisualView`、`DetailTableViews`、`AboutPanelView` 与精简后的 `NativePanelController` 6 个独立模块，保留同步位图直赋 `layer.contents` 渲染与固定 ≤ 800pt 弹窗高度预算。
+- **Core 层 P2 打磨**：`ProcessSampler` 合并重复 `proc_pid_rusage` 遍历并按 `(pid, started)` 缓存进程名减少 `proc_pidpath` 调用；`SystemMonitor` 在 GPU 列隐藏且非概览/GPU 页时主动释放 `gpuService` 句柄；`fetchRAMDetailed` 改用内核 `host_page_size`；`selectDisk(path:)` 持久化至注入 `UserDefaults` 并消除 `selectNetwork` 双重写。
+
+### Tests
+- 新增 `Stage2CoreTests`、`Stage2UIAccessibilityAndL10nTests` 与 `Stage2IntegrationTests` 自动化单测，覆盖内核限时常亮与低电量事件回调、IOReport 功耗与充电瓦数解析及渲染、进程名缓存、UI→Core 跨模块接线、中英双语键对齐与切换、键盘快捷键/VoiceOver 以及全部标签页 ≤ 800pt 高度门禁。
+
 ## [1.10.2] - 2026-11-23 (Build 2026112301)
 
 ### Added

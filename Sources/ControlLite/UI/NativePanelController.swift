@@ -54,6 +54,7 @@ final class NativePanelController: NSViewController {
     private var pendingSubscription: AnyCancellable?
     private var keepAwakeDurationSubscription: AnyCancellable?
     private var keepAwakeLowBatterySubscription: AnyCancellable?
+    private var keepAwakeStatusSubscription: AnyCancellable?
     private var updateSubscription: AnyCancellable?
     private var menuBarSubscription: AnyCancellable?
     private var loginItemSubscription: AnyCancellable?
@@ -295,6 +296,9 @@ final class NativePanelController: NSViewController {
             self.systemStripTile?.metrics = m
             self.processesTile?.metrics = m
             self.detailVisual?.metrics = m
+            if self.state.keepAwakeStatus.isActive, self.state.keepAwakeStatus.expiresAt != nil {
+                self.switchTiles.first?.needsDisplay = true
+            }
         }
         switchSubscription = state.$switches.sink { [weak self] s in
             guard let self else { return }
@@ -310,6 +314,9 @@ final class NativePanelController: NSViewController {
         }
         keepAwakeLowBatterySubscription = state.$keepAwakeAutoReleaseOnLowBattery.sink { [weak self] enabled in
             self?.switchTiles.first?.keepAwakeAutoReleaseLowBattery = enabled
+        }
+        keepAwakeStatusSubscription = state.$keepAwakeStatus.sink { [weak self] status in
+            self?.switchTiles.first?.keepAwakeStatus = status
         }
     }
 
@@ -491,6 +498,7 @@ final class NativePanelController: NSViewController {
             if index == 0 {
                 tile.keepAwakeDuration = state.keepAwakeDuration
                 tile.keepAwakeAutoReleaseLowBattery = state.keepAwakeAutoReleaseOnLowBattery
+                tile.keepAwakeStatus = state.keepAwakeStatus
                 tile.onSelectKeepAwakeDuration = { [weak self] duration in
                     self?.state.selectKeepAwakeDuration(duration)
                 }

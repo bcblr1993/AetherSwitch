@@ -69,7 +69,13 @@ public enum L10n {
         case "偏高": return "Fair"
         case "高热": return "Serious"
         case "不可用": return "Unavailable"
-        default: return raw
+        case "无内置电池": return "No Built-in Battery"
+        default:
+            return raw
+                .replacingOccurrences(of: "不可用", with: "Unavailable")
+                .replacingOccurrences(of: "充电中", with: "Charging")
+                .replacingOccurrences(of: "接通电源", with: "On AC Power")
+                .replacingOccurrences(of: "电池供电", with: "On Battery")
         }
     }
 
@@ -90,7 +96,15 @@ public enum L10n {
     private static func candidateBundles() -> [Bundle] {
         var bundles: [Bundle] = [Bundle.main]
         #if SWIFT_PACKAGE
-        bundles.append(Bundle.module)
+        // Only access SwiftPM's Bundle.module when running unit tests or when the SwiftPM resource bundle exists;
+        // inside a packaged .app, .lproj lives directly in Contents/Resources and accessing a missing Bundle.module would fatalError.
+        let moduleBundleName = "ControlLite_ControlLite.bundle"
+        let hasModuleBundle = isRunningUnitTests
+            || FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent(moduleBundleName).path)
+            || (Bundle.main.resourceURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent(moduleBundleName).path) } ?? false)
+        if hasModuleBundle {
+            bundles.append(Bundle.module)
+        }
         #endif
         for bundle in Bundle.allBundles where bundle !== Bundle.main {
             if bundle.bundleURL.lastPathComponent.contains("ControlLite"),
@@ -267,6 +281,9 @@ public enum L10n {
         "keep_awake.duration.2h": "2 小时",
         "keep_awake.auto_release_low_battery": "低电量（≤ 20%）自动释放",
         "keep_awake.options_button_label": "常亮选项",
+        "keep_awake.active_remaining_format": "常亮中 · 剩余 %@",
+        "keep_awake.released_low_battery_format": "低电量（≤ %d%%）已自动释放",
+        "keep_awake.released_timeout": "定时常亮已到期释放",
 
         // Errors
         "error.keep_awake_restore": "无法恢复保持常亮，请重新开启。",
@@ -340,8 +357,11 @@ public enum L10n {
         "detail.gpu_temp": "GPU 温度",
         "detail.screen_fps": "合计呈现帧率",
         "detail.ane_power": "神经引擎功率",
+        "detail.cpu_power": "CPU 功耗",
+        "detail.gpu_power": "GPU 功耗",
         "detail.soc_power": "整机功耗",
         "detail.charging_power": "充电瓦数",
+        "detail.battery_power": "充放电功率",
         "detail.ram_used_total": "已用 / 总内存",
         "detail.ram_app": "应用内存",
         "detail.ram_wired": "联结内存",
@@ -579,6 +599,9 @@ public enum L10n {
         "keep_awake.duration.2h": "2 Hours",
         "keep_awake.auto_release_low_battery": "Auto-release on low battery (≤ 20%)",
         "keep_awake.options_button_label": "Keep Awake Options",
+        "keep_awake.active_remaining_format": "Active · %@ left",
+        "keep_awake.released_low_battery_format": "Auto-released at ≤ %d%% battery",
+        "keep_awake.released_timeout": "Timer ended · Released",
 
         // Errors
         "error.keep_awake_restore": "Unable to restore Keep Awake. Please turn it on again.",
@@ -652,8 +675,11 @@ public enum L10n {
         "detail.gpu_temp": "GPU Temperature",
         "detail.screen_fps": "Combined FPS",
         "detail.ane_power": "ANE Power",
+        "detail.cpu_power": "CPU Power",
+        "detail.gpu_power": "GPU Power",
         "detail.soc_power": "SoC Power",
         "detail.charging_power": "Charging Power",
+        "detail.battery_power": "Battery Power",
         "detail.ram_used_total": "Used / Total",
         "detail.ram_app": "App Memory",
         "detail.ram_wired": "Wired Memory",

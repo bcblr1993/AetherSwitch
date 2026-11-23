@@ -463,6 +463,8 @@ final class DashboardSwitchView: DashboardCardView {
     var onToggleCard: (() -> Void)?
     var keepAwakeDuration: KeepAwakePreset = .indefinite { didSet { guard oldValue != keepAwakeDuration else { return }; needsDisplay = true } }
     var keepAwakeAutoReleaseLowBattery: Bool = false
+    var keepAwakeStatus = KeepAwakeStatus() { didSet { guard oldValue != keepAwakeStatus else { return }; needsDisplay = true } }
+    var keepAwakeNowProvider: () -> Date = Date.init
     var onSelectKeepAwakeDuration: ((KeepAwakePreset) -> Void)?
     var onToggleKeepAwakeAutoRelease: ((Bool) -> Void)?
 
@@ -587,13 +589,47 @@ final class DashboardSwitchView: DashboardCardView {
         restartsFinder ? L10n.string("switch.restarts_finder_hint") : nil
     }
     override func accessibilityValue() -> Any? {
-        let keys = Self.descriptionKeys[index]
-        return active ? L10n.string(keys.on) : L10n.string(keys.off)
+        currentDescription
     }
     override func accessibilityPerformPress() -> Bool {
         guard control.isEnabled else { return false }
         onToggleCard?()
         return true
+    }
+
+    var currentDescription: String {
+        let keys = Self.descriptionKeys[index]
+        guard index == 0 else {
+            return active ? L10n.string(keys.on) : L10n.string(keys.off)
+        }
+        if active {
+            if let expiresAt = keepAwakeStatus.expiresAt {
+                let remaining = max(0, Int(ceil(expiresAt.timeIntervalSince(keepAwakeNowProvider()))))
+                return L10n.format("keep_awake.active_remaining_format", Self.formatCountdown(remaining))
+            }
+            if keepAwakeDuration != .indefinite {
+                return "\(L10n.string(keys.on)) · \(keepAwakeDuration.title)"
+            }
+            return L10n.string(keys.on)
+        }
+        if keepAwakeStatus.lastReleaseReason == .lowBattery {
+            return L10n.format("keep_awake.released_low_battery_format", keepAwakeStatus.lowBatteryThreshold)
+        }
+        if keepAwakeStatus.lastReleaseReason == .timeout {
+            return L10n.string("keep_awake.released_timeout")
+        }
+        return L10n.string(keys.off)
+    }
+
+    static func formatCountdown(_ totalSeconds: Int) -> String {
+        let clamped = max(0, totalSeconds)
+        let hours = clamped / 3600
+        let minutes = (clamped % 3600) / 60
+        let seconds = clamped % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%02d:%02d", minutes, seconds)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -605,14 +641,7 @@ final class DashboardSwitchView: DashboardCardView {
             symbol(Self.symbols[index], in: badge, size: 12, tint: active ? Palette.accent : .secondaryLabelColor)
             let trailingReserve: CGFloat = index == 0 ? 132 : 110
             text(L10n.string(Self.titleKeys[index]), in: NSRect(x: 46, y: 5, width: bounds.width - trailingReserve, height: 17), font: Palette.bodyStrong)
-            let keys = Self.descriptionKeys[index]
-            let description: String
-            if index == 0 && active && keepAwakeDuration != .indefinite {
-                description = "\(L10n.string(keys.on)) · \(keepAwakeDuration.title)"
-            } else {
-                description = active ? L10n.string(keys.on) : L10n.string(keys.off)
-            }
-            text(description, in: NSRect(x: 46, y: 22, width: bounds.width - trailingReserve, height: 15), font: Palette.caption, color: .secondaryLabelColor)
+            text(currentDescription, in: NSRect(x: 46, y: 22, width: bounds.width - trailingReserve, height: 15), font: Palette.caption, color: .secondaryLabelColor)
         }
     }
 }

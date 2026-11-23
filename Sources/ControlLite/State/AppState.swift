@@ -36,6 +36,14 @@ public enum KeepAwakePreset: Int, CaseIterable, Codable, Sendable {
         self == .indefinite ? nil : TimeInterval(rawValue)
     }
 
+    public var coreDuration: KeepAwakeDuration {
+        KeepAwakeDuration(rawValue: rawValue) ?? .indefinite
+    }
+
+    public init(coreDuration: KeepAwakeDuration) {
+        self = KeepAwakePreset(rawValue: coreDuration.rawValue) ?? .indefinite
+    }
+
     public var title: String {
         switch self {
         case .indefinite: return L10n.string("keep_awake.duration.indefinite")
@@ -170,7 +178,8 @@ public final class AppState: ObservableObject {
             defaults.set(keepAwakeAutoReleaseOnLowBattery, forKey: KeepAwakePreset.autoReleaseDefaultsKey)
         }
     }
-    /// 内核定时常亮与低电量自动释放的集成回调钩子（合并 core-v111 后可直接接通 `IOPMAssertion` 超时与电量监控）。
+    @Published public private(set) var keepAwakeStatus = KeepAwakeStatus()
+    /// 测试或外部可覆盖的常亮配置钩子；为 `nil` 时直接接通 `SwitchManager.setKeepAwake(_:duration:lowBatteryAutoRelease:)`。
     public var onKeepAwakeConfigure: ((_ active: Bool, _ duration: KeepAwakePreset, _ autoReleaseLowBattery: Bool) -> Bool)?
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
@@ -179,7 +188,7 @@ public final class AppState: ObservableObject {
     private var timer: Timer?
     private var wakeSubscription: AnyCancellable?
     private let monitor = SystemMonitor.shared
-    private let switchMgr = SwitchManager.shared
+    private let switchMgr: SwitchManager
 
     var currentTimerIntervalForTesting: TimeInterval? { timer?.timeInterval }
     var currentTimerToleranceForTesting: TimeInterval? { timer?.tolerance }
@@ -193,9 +202,10 @@ public final class AppState: ObservableObject {
         }
     }
 
-    init(defaults: UserDefaults = .standard, startMonitoring: Bool = true) {
+    init(defaults: UserDefaults = .standard, startMonitoring: Bool = true, switchManager: SwitchManager = .shared) {
         self.defaults = defaults
         self.monitoringEnabled = startMonitoring
+        self.switchMgr = switchManager
 
         let savedStyle = defaults.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
         let resolvedStyle: MenuBarStyle
@@ -213,13 +223,27 @@ public final class AppState: ObservableObject {
         self.keepAwakeAutoReleaseOnLowBattery = defaults.bool(forKey: KeepAwakePreset.autoReleaseDefaultsKey)
         self.isInitializing = false
 
-        guard startMonitoring else { return }
+        if startMonitoring || switchManager !== SwitchManager.shared {
+            switchMgr.onKeepAwakeStatusChange = { [weak self] status in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.keepAwakeStatus = status
+                    self.switches.isKeepAwakeActive = status.isActive
+                }
+            }
+        }
+
+        guard startMonitoring else {
+            self.keepAwakeStatus = switchMgr.getKeepAwakeStatus()
+            return
+        }
 
         if defaults === UserDefaults.standard {
             let restoredKeepAwake = switchMgr.restoreKeepAwakePreference()
             if !restoredKeepAwake { switchError = L10n.string("error.keep_awake_restore") }
             self.metrics = monitor.sample(fullMetrics: false, visibleMetrics: SamplingPlan.visible(style: resolvedStyle, metrics: menuBarMetrics))
             self.switches = switchMgr.getCurrentStates()
+            self.keepAwakeStatus = switchMgr.getKeepAwakeStatus()
             wakeSubscription = NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
                 .sink { [weak self] _ in
                     Task { @MainActor [weak self] in
@@ -278,17 +302,23 @@ public final class AppState: ObservableObject {
         let revision = switchRevision
         let override = sampleOverride
         let priority = Self.samplingPriority(isPopoverOpen: isFull)
+        let switchManager = switchMgr
         Task.detached(priority: priority) { [weak self] in
-            let (sampledMetrics, sampledSwitches): (SystemMetrics, SwitchStates?) = autoreleasepool {
-                if let override { return override(isFull, tab, isFull, visible) }
+            let (sampledMetrics, sampledSwitches, sampledKeepAwakeStatus): (SystemMetrics, SwitchStates?, KeepAwakeStatus?) = autoreleasepool {
+                if let override {
+                    let (m, s) = override(isFull, tab, isFull, visible)
+                    return (m, s, nil)
+                }
                 let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull, visibleMetrics: visible)
-                let s = (isFull && tab == "overview") ? SwitchManager.shared.getCurrentStates() : nil
-                return (m, s)
+                let s = (isFull && tab == "overview") ? switchManager.getCurrentStates() : nil
+                let k = (isFull && tab == "overview") ? switchManager.getKeepAwakeStatus() : nil
+                return (m, s, k)
             }
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.samplingInFlight = false
                 if let s = sampledSwitches, revision == self.switchRevision, self.pendingSwitches.isEmpty { self.switches = s }
+                if let k = sampledKeepAwakeStatus, revision == self.switchRevision, self.pendingSwitches.isEmpty { self.keepAwakeStatus = k }
                 self.metrics = sampledMetrics
                 if self.needsResample {
                     self.needsResample = false
@@ -312,8 +342,13 @@ public final class AppState: ObservableObject {
         if let onKeepAwakeConfigure {
             active = onKeepAwakeConfigure(expected, keepAwakeDuration, keepAwakeAutoReleaseOnLowBattery)
         } else {
-            let coreExpected = !switchMgr.getCurrentStates().isKeepAwakeActive
-            active = switchMgr.toggleKeepAwake()
+            let coreExpected = !switchMgr.isKeepAwakeActive()
+            active = switchMgr.setKeepAwake(
+                coreExpected,
+                duration: keepAwakeDuration.coreDuration,
+                lowBatteryAutoRelease: keepAwakeAutoReleaseOnLowBattery
+            )
+            self.keepAwakeStatus = switchMgr.getKeepAwakeStatus()
             self.switches.isKeepAwakeActive = active
             if active != coreExpected { switchError = L10n.string("error.keep_awake_toggle") }
             return
@@ -331,18 +366,37 @@ public final class AppState: ObservableObject {
             let active = onKeepAwakeConfigure(true, duration, keepAwakeAutoReleaseOnLowBattery)
             self.switches.isKeepAwakeActive = active
             if !active { switchError = L10n.string("error.keep_awake_toggle") }
-        } else if !switches.isKeepAwakeActive {
-            toggleKeepAwake()
+        } else {
+            let active = switchMgr.setKeepAwake(
+                true,
+                duration: duration.coreDuration,
+                lowBatteryAutoRelease: keepAwakeAutoReleaseOnLowBattery
+            )
+            self.keepAwakeStatus = switchMgr.getKeepAwakeStatus()
+            self.switches.isKeepAwakeActive = active
+            if !active { switchError = L10n.string("error.keep_awake_toggle") }
         }
     }
 
     public func setKeepAwakeAutoReleaseOnLowBattery(_ enabled: Bool) {
         keepAwakeAutoReleaseOnLowBattery = enabled
-        guard switches.isKeepAwakeActive, let onKeepAwakeConfigure else { return }
+        guard switches.isKeepAwakeActive else { return }
         switchError = nil
         switchRevision &+= 1
-        let active = onKeepAwakeConfigure(true, keepAwakeDuration, enabled)
-        self.switches.isKeepAwakeActive = active
+        if let onKeepAwakeConfigure {
+            let active = onKeepAwakeConfigure(true, keepAwakeDuration, enabled)
+            self.switches.isKeepAwakeActive = active
+            if !active { switchError = L10n.string("error.keep_awake_toggle") }
+        } else {
+            let active = switchMgr.setKeepAwake(
+                true,
+                duration: keepAwakeDuration.coreDuration,
+                lowBatteryAutoRelease: enabled
+            )
+            self.keepAwakeStatus = switchMgr.getKeepAwakeStatus()
+            self.switches.isKeepAwakeActive = active
+            if !active { switchError = L10n.string("error.keep_awake_toggle") }
+        }
     }
 
     public func toggleHideDesktop() {

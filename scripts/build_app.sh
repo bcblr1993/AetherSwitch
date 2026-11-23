@@ -11,8 +11,8 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.10.2"
-BUILD_NUMBER="2026112301"
+VERSION="1.11.0"
+BUILD_NUMBER="2026112302"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 # 在线更新（Sparkle）：清单地址与更新签名公钥。公钥可公开，对应私钥只存在发布者的登录钥匙串（账户 AetherSwitch）。
 SPARKLE_FEED_URL="https://aethernative.com/apps/aetherswitch/appcast.xml"
@@ -148,6 +148,13 @@ if [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
     cp "$PROJECT_DIR/Resources/AppIcon.icns" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources/AppIcon.icns"
 fi
 
+# 打包原生中英双语本地化资源（zh-Hans.lproj / en.lproj）
+for LPROJ in zh-Hans.lproj en.lproj; do
+    SRC_LPROJ="$PROJECT_DIR/Sources/ControlLite/Resources/$LPROJ"
+    test -f "$SRC_LPROJ/Localizable.strings" || { echo "Missing localization resource: $SRC_LPROJ/Localizable.strings"; exit 1; }
+    ditto "$SRC_LPROJ" "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources/$LPROJ"
+done
+
 echo "==> [4/5] 执行代码签名与完整性校验..."
 echo "使用官方证书签名: $CERT_NAME"
 # 由内到外签名：先签 Sparkle 的辅助程序与框架，最后签应用本体（不使用 --deep，避免把应用的权限声明套到内嵌代码上）。
@@ -167,6 +174,9 @@ for KEY in SUFeedURL SUPublicEDKey SURequireSignedFeed SUVerifyUpdateBeforeExtra
 done
 # 应用必须声明支持简体中文，否则系统把整个应用按英文处理，Sparkle 自带的中文翻译不会生效（更新窗口会显示英文）。
 /usr/libexec/PlistBuddy -c "Print :CFBundleLocalizations" "$APP_BUNDLE/Contents/Info.plist" | grep -q "zh-Hans" || { echo "Info.plist does not declare zh-Hans localization"; exit 1; }
+for LPROJ in zh-Hans.lproj en.lproj; do
+    test -s "$APP_BUNDLE/Contents/Resources/$LPROJ/Localizable.strings" || { echo "App bundle is missing $LPROJ/Localizable.strings"; exit 1; }
+done
 test -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_CN.lproj" || { echo "Sparkle.framework has no zh_CN localization"; exit 1; }
 test -d "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework" || { echo "Sparkle.framework is not embedded"; exit 1; }
 otool -l "$APP_BUNDLE/Contents/MacOS/${APP_NAME}" | grep -q "@executable_path/../Frameworks" || { echo "Executable has no rpath to Contents/Frameworks"; exit 1; }

@@ -14,8 +14,8 @@ tagline:
   en: Ultra-lightweight macOS status monitor & essential quick toggles
 
 summary:
-  zh: "Apple 芯片 Mac 的原生状态栏工具：支持 CPU、GPU、内存、磁盘、温度与双向网速 6 项菜单栏指标按需组合，展开面板查看进程、风扇转速、网络连接、电池等详情，集成 4 个高频系统开关与同步亮度控制。"
-  en: "A native menu bar utility for Apple silicon Macs: customize up to six menu bar metrics (CPU, GPU, memory, storage, temperature and network rates), inspect process, fan RPM, network and battery details, with four system toggles and synchronized display brightness."
+  zh: "Apple 芯片 Mac 的原生中英双语状态栏工具：支持 CPU、GPU、内存、磁盘、温度与双向网速 6 项指标按需组合，展开面板查看进程、风扇转速、SoC 功耗、充电瓦数、网络与电池详情，集成限时常亮与 4 个高频开关、同步亮度控制及全键盘/VoiceOver 无障碍操作。"
+  en: "A native bilingual (English & Simplified Chinese) menu bar utility for Apple silicon Macs: customize up to six menu bar metrics, inspect processes, fan RPM, SoC power, charging wattage, network and battery details, with timed Keep Awake, four quick toggles, synchronized brightness and full keyboard/VoiceOver accessibility."
 
 platforms:
   - id: mac
@@ -90,10 +90,10 @@ showcase:
         zh: 自动跟随主接口或手动选择，查看双向速率、IPv4、Wi-Fi 连接信息和本次监测累计流量。
         en: Follow the primary interface or choose one, with rates, IPv4, Wi-Fi details and monitored transfer totals.
       image: ./media/network-light.png
-    - title: { zh: 原生电池状态, en: Native Battery Status }
+    - title: { zh: 原生电池状态与充电瓦数, en: Native Battery & Charging Wattage }
       caption:
-        zh: 电量、充电状态、预计时间、最大容量与循环次数；慢速缓存，不支持时明确提示。
-        en: Charge, power state, estimated time, maximum capacity and cycles, with slow cached reads and explicit unavailable states.
+        zh: 电量、充电状态、充电器瓦数、瞬时充放电功率、预计时间、最大容量与循环次数；慢速缓存，不支持时明确提示。
+        en: Charge, power state, adapter wattage, live battery power, estimated time, maximum capacity and cycles, with slow cached reads and explicit unavailable states.
       image: ./media/battery-light.png
 
 features:
@@ -109,7 +109,7 @@ features:
         zh: 包含保持屏幕常亮、隐藏桌面图标、显示 Finder 隐藏文件与深色模式切换。
         en: Keep screen awake, hide desktop icons, toggle hidden dotfiles and switch dark mode with zero friction.
       details:
-        - { zh: "保持常亮基于原生 IOKit 电源断言（IOPMAssertion），退出即自动归还，绝不残留僵尸子进程。", en: "Keep Awake uses native IOKit power assertions, releasing cleanly upon exit." }
+        - { zh: "保持常亮基于原生 IOKit 内核超时电源断言（IOPMAssertion），支持无限期 / 30 分钟 / 1 小时 / 2 小时定时与低电量（≤ 20%）自动释放，零应用内轮询定时器，退出即归还。", en: "Keep Awake uses native IOKit kernel-timed power assertions with Indefinite / 30m / 1h / 2h presets and ≤ 20% low-battery auto-release, zero in-app polling timers, and clean release on exit." }
         - { zh: "隐藏桌面一键收起杂乱文件，录屏与投屏演示更清爽专业。", en: "Clear cluttered desktop icons instantly for clean screencasts and presentations." }
         - { zh: "显示隐藏文件一键切换访达点文件，无需终端重复输入 defaults 命令。", en: "Toggle dotfiles in Finder without repetitive terminal defaults commands." }
     - kicker: { zh: "6 项 Stats 菜单栏指标", en: "6-Metric Stats Menubar" }
