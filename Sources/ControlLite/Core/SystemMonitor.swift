@@ -167,7 +167,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private let nowProvider: () -> TimeInterval
     private let hostPort = mach_host_self()
     private var previousAggregateTicks: [UInt32]?
-    private var lastAggregateCPU = CPUDetail()
+    private var lastAggregateCPU = CPUDetail(idle: 100)
     private var prevCpuInfo: processor_info_array_t?
     private var numPrevCpuInfo: mach_msg_type_number_t = 0
     private var numCPUs: UInt32 = 0

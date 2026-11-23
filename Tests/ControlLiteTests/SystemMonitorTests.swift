@@ -32,9 +32,10 @@ final class SystemMonitorTests: XCTestCase {
 
     func testFullMetricsSampling() {
         let monitor = makeMonitor()
-        // 进行两次采样以计算 CPU 与网络差值
-        _ = monitor.sample(fullMetrics: true)
-        Thread.sleep(forTimeInterval: 0.1)
+        // 进行两次采样以计算 CPU 与网络差值（首次采样零增量时也必须满足 total + idle == 100）
+        let initial = monitor.sample(fullMetrics: true)
+        XCTAssertEqual(initial.cpuUsage + initial.cpuIdleUsage, 100, accuracy: 0.001)
+        Thread.sleep(forTimeInterval: 0.3)
         let metrics = monitor.sample(fullMetrics: true)
 
         XCTAssertTrue(metrics.cpuUsage >= 0.0 && metrics.cpuUsage <= 100.0, "CPU 利用率应在合法区间")
