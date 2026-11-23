@@ -75,6 +75,11 @@ public struct SystemMetrics: Sendable {
     public var gpuHistory: [Double] = []
     public var screenFPS: Double?
     public var aneWatts: Double?
+    public var socPowerWatts: Double? = nil
+    public var cpuPowerWatts: Double? = nil
+    public var gpuPowerWatts: Double? = nil
+    public var adapterWatts: Int? = nil
+    public var batteryPowerWatts: Double? = nil
 
     // 内存 RAM 深度指标 (图 3)
     public var ramAppGB: Double = 0.0
@@ -166,6 +171,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private let defaults: UserDefaults
     private let nowProvider: () -> TimeInterval
     private let hostPort = mach_host_self()
+    private let kernelPageSize: Double
     private var previousAggregateTicks: [UInt32]?
     private var lastAggregateCPU = CPUDetail(idle: 100)
     private var prevCpuInfo: processor_info_array_t?
@@ -186,6 +192,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private let disks: DiskDetails
     private let networkMonitor: NetworkMonitor
     private let batteryMonitor = BatteryMonitor()
+    static let selectedDiskPathKey = "selectedDiskPath"
     private var selectedDiskPath = "/"
     private let selectionLock = NSLock()
     private var pendingDiskPath: String?
@@ -197,7 +204,21 @@ public final class SystemMonitor: @unchecked Sendable {
         return hardware.cpuTemperatureSampleCountForTesting
     }
 
+    var hasActiveGPUServiceForTesting: Bool {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
+        return gpuService != 0
+    }
+
+    var selectedDiskPathForTesting: String {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
+        applyPendingSelections()
+        return selectedDiskPath
+    }
+
     public func selectDisk(path: String) {
+        defaults.set(path, forKey: Self.selectedDiskPathKey)
         selectionLock.lock()
         pendingDiskPath = path
         selectionLock.unlock()
@@ -224,7 +245,7 @@ public final class SystemMonitor: @unchecked Sendable {
             diskWriteHistoryBuffer.removeAll()
         }
         if let netInterface {
-            networkMonitor.select(netInterface)
+            networkMonitor.select(netInterface, persist: false)
         }
     }
 
@@ -263,8 +284,17 @@ public final class SystemMonitor: @unchecked Sendable {
     ) {
         self.defaults = defaults
         self.nowProvider = now
+        var rawPageSize: vm_size_t = 0
+        if host_page_size(hostPort, &rawPageSize) == KERN_SUCCESS, rawPageSize > 0 {
+            self.kernelPageSize = Double(rawPageSize)
+        } else {
+            self.kernelPageSize = Double(getpagesize())
+        }
         self.disks = DiskDetails(now: now)
         self.networkMonitor = NetworkMonitor(defaults: defaults, now: now)
+        if let persistedDisk = defaults.string(forKey: Self.selectedDiskPathKey), !persistedDisk.isEmpty {
+            self.selectedDiskPath = persistedDisk
+        }
 
         var numCPUsU: natural_t = 0
         var mib = [CTL_HW, HW_NCPU]
@@ -287,7 +317,7 @@ public final class SystemMonitor: @unchecked Sendable {
 
     deinit {
         mach_port_deallocate(mach_task_self_, hostPort)
-        if gpuService != 0 { IOObjectRelease(gpuService) }
+        releaseGPUService()
         if let prevCpuInfo = prevCpuInfo {
             let prevSize = vm_size_t(numPrevCpuInfo) * vm_size_t(MemoryLayout<integer_t>.size)
             vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: prevCpuInfo)), prevSize)
@@ -301,6 +331,7 @@ public final class SystemMonitor: @unchecked Sendable {
         previousAggregateTicks = nil
         lastAggregateCPU = CPUDetail(idle: 100)
         resetCPUDetails()
+        releaseGPUService()
         networkMonitor.pause()
         disks.reset()
         processes.reset()
@@ -385,6 +416,8 @@ public final class SystemMonitor: @unchecked Sendable {
                 m.gpuModelName = model
             }
             m.gpuCoreCount = gpuDetail.cores
+        } else {
+            releaseGPUService()
         }
         if fullMetrics && activeTab == "disk" {
             let io = disks.sample(path: selectedDiskPath)
@@ -438,11 +471,16 @@ public final class SystemMonitor: @unchecked Sendable {
             m.cpuEFrequencyMHz = details.frequency.efficiency
             m.cpuPFrequencyMHz = details.frequency.performance
             m.screenFPS = details.fps
-            m.aneWatts = details.aneWatts
+            m.aneWatts = details.power.aneWatts
+            m.cpuPowerWatts = details.power.cpuPowerWatts
+            m.gpuPowerWatts = details.power.gpuPowerWatts
+            m.socPowerWatts = details.power.socPowerWatts
         } else { hardware.reset() }
         if fullMetrics && ["overview", "battery"].contains(activeTab) {
             let chip = chipName
             m.battery = batteryMonitor.sample(fallbackTemperature: { [hardware] in hardware.sampleBatteryTemperature(chip: chip) })
+            m.adapterWatts = m.battery.adapterWatts
+            m.batteryPowerWatts = m.battery.batteryPowerWatts
         }
         guard fullMetrics else {
             processes.reset()
@@ -659,7 +697,7 @@ public final class SystemMonitor: @unchecked Sendable {
             else if let data = property as? Data { gpuModel = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters) }
         }
         guard let statistics = IORegistryEntryCreateCFProperty(gpuService, "PerformanceStatistics" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any] else {
-            IOObjectRelease(gpuService); gpuService = 0; gpuModel = nil; gpuCores = 0
+            releaseGPUService()
             return GPUDetail()
         }
         let reading = GPUReading(statistics: statistics)
@@ -667,6 +705,15 @@ public final class SystemMonitor: @unchecked Sendable {
             render: reading.render ?? 0, tiler: reading.tiler ?? 0,
             renderAvailable: reading.render != nil, tilerAvailable: reading.tiler != nil,
             cores: gpuCores, model: gpuModel)
+    }
+
+    private func releaseGPUService() {
+        if gpuService != 0 {
+            IOObjectRelease(gpuService)
+            gpuService = 0
+        }
+        gpuModel = nil
+        gpuCores = 0
     }
 
     // MARK: - 内存详细采样 (App, Wired, Compressed, Free, Swap)
@@ -698,7 +745,7 @@ public final class SystemMonitor: @unchecked Sendable {
         }
         guard kerr == KERN_SUCCESS else { return RAMDetailed() }
 
-        let pageSize = Double(getpagesize())
+        let pageSize = kernelPageSize
         let active = Double(vmStats.active_count) * pageSize
         let inactive = Double(vmStats.inactive_count) * pageSize
         let wired = Double(vmStats.wire_count) * pageSize

@@ -22,16 +22,32 @@ final class ProcessSampler {
         var available = false
         var pending = false
     }
+    private struct ProcessIdentity: Hashable {
+        let pid: Int32
+        let started: UInt64
+    }
+
     private var previous: [Int32: Counter] = [:]
+    private var nameCache: [ProcessIdentity: String] = [:]
     private var timestamp: TimeInterval = 0
     private var mode: Mode?
     private var cached = Result()
     private var cachedOverview: (cpu: Result, memory: Result) = (Result(), Result())
+    private let counterCollector: () -> [Counter]
+    private let nameResolver: (Int32) -> String
     private let nanosecondsPerTick: Double = {
         var timebase = mach_timebase_info_data_t()
         mach_timebase_info(&timebase)
         return timebase.denom > 0 ? Double(timebase.numer) / Double(timebase.denom) : 1
     }()
+
+    init(
+        counterCollector: @escaping () -> [Counter] = ProcessSampler.collectSystemCounters,
+        nameResolver: @escaping (Int32) -> String = ProcessSampler.resolveName
+    ) {
+        self.counterCollector = counterCollector
+        self.nameResolver = nameResolver
+    }
 
     /// 枚举全部进程号。注意 proc_listallpids 返回的是进程**个数**而不是字节数（与 proc_listpids 不同），
     /// 缓冲区按个数估算；若返回数恰好填满缓冲区则可能被截断，翻倍后重试。
@@ -50,7 +66,50 @@ final class ProcessSampler {
 
     func reset() {
         previous.removeAll(keepingCapacity: true)
+        nameCache.removeAll(keepingCapacity: true)
         timestamp = 0; mode = nil; cached = Result(); cachedOverview = (Result(), Result())
+    }
+
+    static func collectSystemCounters() -> [Counter] {
+        let pids = listPIDs()
+        guard !pids.isEmpty else { return [] }
+        var counters: [Counter] = []
+        counters.reserveCapacity(pids.count)
+        for pid in pids {
+            var usage = rusage_info_v2()
+            let result = withUnsafeMutablePointer(to: &usage) {
+                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }
+            }
+            guard result == 0 else { continue }
+            counters.append(Counter(
+                pid: pid,
+                started: usage.ri_proc_start_abstime,
+                cpuTicks: usage.ri_user_time &+ usage.ri_system_time,
+                footprint: usage.ri_phys_footprint,
+                readBytes: usage.ri_diskio_bytesread,
+                writeBytes: usage.ri_diskio_byteswritten
+            ))
+        }
+        return counters
+    }
+
+    private func cachedProcessName(pid: Int32, startedByPID: [Int32: UInt64]) -> String {
+        guard let started = startedByPID[pid] else {
+            return nameResolver(pid)
+        }
+        let identity = ProcessIdentity(pid: pid, started: started)
+        if let cachedName = nameCache[identity] {
+            return cachedName
+        }
+        let resolved = nameResolver(pid)
+        nameCache[identity] = resolved
+        return resolved
+    }
+
+    private func pruneNameCache(keeping counters: [Counter]) {
+        guard !nameCache.isEmpty else { return }
+        let liveIdentities = Set(counters.map { ProcessIdentity(pid: $0.pid, started: $0.started) })
+        nameCache = nameCache.filter { liveIdentities.contains($0.key) }
     }
 
     static func resolveName(pid: Int32) -> String {
@@ -92,25 +151,15 @@ final class ProcessSampler {
         let sameMode = requested == mode
         mode = requested
         if sameMode, timestamp > 0, now - timestamp < 2 { return cached }
-        let pids = Self.listPIDs()
-        guard !pids.isEmpty else { reset(); return Result() }
-        var counters: [Counter] = []
-        counters.reserveCapacity(pids.count)
-        for pid in pids {
-            var usage = rusage_info_v2()
-            let result = withUnsafeMutablePointer(to: &usage) {
-                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }
-            }
-            guard result == 0 else { continue }
-            counters.append(Counter(pid: pid, started: usage.ri_proc_start_abstime,
-                cpuTicks: usage.ri_user_time &+ usage.ri_system_time, footprint: usage.ri_phys_footprint,
-                readBytes: usage.ri_diskio_bytesread, writeBytes: usage.ri_diskio_byteswritten))
-        }
-        let pending = requested != .memory && (timestamp == 0 || now - timestamp < 0.05 || now - timestamp > 15) && !counters.isEmpty
+        let counters = counterCollector()
+        guard !counters.isEmpty else { reset(); return Result() }
+        pruneNameCache(keeping: counters)
+        let startedByPID = Dictionary(counters.map { ($0.pid, $0.started) }, uniquingKeysWith: { _, new in new })
+        let pending = requested != .memory && (timestamp == 0 || now - timestamp < 0.05 || now - timestamp > 15)
         let elapsed = max(0.001, now - timestamp)
         let ranked = (pending ? [] : Self.rank(counters, previous: previous, elapsed: elapsed, mode: requested, nanosecondsPerTick: nanosecondsPerTick)).prefix(5)
         let items = ranked.map { item in
-            let name = Self.resolveName(pid: item.pid)
+            let name = cachedProcessName(pid: item.pid, startedByPID: startedByPID)
             let value: String
             switch requested {
             case .cpu, .overview: value = String(format: "%.1f%%", item.value)
@@ -122,7 +171,7 @@ final class ProcessSampler {
         }
         previous = Dictionary(counters.map { ($0.pid, $0) }, uniquingKeysWith: { _, new in new })
         timestamp = now
-        cached = Result(items: items, available: !counters.isEmpty && !pending, pending: pending)
+        cached = Result(items: items, available: !pending, pending: pending)
         return cached
     }
 
@@ -131,30 +180,20 @@ final class ProcessSampler {
         let sameMode = mode == .overview
         mode = .overview
         if sameMode, timestamp > 0, now - timestamp < 2 { return cachedOverview }
-        let pids = Self.listPIDs()
-        guard !pids.isEmpty else { reset(); return (Result(), Result()) }
-        var counters: [Counter] = []
-        counters.reserveCapacity(pids.count)
-        for pid in pids {
-            var usage = rusage_info_v2()
-            let result = withUnsafeMutablePointer(to: &usage) {
-                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V2, $0) }
-            }
-            guard result == 0 else { continue }
-            counters.append(Counter(pid: pid, started: usage.ri_proc_start_abstime,
-                cpuTicks: usage.ri_user_time &+ usage.ri_system_time, footprint: usage.ri_phys_footprint,
-                readBytes: usage.ri_diskio_bytesread, writeBytes: usage.ri_diskio_byteswritten))
-        }
-        let cpuPending = (timestamp == 0 || now - timestamp < 0.05 || now - timestamp > 15) && !counters.isEmpty
+        let counters = counterCollector()
+        guard !counters.isEmpty else { reset(); return (Result(), Result()) }
+        pruneNameCache(keeping: counters)
+        let startedByPID = Dictionary(counters.map { ($0.pid, $0.started) }, uniquingKeysWith: { _, new in new })
+        let cpuPending = (timestamp == 0 || now - timestamp < 0.05 || now - timestamp > 15)
         let elapsed = max(0.001, now - timestamp)
         let cpuRanked = (cpuPending ? [] : Self.rank(counters, previous: previous, elapsed: elapsed, mode: .cpu, nanosecondsPerTick: nanosecondsPerTick)).prefix(5)
         let memRanked = Self.rank(counters, previous: previous, elapsed: elapsed, mode: .memory, nanosecondsPerTick: nanosecondsPerTick).prefix(5)
-        let cpuItems = cpuRanked.map { ProcessUsageItem(name: Self.resolveName(pid: $0.pid), valueString: String(format: "%.1f%%", $0.value), pid: $0.pid) }
-        let memItems = memRanked.map { ProcessUsageItem(name: Self.resolveName(pid: $0.pid), valueString: Self.memoryString($0.value), pid: $0.pid) }
+        let cpuItems = cpuRanked.map { ProcessUsageItem(name: cachedProcessName(pid: $0.pid, startedByPID: startedByPID), valueString: String(format: "%.1f%%", $0.value), pid: $0.pid) }
+        let memItems = memRanked.map { ProcessUsageItem(name: cachedProcessName(pid: $0.pid, startedByPID: startedByPID), valueString: Self.memoryString($0.value), pid: $0.pid) }
         previous = Dictionary(counters.map { ($0.pid, $0) }, uniquingKeysWith: { _, new in new })
         timestamp = now
-        let cpuResult = Result(items: cpuItems, available: !counters.isEmpty && !cpuPending, pending: cpuPending)
-        let memResult = Result(items: memItems, available: !counters.isEmpty, pending: false)
+        let cpuResult = Result(items: cpuItems, available: !cpuPending, pending: cpuPending)
+        let memResult = Result(items: memItems, available: true, pending: false)
         cachedOverview = (cpuResult, memResult)
         return cachedOverview
     }

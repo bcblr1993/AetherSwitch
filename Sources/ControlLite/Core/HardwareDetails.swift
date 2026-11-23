@@ -79,6 +79,13 @@ final class ReportChannels {
 }
 
 struct FrequencyReading { var total: Double?; var efficiency: Double?; var performance: Double?; var maximum: Double? }
+struct EnergyPowerReading: Equatable, Sendable {
+    var cpuPowerWatts: Double?
+    var gpuPowerWatts: Double?
+    var aneWatts: Double?
+    var dramPowerWatts: Double?
+    var socPowerWatts: Double?
+}
 
 /// Functions are pure for fixture tests; malformed tables/counters never become invented readings.
 enum HardwareMath {
@@ -151,6 +158,49 @@ enum HardwareMath {
         let divisors: [String: Double] = ["j": 1, "mj": 1e3, "uj": 1e6, "µj": 1e6, "nj": 1e9, "pj": 1e12]
         guard let divisor = divisors[unit.trimmingCharacters(in: .whitespaces).lowercased()] else { return nil }
         return Double(value) / divisor
+    }
+    static func energyPower(channels: [(name: String, value: Int64, unit: String)], elapsed: Double) -> EnergyPowerReading {
+        guard elapsed > 0, elapsed.isFinite else { return EnergyPowerReading() }
+        var cpuJ = 0.0, hasCPU = false
+        var gpuJ = 0.0, hasGPU = false
+        var aneJ = 0.0, hasANE = false
+        var dramJ = 0.0, hasDRAM = false
+
+        for channel in channels {
+            guard let joules = joules(channel.value, unit: channel.unit) else { continue }
+            let name = channel.name
+            if name == "CPU Energy" || name.hasPrefix("CPU Energy") {
+                cpuJ += joules; hasCPU = true
+            } else if name == "GPU Energy" || name.hasPrefix("GPU Energy") {
+                gpuJ += joules; hasGPU = true
+            } else if name.hasPrefix("ANE") {
+                aneJ += joules; hasANE = true
+            } else if name.hasPrefix("DRAM") {
+                dramJ += joules; hasDRAM = true
+            }
+        }
+
+        func validatedWatts(_ joules: Double, present: Bool) -> Double? {
+            guard present else { return nil }
+            let watts = joules / elapsed
+            return watts.isFinite && (0.05...250.0).contains(watts) ? watts : nil
+        }
+
+        let aneWatts: Double? = hasANE ? {
+            let watts = aneJ / elapsed
+            return watts.isFinite && watts >= 0 && watts <= 250.0 ? watts : nil
+        }() : nil
+
+        let socPresent = hasCPU || hasGPU || hasANE || hasDRAM
+        let socJoules = (hasCPU ? cpuJ : 0) + (hasGPU ? gpuJ : 0) + (hasANE ? aneJ : 0) + (hasDRAM ? dramJ : 0)
+
+        return EnergyPowerReading(
+            cpuPowerWatts: validatedWatts(cpuJ, present: hasCPU),
+            gpuPowerWatts: validatedWatts(gpuJ, present: hasGPU),
+            aneWatts: aneWatts,
+            dramPowerWatts: validatedWatts(dramJ, present: hasDRAM),
+            socPowerWatts: validatedWatts(socJoules, present: socPresent)
+        )
     }
     static func temperature(type: UInt32, data: [UInt8]) -> Double? {
         let value: Double
@@ -389,11 +439,11 @@ final class HardwareDetails {
         sensor(chip: chip).sampleBattery()
     }
 
-    func sample(tab: String, chip: String, efficiencyCount: Int, performanceCount: Int) -> (frequency: FrequencyReading, fps: Double?, aneWatts: Double?) {
+    func sample(tab: String, chip: String, efficiencyCount: Int, performanceCount: Int) -> (frequency: FrequencyReading, fps: Double?, power: EnergyPowerReading) {
         if tab != active {
             reset(); active = tab
             if tab == "cpu" {
-                cpu = ReportChannels(groups: [("CPU Stats", nil)])
+                cpu = ReportChannels(groups: [("CPU Stats", nil), ("Energy Model", nil)])
                 pmgrTables = frequencyTables(chip: chip)
             } else if tab == "gpu" {
                 frames = ReportChannels(groups: ["DCP", "DCP0", "DCPEXT0", "DCPEXT1", "DCPEXT2", "DCPEXT3"].map { ($0, "swap") })
@@ -403,11 +453,18 @@ final class HardwareDetails {
         var eSamples: [Double] = [], pSamples: [Double] = []
         var eMatchedMax: Double? = pmgrTables["voltage-states1-sram"]?.max()
         var pMatchedMax: Double? = pmgrTables["voltage-states5-sram"]?.max()
-        var fps: Double?, watts: Double?
+        var fps: Double?
+        var power = EnergyPowerReading()
 
         if let cpu, let report = cpu.read() {
+            var energyChannels: [(name: String, value: Int64, unit: String)] = []
             for item in report.items {
+                let group = cpu.string(cpu.group, item)
                 let name = cpu.string(cpu.name, item)
+                if group == "Energy Model" {
+                    energyChannels.append((name: name, value: cpu.integer(item, 0), unit: cpu.string(cpu.unit, item)))
+                    continue
+                }
                 guard name.contains("ECPU") || name.contains("PCPU") || name.contains("SCPU") else { continue }
                 let stateCount = cpu.count(item)
                 guard stateCount > 0 && stateCount <= 128 else { continue }
@@ -422,6 +479,9 @@ final class HardwareDetails {
                 }
                 guard let value = HardwareMath.frequency(states: states, table: table) else { continue }
                 if name.contains("ECPU") { eSamples.append(value) } else { pSamples.append(value) }
+            }
+            if !energyChannels.isEmpty {
+                power = HardwareMath.energyPower(channels: energyChannels, elapsed: report.elapsed)
             }
         }
 
@@ -442,10 +502,12 @@ final class HardwareDetails {
             if !values.isEmpty, values.allSatisfy({ $0 >= 0 }) { fps = values.reduce(0.0) { $0 + Double($1) } / report.elapsed }
         }
         if let energy, let report = energy.read() {
-            let values = report.items.filter { energy.string(energy.name, $0).hasPrefix("ANE") }.compactMap { HardwareMath.joules(energy.integer($0, 0), unit: energy.string(energy.unit, $0)) }
-            if !values.isEmpty { watts = values.reduce(0, +) / report.elapsed }
+            let channels = report.items.map {
+                (name: energy.string(energy.name, $0), value: energy.integer($0, 0), unit: energy.string(energy.unit, $0))
+            }
+            power = HardwareMath.energyPower(channels: channels, elapsed: report.elapsed)
         }
-        return (frequency, fps, watts)
+        return (frequency, fps, power)
     }
 
     private func frequencyTables(chip: String) -> [String: [Double]] {
