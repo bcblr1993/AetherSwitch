@@ -26,7 +26,9 @@ struct NetworkCounter: Equatable {
 
 /// Interface-local baselines prevent spikes on reconnect, selection and wake.
 final class NetworkMonitor {
-    private var selection = UserDefaults.standard.string(forKey: "networkInterface") ?? "auto"
+    private let defaults: UserDefaults
+    private let nowProvider: () -> TimeInterval
+    private var selection: String
     private let dynamicStore = SCDynamicStoreCreate(nil, "com.aethernative.aetherswitch.network" as CFString, nil, nil)
     private var previous: NetworkCounter?
     private var timestamp = 0.0
@@ -38,10 +40,19 @@ final class NetworkMonitor {
     private var cachedPrimary = ""
     private var primaryTimestamp = -Double.infinity
 
+    init(
+        defaults: UserDefaults = .standard,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
+        self.defaults = defaults
+        self.nowProvider = now
+        self.selection = defaults.string(forKey: "networkInterface") ?? "auto"
+    }
+
     func select(_ interface: String) {
         guard selection != interface else { return }
         selection = interface
-        UserDefaults.standard.set(interface, forKey: "networkInterface")
+        defaults.set(interface, forKey: "networkInterface")
         active = ""; previous = nil; timestamp = 0
         downloaded = 0; uploaded = 0
         cachedPrimary = ""; primaryTimestamp = -Double.infinity
@@ -111,7 +122,7 @@ final class NetworkMonitor {
                 }
             }
         }
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = nowProvider()
         let primaryTTL = (detailed || counters[cachedPrimary] == nil) ? 3.0 : 30.0
         let primary: String
         if selection != "auto" {

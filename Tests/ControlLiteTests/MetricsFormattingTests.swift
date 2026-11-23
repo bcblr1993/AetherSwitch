@@ -57,21 +57,29 @@ final class MetricsFormattingTests: XCTestCase {
         let originalSwitches = state.switches
         let originalTab = state.selectedTab
         let originalVersion = UpdateManager.shared.currentVersion
+        let suite = "AetherSwitch.MetricsFormatting.\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: suite)!
+        let snapshotDir = FileManager.default.temporaryDirectory.appendingPathComponent("aetherswitch-snapshots-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: snapshotDir, withIntermediateDirectories: true)
         defer {
             state.updateForSnapshot(metrics: originalMetrics, switches: originalSwitches)
             state.selectedTab = originalTab
             UpdateManager.shared.setVersionForSnapshot(version: originalVersion)
+            testDefaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: snapshotDir)
         }
+        var virtualNow = ProcessInfo.processInfo.systemUptime
+        let monitor = SystemMonitor(defaults: testDefaults, now: { virtualNow })
         UpdateManager.shared.setVersionForSnapshot(version: "1.9.0")
         state.showAbout = false
         for dark in [false, true] {
             for tab in ["overview", "cpu", "gpu", "ram", "disk", "network", "battery"] {
                 state.selectedTab = tab
-                if tab == "disk" || tab == "cpu" {
-                    _ = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
-                    Thread.sleep(forTimeInterval: 2.1)
+                if tab == "disk" || tab == "cpu" || tab == "network" {
+                    _ = monitor.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
+                    virtualNow += 2.1
                 }
-                var sampled = SystemMonitor.shared.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
+                var sampled = monitor.sample(fullMetrics: true, activeTab: tab, includeProcesses: true)
                 sampled.network.address = "192.0.2.10"
                 if sampled.network.wifiName != nil { sampled.network.wifiName = "Wi-Fi" }
                 state.updateForSnapshot(metrics: sampled, switches: originalSwitches)
@@ -94,7 +102,7 @@ final class MetricsFormattingTests: XCTestCase {
                 let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
                 hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
                 let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                try data.write(to: URL(fileURLWithPath: "/tmp/aetherswitch-\(tab)-\(dark ? "dark" : "light").png"))
+                try data.write(to: snapshotDir.appendingPathComponent("aetherswitch-\(tab)-\(dark ? "dark" : "light").png"))
             }
         }
     }

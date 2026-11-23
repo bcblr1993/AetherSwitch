@@ -38,6 +38,7 @@ extension BrightnessHardware {
 @MainActor
 final class BrightnessManager: ObservableObject {
     static let shared = BrightnessManager(hardware: SystemBrightnessHardware())
+    static let followExternalDisplaysKey = "followExternalDisplays"
 
     struct Snapshot: Equatable {
         var displays: [BrightnessDisplay] = []
@@ -68,7 +69,14 @@ final class BrightnessManager: ObservableObject {
 
     @Published private(set) var snapshot = Snapshot()
     @Published private(set) var backlightOffAtZero = DisplayBacklightControl.shared.enabled
+    @Published var followExternalDisplays: Bool {
+        didSet {
+            guard oldValue != followExternalDisplays else { return }
+            defaults.set(followExternalDisplays, forKey: Self.followExternalDisplaysKey)
+        }
+    }
     private let hardware: any BrightnessHardware
+    private let defaults: UserDefaults
     private let coalescingDelay: Duration
     private var pendingValue: Double?
     private var pendingSourceID: UInt32?
@@ -84,9 +92,16 @@ final class BrightnessManager: ObservableObject {
     private var forceExternalWrite = false
     private var scheduledNativeIDs: Set<UInt32> = []
 
-    init(hardware: any BrightnessHardware, coalescingDelay: Duration = .milliseconds(16), observeScreens: Bool = true) {
+    init(
+        hardware: any BrightnessHardware,
+        coalescingDelay: Duration = .milliseconds(16),
+        observeScreens: Bool = true,
+        defaults: UserDefaults = .standard
+    ) {
         self.hardware = hardware
         self.coalescingDelay = coalescingDelay
+        self.defaults = defaults
+        self.followExternalDisplays = (defaults.object(forKey: Self.followExternalDisplaysKey) as? Bool) ?? true
         if observeScreens {
             nativeObserver = SystemBrightnessObserver()
             brightnessSubscription = NotificationCenter.default.publisher(for: SystemBrightnessObserver.didChange)
@@ -102,6 +117,10 @@ final class BrightnessManager: ObservableObject {
                     }
                 }
         }
+    }
+
+    func setFollowExternalDisplays(_ enabled: Bool) {
+        followExternalDisplays = enabled
     }
 
     func refresh() {
@@ -216,6 +235,7 @@ final class BrightnessManager: ObservableObject {
                 // Never write the source display back: macOS already set it.
                 let targets = snapshot.displays.filter { display in
                     guard display.id != sourceID, !nativeIDs.contains(display.id), display.isControllable else { return false }
+                    if sourceID != nil && !followExternalDisplays && display.control == .ddc { return false }
                     let reachingZero = value == 0 && display.value != 0
                     let recovering = value > 0 && (display.value == 0 || display.isSoftwareBlackout || display.isBacklightOff)
                     let needsBlackout = display.control == .ddc && value == 0 && !display.isSoftwareBlackout && !display.isBacklightOff
@@ -259,17 +279,24 @@ final class BrightnessManager: ObservableObject {
                 }
             }
             if let changed, let value = changed.value {
-                let scheduled = hardware.updateBrightnessTarget(value, displays: snapshot.displays.filter { $0.id != changed.id })
-                if scheduled.isEmpty { hardware.cancelPendingTransition() }
-                scheduledNativeIDs = Set(snapshot.displays.filter { $0.control == .native && scheduled.contains($0.id) }.map(\.id))
-                for index in snapshot.displays.indices where scheduledNativeIDs.contains(snapshot.displays[index].id) {
-                    snapshot.displays[index].value = value
-                    forwardedNativeValues[snapshot.displays[index].id] = value
-                }
                 forwardedNativeValues[changed.id] = value
-                pendingValue = value
-                pendingSourceID = changed.id
-                snapshot.value = value
+                let followers = snapshot.displays.filter {
+                    $0.id != changed.id && (followExternalDisplays || $0.control != .ddc)
+                }
+                if followers.contains(where: \.isControllable) {
+                    let scheduled = hardware.updateBrightnessTarget(value, displays: followers)
+                    if scheduled.isEmpty { hardware.cancelPendingTransition() }
+                    scheduledNativeIDs = Set(snapshot.displays.filter { $0.control == .native && scheduled.contains($0.id) }.map(\.id))
+                    for index in snapshot.displays.indices where scheduledNativeIDs.contains(snapshot.displays[index].id) {
+                        snapshot.displays[index].value = value
+                        forwardedNativeValues[snapshot.displays[index].id] = value
+                    }
+                    pendingValue = value
+                    pendingSourceID = changed.id
+                    snapshot.value = value
+                } else if pendingValue == nil {
+                    snapshot.value = value
+                }
             } else if pendingValue == nil {
                 snapshot.value = snapshot.displays.first(where: \.isControllable)?.value ?? snapshot.value
             }

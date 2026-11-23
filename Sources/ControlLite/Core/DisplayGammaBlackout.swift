@@ -31,6 +31,22 @@ struct DisplayGammaTable: Equatable, Codable, Sendable {
         }
         return channelMatches(red, other.red) && channelMatches(green, other.green) && channelMatches(blue, other.blue)
     }
+    /// Checks whether `other` is a scalar multiple `scaled(by: k)` (`0 <= k <= 1`) of `self`,
+    /// allowing crash recovery to recognize intermediate fade frames when only the initial LUT backup was persisted.
+    func matchesScaledVersion(_ other: Self) -> Bool {
+        guard isValid, !isBlack, other.isValid,
+              red.count == other.red.count, green.count == other.green.count, blue.count == other.blue.count else {
+            return false
+        }
+        var maxOrig: Float = 0
+        var otherAtMax: Float = 0
+        for (o, c) in zip(red, other.red) where o > maxOrig { maxOrig = o; otherAtMax = c }
+        for (o, c) in zip(green, other.green) where o > maxOrig { maxOrig = o; otherAtMax = c }
+        for (o, c) in zip(blue, other.blue) where o > maxOrig { maxOrig = o; otherAtMax = c }
+        guard maxOrig > 0.00001 else { return false }
+        let estimated = max(0, min(1, otherAtMax / maxOrig))
+        return scaled(by: estimated).matches(other)
+    }
 }
 
 protocol DisplayGammaBackend: Sendable {
@@ -58,8 +74,9 @@ private struct CoreGraphicsGammaBackend: DisplayGammaBackend {
 }
 
 /// Software dimming below the hardware minimum. Keep each screen's existing
-/// ColorSync curve, and restore only curves that we still own. The lock also lets
-/// AppKit restore synchronously during termination, without waiting for an actor.
+/// ColorSync curve, and restore only curves that we still own.
+/// Spinlocks protect only pure in-memory state; WindowServer Gamma IPC and
+/// UserDefaults persistence run strictly outside `os_unfair_lock`.
 final class DisplayGammaBlackout: @unchecked Sendable {
     static let shared = DisplayGammaBlackout(backend: CoreGraphicsGammaBackend(), defaults: .standard, recoverOnInit: false)
     private struct Saved: Codable, Sendable {
@@ -68,8 +85,18 @@ final class DisplayGammaBlackout: @unchecked Sendable {
         let applied: DisplayGammaTable
         let factor: Double
     }
-    private let saved: OSAllocatedUnfairLock<[UInt32: Saved]>
-    private let ending = OSAllocatedUnfairLock(initialState: false)
+    private struct Entry: Sendable {
+        var saved: Saved
+        var recoveredFromDisk: Bool
+    }
+    private struct State: Sendable {
+        var entries: [UInt32: Entry]
+        var stopped = false
+        var persistCount = 0
+    }
+    private static let spinlockThreadKey = "com.aethernative.aetherswitch.gammaSpinlockHeld"
+    private let state: OSAllocatedUnfairLock<State>
+    private let operationLock = NSRecursiveLock()
     private let backend: any DisplayGammaBackend
     private let defaults: UserDefaults?
     private static let defaultsKey = "displayGammaRecovery"
@@ -78,14 +105,37 @@ final class DisplayGammaBlackout: @unchecked Sendable {
         self.backend = backend
         self.defaults = defaults
         let stored = defaults?.data(forKey: Self.defaultsKey).flatMap { try? JSONDecoder().decode([UInt32: Saved].self, from: $0) } ?? [:]
-        saved = OSAllocatedUnfairLock(initialState: stored.filter { $0.value.table.isValid && $0.value.applied.isValid })
+        let validEntries = stored.reduce(into: [UInt32: Entry]()) { acc, pair in
+            if pair.value.table.isValid && pair.value.applied.isValid {
+                acc[pair.key] = Entry(saved: pair.value, recoveredFromDisk: true)
+            }
+        }
+        state = OSAllocatedUnfairLock(initialState: State(entries: validEntries))
         // Recover only curves we still own after a previous abnormal exit.
         if defaults != nil && recoverOnInit { _ = restoreAll() }
     }
 
-    private func persist(_ state: [UInt32: Saved]) {
+    var isHoldingSpinlockForTesting: Bool {
+        (Thread.current.threadDictionary[Self.spinlockThreadKey] as? Bool) == true
+    }
+
+    var persistCountForTesting: Int {
+        withFastState { $0.persistCount }
+    }
+
+    private func withFastState<T: Sendable>(_ body: @Sendable (inout State) -> T) -> T {
+        Thread.current.threadDictionary[Self.spinlockThreadKey] = true
+        defer { Thread.current.threadDictionary.removeObject(forKey: Self.spinlockThreadKey) }
+        return state.withLock { state in body(&state) }
+    }
+
+    private func persistSnapshot() {
         guard let defaults else { return }
-        defaults.set(try? JSONEncoder().encode(state), forKey: Self.defaultsKey)
+        let snapshot = withFastState { state -> [UInt32: Saved] in
+            state.persistCount += 1
+            return state.entries.mapValues(\.saved)
+        }
+        defaults.set(try? JSONEncoder().encode(snapshot), forKey: Self.defaultsKey)
         defaults.synchronize()
     }
 
@@ -94,38 +144,58 @@ final class DisplayGammaBlackout: @unchecked Sendable {
     }
 
     func setDimming(_ factor: Double, on id: UInt32) -> Bool {
-        ending.withLock { stopped in
-            guard !stopped, factor.isFinite, (0...1).contains(factor) else { return false }
-            return saved.withLock { state in
-                if factor == 1 { return restore(id, state: &state) }
-                let identity = backend.identity(id)
-                guard let current = backend.read(id), current.isValid else { return false }
-                let previous = state[id].flatMap { $0.identity == identity && current.matches($0.applied) ? $0 : nil }
-                if previous?.factor == factor { return true }
-                let original = previous?.table ?? current
-                // Another dimmer's already-black curve cannot be used as a recovery curve.
-                guard !original.isBlack else { return false }
-                let applied = original.scaled(by: Float(factor))
-                state[id] = Saved(identity: identity, table: original, applied: applied, factor: factor)
-                persist(state)
-                guard backend.write(id, table: applied), backend.read(id)?.matches(applied) == true else {
-                    if backend.write(id, table: current), backend.read(id)?.matches(current) == true {
-                        state[id] = previous
-                        persist(state)
-                    }
-                    return false
-                }
-                return true
-            }
+        guard factor.isFinite, (0...1).contains(factor) else { return false }
+        operationLock.lock()
+        defer { operationLock.unlock() }
+
+        let (stopped, existingEntry) = withFastState { ($0.stopped, $0.entries[id]) }
+        guard !stopped else { return false }
+        if factor == 1 { return restoreLocked(id) }
+
+        let identity = backend.identity(id)
+        guard let current = backend.read(id), current.isValid else { return false }
+        let previous: Entry? = existingEntry.flatMap { entry in
+            guard entry.saved.identity == identity else { return nil }
+            let owns = entry.recoveredFromDisk
+                ? (current.matches(entry.saved.applied) || entry.saved.table.matchesScaledVersion(current))
+                : current.matches(entry.saved.applied)
+            return owns ? entry : nil
         }
+        if let previous, !previous.recoveredFromDisk, previous.saved.factor == factor { return true }
+
+        let original = previous?.saved.table ?? current
+        // Another dimmer's already-black curve cannot be used as a recovery curve.
+        guard !original.isBlack else { return false }
+        let applied = original.scaled(by: Float(factor))
+        let isInitialBackup = (previous == nil)
+
+        withFastState {
+            $0.entries[id] = Entry(
+                saved: Saved(identity: identity, table: original, applied: applied, factor: factor),
+                recoveredFromDisk: false
+            )
+        }
+        // Persist ONLY when first backing up the original LUT for this display, never on 60Hz intermediate frames.
+        if isInitialBackup {
+            persistSnapshot()
+        }
+
+        guard backend.write(id, table: applied), backend.read(id)?.matches(applied) == true else {
+            if backend.write(id, table: current), backend.read(id)?.matches(current) == true {
+                withFastState { $0.entries[id] = previous }
+                if isInitialBackup { persistSnapshot() }
+            }
+            return false
+        }
+        return true
     }
 
     @discardableResult
     func shutdownAndRestore() -> Bool {
-        ending.withLock { stopped in
-            stopped = true
-            return restoreAll()
-        }
+        operationLock.lock()
+        defer { operationLock.unlock() }
+        withFastState { $0.stopped = true }
+        return restoreAllLocked()
     }
 
     func isBlack(_ id: UInt32) -> Bool {
@@ -137,45 +207,78 @@ final class DisplayGammaBlackout: @unchecked Sendable {
     }
 
     func dimmingFactor(_ id: UInt32) -> Double {
-        saved.withLock { state in
-            guard let previous = state[id], previous.identity == backend.identity(id),
-                  backend.read(id)?.matches(previous.applied) == true else { return 1 }
-            return previous.factor
-        }
+        guard let entry = withFastState({ $0.entries[id] }) else { return 1 }
+        guard entry.saved.identity == backend.identity(id),
+              let current = backend.read(id) else { return 1 }
+        if current.matches(entry.saved.applied) { return entry.saved.factor }
+        return 1
     }
 
     @discardableResult
     func restore(_ id: UInt32) -> Bool {
-        saved.withLock { state in restore(id, state: &state) }
+        operationLock.lock()
+        defer { operationLock.unlock() }
+        return restoreLocked(id)
     }
 
-    private func restore(_ id: UInt32, state: inout [UInt32: Saved]) -> Bool {
-        guard let previous = state[id] else { return true }
-        guard previous.identity == backend.identity(id) else { state.removeValue(forKey: id); persist(state); return true }
+    private func restoreLocked(_ id: UInt32) -> Bool {
+        guard let previous = withFastState({ $0.entries[id] }) else { return true }
+        guard previous.saved.identity == backend.identity(id) else {
+            withFastState { _ = $0.entries.removeValue(forKey: id) }
+            persistSnapshot()
+            return true
+        }
         // A system/profile change or another dimmer takes ownership; preserve it.
-        if let current = backend.read(id), !current.matches(previous.applied) { state.removeValue(forKey: id); persist(state); return true }
-        guard backend.write(id, table: previous.table), backend.read(id)?.matches(previous.table) == true else { return false }
-        state.removeValue(forKey: id)
-        persist(state)
+        if let current = backend.read(id) {
+            let ownsCurve = previous.recoveredFromDisk
+                ? (current.matches(previous.saved.applied) || previous.saved.table.matchesScaledVersion(current))
+                : current.matches(previous.saved.applied)
+            if !ownsCurve {
+                withFastState { _ = $0.entries.removeValue(forKey: id) }
+                persistSnapshot()
+                return true
+            }
+        }
+        guard backend.write(id, table: previous.saved.table),
+              backend.read(id)?.matches(previous.saved.table) == true else { return false }
+        withFastState { _ = $0.entries.removeValue(forKey: id) }
+        persistSnapshot()
         return true
     }
 
     @discardableResult
     func restoreAll() -> Bool {
-        saved.withLock { state in
-            var succeeded = true
-            for id in Array(state.keys) { if !restore(id, state: &state) { succeeded = false } }
-            return succeeded
+        operationLock.lock()
+        defer { operationLock.unlock() }
+        return restoreAllLocked()
+    }
+
+    private func restoreAllLocked() -> Bool {
+        let ids = withFastState { Array($0.entries.keys) }
+        var succeeded = true
+        for id in ids {
+            if !restoreLocked(id) { succeeded = false }
         }
+        return succeeded
     }
 
     func reconcile(online: [UInt32]) {
-        saved.withLock { state in
-            let previousCount = state.count
-            for id in Array(state.keys) where !online.contains(id) || state[id]?.identity != backend.identity(id) {
-                state.removeValue(forKey: id)
+        operationLock.lock()
+        defer { operationLock.unlock() }
+        let entries = withFastState { $0.entries }
+        var staleIDs: [UInt32] = []
+        for (id, entry) in entries {
+            if !online.contains(id) || entry.saved.identity != backend.identity(id) {
+                staleIDs.append(id)
             }
-            if state.count != previousCount { persist(state) }
         }
+        guard !staleIDs.isEmpty else { return }
+        let idsToRemove = staleIDs
+        let changed = withFastState { state -> Bool in
+            let before = state.entries.count
+            for id in idsToRemove { state.entries.removeValue(forKey: id) }
+            return state.entries.count != before
+        }
+        if changed { persistSnapshot() }
     }
 }

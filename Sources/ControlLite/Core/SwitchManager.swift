@@ -30,16 +30,13 @@ extension FinderControlling {
 struct SystemFinderControl: FinderControlling {
     private var domain: CFString { "com.apple.finder" as CFString }
     func isDesktopHidden() -> Bool {
-        CFPreferencesAppSynchronize(domain)
         guard let value = CFPreferencesCopyAppValue("CreateDesktop" as CFString, domain) as? NSNumber else { return false }
         return !value.boolValue
     }
     func isHiddenFilesVisible() -> Bool {
-        CFPreferencesAppSynchronize(domain)
-        return (CFPreferencesCopyAppValue("AppleShowAllFiles" as CFString, domain) as? NSNumber)?.boolValue ?? false
+        (CFPreferencesCopyAppValue("AppleShowAllFiles" as CFString, domain) as? NSNumber)?.boolValue ?? false
     }
     func currentStates() -> (desktopHidden: Bool, hiddenFilesVisible: Bool) {
-        CFPreferencesAppSynchronize(domain)
         let desktopHidden = (CFPreferencesCopyAppValue("CreateDesktop" as CFString, domain) as? NSNumber).map { !$0.boolValue } ?? false
         let hiddenFiles = (CFPreferencesCopyAppValue("AppleShowAllFiles" as CFString, domain) as? NSNumber)?.boolValue ?? false
         return (desktopHidden, hiddenFiles)
@@ -53,6 +50,7 @@ struct SystemFinderControl: FinderControlling {
         let killTask = Process()
         killTask.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         killTask.arguments = ["Finder"]
+        killTask.standardInput = FileHandle.nullDevice
         killTask.standardOutput = FileHandle.nullDevice
         killTask.standardError = FileHandle.nullDevice
         do {
@@ -66,7 +64,80 @@ struct SystemFinderControl: FinderControlling {
                 Thread.sleep(forTimeInterval: 0.05)
                 if killTask.isRunning { kill(killTask.processIdentifier, SIGKILL) }
             }
+            killTask.waitUntilExit()
         } catch {}
+    }
+}
+
+/// 系统深色模式查询与切换协议；默认使用短生命周期 `/usr/bin/osascript` 子进程，
+/// 避免非线程安全的 `NSAppleScript` 污染主进程常驻物理内存。
+protocol DarkModeControlling: Sendable {
+    func isDarkModeActive() -> Bool
+    func setDarkMode(_ enabled: Bool) -> Bool
+}
+
+struct SystemDarkModeControl: DarkModeControlling {
+    let executablePath: String
+    private let argumentsBuilder: @Sendable (Bool) -> [String]
+    private let timeout: TimeInterval
+    private let isDarkReader: @Sendable () -> Bool
+    private let commandObserver: (@Sendable (String, [String]) -> Void)?
+
+    init(
+        executablePath: String = "/usr/bin/osascript",
+        argumentsBuilder: @escaping @Sendable (Bool) -> [String] = { enabled in
+            ["-e", "tell application \"System Events\" to tell appearance preferences to set dark mode to \(enabled ? "true" : "false")"]
+        },
+        timeout: TimeInterval = 5.0,
+        isDarkReader: @escaping @Sendable () -> Bool = SystemDarkModeControl.readAppearanceFromPreferences,
+        commandObserver: (@Sendable (String, [String]) -> Void)? = nil
+    ) {
+        self.executablePath = executablePath
+        self.argumentsBuilder = argumentsBuilder
+        self.timeout = max(0.05, timeout)
+        self.isDarkReader = isDarkReader
+        self.commandObserver = commandObserver
+    }
+
+    static func readAppearanceFromPreferences() -> Bool {
+        (CFPreferencesCopyAppValue("AppleInterfaceStyle" as CFString, kCFPreferencesAnyApplication) as? String) == "Dark"
+    }
+
+    func isDarkModeActive() -> Bool {
+        isDarkReader()
+    }
+
+    func setDarkMode(_ enabled: Bool) -> Bool {
+        let arguments = argumentsBuilder(enabled)
+        commandObserver?(executablePath, arguments)
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: executablePath)
+        task.arguments = arguments
+        task.standardInput = FileHandle.nullDevice
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+
+        do {
+            try task.run()
+            let deadline = ProcessInfo.processInfo.systemUptime + timeout
+            while task.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            if task.isRunning {
+                task.terminate()
+                Thread.sleep(forTimeInterval: 0.05)
+                if task.isRunning {
+                    kill(task.processIdentifier, SIGKILL)
+                }
+                task.waitUntilExit()
+                return false
+            }
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 }
 
@@ -83,10 +154,16 @@ public final class SwitchManager: @unchecked Sendable {
     static let keepAwakePreferenceKey = "keepAwakeEnabled"
     private let defaults: UserDefaults
     private let finder: any FinderControlling
+    private let darkMode: any DarkModeControlling
 
-    init(defaults: UserDefaults = .standard, finder: any FinderControlling = SystemFinderControl()) {
+    init(
+        defaults: UserDefaults = .standard,
+        finder: any FinderControlling = SystemFinderControl(),
+        darkMode: any DarkModeControlling = SystemDarkModeControl()
+    ) {
         self.defaults = defaults
         self.finder = finder
+        self.darkMode = darkMode
     }
 
     deinit {
@@ -95,15 +172,23 @@ public final class SwitchManager: @unchecked Sendable {
 
     // MARK: - 状态刷新查询
 
+    public func isKeepAwakeActive() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return keepAwakeAssertionID != 0
+    }
+
+    public func isDarkModeActive() -> Bool {
+        darkMode.isDarkModeActive()
+    }
+
     public func getCurrentStates() -> SwitchStates {
         var s = SwitchStates()
-        lock.lock()
-        s.isKeepAwakeActive = (keepAwakeAssertionID != 0)
-        lock.unlock()
+        s.isKeepAwakeActive = isKeepAwakeActive()
         let finderStates = finder.currentStates()
         s.isDesktopHidden = finderStates.desktopHidden
         s.isHiddenFilesVisible = finderStates.hiddenFilesVisible
-        s.isDarkModeActive = checkIsDarkMode()
+        s.isDarkModeActive = isDarkModeActive()
         return s
     }
 
@@ -189,25 +274,11 @@ public final class SwitchManager: @unchecked Sendable {
     // MARK: - 4. 黑暗模式 (Dark Mode)
 
     public func toggleDarkMode() -> Bool {
-        let script = """
-        tell application "System Events"
-            tell appearance preferences
-                set dark mode to not dark mode
-                return dark mode
-            end tell
-        end tell
-        """
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            let result = appleScript.executeAndReturnError(&error)
-            return error == nil ? result.booleanValue : checkIsDarkMode()
+        let current = darkMode.isDarkModeActive()
+        let target = !current
+        guard darkMode.setDarkMode(target) else {
+            return darkMode.isDarkModeActive()
         }
-        return false
+        return target
     }
-
-    private func checkIsDarkMode() -> Bool {
-        CFPreferencesSynchronize(kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
-        return (CFPreferencesCopyValue("AppleInterfaceStyle" as CFString, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? String) == "Dark"
-    }
-
 }
