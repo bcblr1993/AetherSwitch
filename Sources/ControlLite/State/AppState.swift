@@ -28,9 +28,12 @@ public enum MenuBarMetric: String, CaseIterable, Codable, Sendable {
 
     static let defaultsKey = "menuBarMetrics"
 
-    /// 读取保存的列；从未设置过时默认全部显示，未知值忽略。
+    /// 首次安装无存档时默认开启高频 3 列（CPU + RAM + 网络），避免 13"/14" 刘海屏因过宽隐藏图标。
+    public static let defaultVisible: Set<MenuBarMetric> = [.cpu, .ram, .network]
+
+    /// 读取保存的列；首次安装无存档时返回精简默认 3 列，老用户已有存档原样保留，未知值忽略。
     static func decode(_ stored: [String]?) -> Set<MenuBarMetric> {
-        guard let stored else { return Set(allCases) }
+        guard let stored else { return defaultVisible }
         return Set(stored.compactMap(MenuBarMetric.init(rawValue:)))
     }
 
@@ -43,6 +46,20 @@ public enum MenuBarMetric: String, CaseIterable, Codable, Sendable {
 @MainActor
 public final class AppState: ObservableObject {
     public static let shared = AppState()
+
+    public static let validTabs: Set<String> = ["overview", "cpu", "gpu", "ram", "disk", "network", "battery"]
+
+    public static func normalizedTab(_ raw: String) -> String {
+        validTabs.contains(raw) ? raw : "overview"
+    }
+
+    static func samplingPriority(isPopoverOpen: Bool) -> TaskPriority {
+        isPopoverOpen ? .userInitiated : .utility
+    }
+
+    private let defaults: UserDefaults
+    private let monitoringEnabled: Bool
+    private var isInitializing = true
 
     // 监控数据
     @Published public private(set) var metrics = SystemMetrics()
@@ -57,24 +74,27 @@ public final class AppState: ObservableObject {
     // 菜单栏渲染模式
     @Published public var menuBarStyle: MenuBarStyle {
         didSet {
-            UserDefaults.standard.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
-            adjustTimerFrequency(); refreshFull()
+            guard !isInitializing else { return }
+            defaults.set(menuBarStyle.rawValue, forKey: "menuBarStyle")
+            adjustTimerFrequency()
+            refreshFull()
         }
     }
 
-    @Published var menuBarPreferences = MenuBarPreferences.load(from: .standard) {
+    @Published var menuBarPreferences: MenuBarPreferences {
         didSet {
-            guard oldValue != menuBarPreferences else { return }
-            menuBarPreferences.save(to: .standard)
+            guard !isInitializing, oldValue != menuBarPreferences else { return }
+            menuBarPreferences.save(to: defaults)
         }
     }
 
     // Stats 样式菜单栏显示哪些指标列
-    @Published public var menuBarMetrics: Set<MenuBarMetric> = MenuBarMetric.decode(UserDefaults.standard.stringArray(forKey: MenuBarMetric.defaultsKey)) {
+    @Published public var menuBarMetrics: Set<MenuBarMetric> {
         didSet {
-            guard oldValue != menuBarMetrics else { return }
-            UserDefaults.standard.set(MenuBarMetric.encode(menuBarMetrics), forKey: MenuBarMetric.defaultsKey)
-            adjustTimerFrequency(); refreshFull()
+            guard !isInitializing, oldValue != menuBarMetrics else { return }
+            defaults.set(MenuBarMetric.encode(menuBarMetrics), forKey: MenuBarMetric.defaultsKey)
+            adjustTimerFrequency()
+            refreshFull()
         }
     }
 
@@ -85,10 +105,18 @@ public final class AppState: ObservableObject {
     // 是否展示“关于”面板
     @Published public var showAbout: Bool = false
 
-    // 当前激活的监控标签页 ("overview", "cpu", "gpu", "ram", "disk")
+    private var lastNormalizedTab: String = "overview"
+
+    // 当前激活的监控标签页 ("overview", "cpu", "gpu", "ram", "disk", "network", "battery")
     @Published public var selectedTab: String = "overview" {
         didSet {
-            guard oldValue != selectedTab else { return }
+            let normalized = Self.normalizedTab(selectedTab)
+            if selectedTab != normalized {
+                selectedTab = normalized
+                return
+            }
+            guard lastNormalizedTab != normalized else { return }
+            lastNormalizedTab = normalized
             refreshFull()
         }
     }
@@ -96,7 +124,7 @@ public final class AppState: ObservableObject {
     // 面板是否展开
     @Published public var isPopoverOpen: Bool = false {
         didSet {
-            guard oldValue != isPopoverOpen else { return }
+            guard !isInitializing, oldValue != isPopoverOpen else { return }
             adjustTimerFrequency()
             if isPopoverOpen {
                 refreshFull()
@@ -115,61 +143,85 @@ public final class AppState: ObservableObject {
     private let monitor = SystemMonitor.shared
     private let switchMgr = SwitchManager.shared
 
-    private init() {
-        let restoredKeepAwake = switchMgr.restoreKeepAwakePreference()
-        let savedStyle = UserDefaults.standard.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
-        if savedStyle == "iconAndStats" || savedStyle == "statsOnly" {
-            self.menuBarStyle = .statsColumns
-        } else {
-            self.menuBarStyle = MenuBarStyle(rawValue: savedStyle) ?? .statsColumns
-        }
-        self.metrics = monitor.sample(fullMetrics: false, visibleMetrics: SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics))
-        self.switches = switchMgr.getCurrentStates()
-        if !restoredKeepAwake { switchError = "无法恢复保持常亮，请重新开启。" }
-        adjustTimerFrequency()
-        wakeSubscription = NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
-            .sink { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.monitor.resetSamplingBaselines()
-                    self?.refreshFull()
-                }
-            }
-    }
+    var currentTimerIntervalForTesting: TimeInterval? { timer?.timeInterval }
+    var currentTimerToleranceForTesting: TimeInterval? { timer?.tolerance }
 
-    @Published var backgroundInterval: Double = {
-        let saved = UserDefaults.standard.double(forKey: "backgroundSamplingInterval")
-        return [1.0, 2.0, 5.0, 10.0].contains(saved) ? saved : 5.0
-    }() {
+    @Published var backgroundInterval: Double {
         didSet {
+            guard !isInitializing else { return }
             guard [1.0, 2.0, 5.0, 10.0].contains(backgroundInterval) else { backgroundInterval = 5; return }
-            UserDefaults.standard.set(backgroundInterval, forKey: "backgroundSamplingInterval")
+            defaults.set(backgroundInterval, forKey: "backgroundSamplingInterval")
             adjustTimerFrequency()
         }
+    }
+
+    init(defaults: UserDefaults = .standard, startMonitoring: Bool = true) {
+        self.defaults = defaults
+        self.monitoringEnabled = startMonitoring
+
+        let savedStyle = defaults.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
+        let resolvedStyle: MenuBarStyle
+        if savedStyle == "iconAndStats" || savedStyle == "statsOnly" {
+            resolvedStyle = .statsColumns
+        } else {
+            resolvedStyle = MenuBarStyle(rawValue: savedStyle) ?? .statsColumns
+        }
+        self.menuBarStyle = resolvedStyle
+        self.menuBarPreferences = MenuBarPreferences.load(from: defaults)
+        self.menuBarMetrics = MenuBarMetric.decode(defaults.stringArray(forKey: MenuBarMetric.defaultsKey))
+        let savedInterval = defaults.double(forKey: "backgroundSamplingInterval")
+        self.backgroundInterval = [1.0, 2.0, 5.0, 10.0].contains(savedInterval) ? savedInterval : 5.0
+        self.isInitializing = false
+
+        guard startMonitoring else { return }
+
+        if defaults === UserDefaults.standard {
+            let restoredKeepAwake = switchMgr.restoreKeepAwakePreference()
+            if !restoredKeepAwake { switchError = "无法恢复保持常亮，请重新开启。" }
+            self.metrics = monitor.sample(fullMetrics: false, visibleMetrics: SamplingPlan.visible(style: resolvedStyle, metrics: menuBarMetrics))
+            self.switches = switchMgr.getCurrentStates()
+            wakeSubscription = NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+                .sink { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        self?.monitor.resetSamplingBaselines()
+                        self?.refreshFull()
+                    }
+                }
+        }
+        adjustTimerFrequency()
     }
 
     // MARK: - 动态频率定时器
 
     private func adjustTimerFrequency() {
         timer?.invalidate()
+        timer = nil
+        guard monitoringEnabled else { return }
         if isPopoverOpen {
-            startTimer(interval: 1.0)
-        } else {
-            if !SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty { startTimer(interval: backgroundInterval) }
+            startTimer(interval: 1.0, tolerance: 0.0)
+        } else if !SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty {
+            startTimer(interval: backgroundInterval, tolerance: backgroundInterval * 0.2)
         }
     }
 
-    private func startTimer(interval: TimeInterval) {
-        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+    private func startTimer(interval: TimeInterval, tolerance: TimeInterval) {
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] firingTimer in
+            if self == nil {
+                firingTimer.invalidate()
+                return
+            }
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 self.tick()
             }
         }
+        timer.tolerance = tolerance
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
 
     private func tick() {
+        guard monitoringEnabled || sampleOverride != nil else { return }
         if !isPopoverOpen && SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty {
             needsResample = false
             return
@@ -181,26 +233,27 @@ public final class AppState: ObservableObject {
         samplingInFlight = true
         needsResample = false
         let isFull = isPopoverOpen
-        let tab = selectedTab
+        let tab = Self.normalizedTab(selectedTab)
         let visible = SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics)
         let revision = switchRevision
         let override = sampleOverride
-        Task {
-            let (sampledMetrics, sampledSwitches) = await Task.detached(priority: .userInitiated) {
-                autoreleasepool {
-                    if let override { return override(isFull, tab, isFull, visible) }
-                    let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull, visibleMetrics: visible)
-                    let s = (isFull && tab == "overview") ? SwitchManager.shared.getCurrentStates() : nil
-                    return (m, s)
+        let priority = Self.samplingPriority(isPopoverOpen: isFull)
+        Task.detached(priority: priority) { [weak self] in
+            let (sampledMetrics, sampledSwitches): (SystemMetrics, SwitchStates?) = autoreleasepool {
+                if let override { return override(isFull, tab, isFull, visible) }
+                let m = SystemMonitor.shared.sample(fullMetrics: isFull, activeTab: tab, includeProcesses: isFull, visibleMetrics: visible)
+                let s = (isFull && tab == "overview") ? SwitchManager.shared.getCurrentStates() : nil
+                return (m, s)
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.samplingInFlight = false
+                if let s = sampledSwitches, revision == self.switchRevision, self.pendingSwitches.isEmpty { self.switches = s }
+                self.metrics = sampledMetrics
+                if self.needsResample {
+                    self.needsResample = false
+                    self.tick()
                 }
-            }.value
-
-            self.samplingInFlight = false
-            if let s = sampledSwitches, revision == self.switchRevision, self.pendingSwitches.isEmpty { self.switches = s }
-            self.metrics = sampledMetrics
-            if self.needsResample {
-                self.needsResample = false
-                self.tick()
             }
         }
     }

@@ -9,7 +9,7 @@ extension Notification.Name {
 @MainActor
 final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
-    private let state = AppState.shared
+    private let state: AppState
     private let preview = MenuBarStatusView()
     private let previewContainer = NSView()
     private var subscriptions = Set<AnyCancellable>()
@@ -26,7 +26,8 @@ final class MenuBarSettingsController: NSWindowController, NSWindowDelegate {
     private let networkColor = NSButton(checkboxWithTitle: "数值着色", target: nil, action: nil)
     private let networkOrder = NSButton(checkboxWithTitle: "下载在上", target: nil, action: nil)
 
-    init() {
+    init(state: AppState = .shared) {
+        self.state = state
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 580, height: 548), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "菜单栏外观"
         window.isReleasedWhenClosed = false

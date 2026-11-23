@@ -31,9 +31,13 @@ public struct DiskHealth: Sendable {
 /// Serial numbers and identify data are deliberately never requested.
 final class DiskDetails {
     private let session = DASessionCreate(nil)
+    private let nowProvider: () -> Double
+    private let customDeviceOpener: ((String) -> (media: io_registry_entry_t, driver: io_registry_entry_t))?
+    private let customHealthReader: ((io_registry_entry_t) -> DiskHealth?)?
     private var volumes: [DiskVolume] = []
     private var refreshed: Double = -100
     private var selected = "/"
+    private var openedPath = ""
     private var driver: io_registry_entry_t = 0
     private var media: io_registry_entry_t = 0
     private var counters: (UInt64, UInt64, Double)?
@@ -41,11 +45,22 @@ final class DiskDetails {
     private var healthRead: Double = -100
     private var volumeOverridesForTesting: [String: DiskVolume] = [:]
     var cachedVolumesForTesting: [DiskVolume] { volumes }
+
+    init(
+        now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime },
+        deviceOpener: ((String) -> (media: io_registry_entry_t, driver: io_registry_entry_t))? = nil,
+        healthReader: ((io_registry_entry_t) -> DiskHealth?)? = nil
+    ) {
+        self.nowProvider = now
+        self.customDeviceOpener = deviceOpener
+        self.customHealthReader = healthReader
+    }
+
     func injectCachedVolumeForTesting(_ volume: DiskVolume) {
         if FileManager.default.fileExists(atPath: volume.path) {
             volumeOverridesForTesting[volume.path] = volume
         }
-        refreshed = ProcessInfo.processInfo.systemUptime
+        refreshed = nowProvider()
         volumes.removeAll { $0.path == volume.path }
         volumes.append(volume)
     }
@@ -60,13 +75,13 @@ final class DiskDetails {
         return volumes.first { $0.path == path }
     }
     func reset() {
-        if driver != 0 { IOObjectRelease(driver); driver = 0 }
-        if media != 0 { IOObjectRelease(media); media = 0 }
+        releaseDeviceHandles()
+        openedPath = ""
         counters = nil; refreshed = -100; health = nil; healthRead = -100
     }
     deinit { reset() }
     func sample(path: String) -> (volumes: [DiskVolume], selected: DiskVolume?, available: Bool, pending: Bool, read: Double, write: Double, health: DiskHealth?) {
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = nowProvider()
         func rescanVolumes() {
             let roots = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeIsLocalKey], options: .skipHiddenVolumes) ?? []
             var scanned = ([URL(fileURLWithPath: "/")] + roots.filter {
@@ -89,14 +104,26 @@ final class DiskDetails {
             actual = "/"
             currentVolume = volume(URL(fileURLWithPath: "/"))
         }
-        if selected != actual || media == 0 { resetDevice(); selected = actual; openDevice(path: actual) }
+        if selected != actual || openedPath != actual {
+            resetDevice()
+            selected = actual
+            openedPath = actual
+            openDevice(path: actual)
+        }
         // Re-read capacity only for the selected volume, not all mounted volumes every second.
         if let currentVolume, let index = volumes.firstIndex(where: { $0.path == actual }) { volumes[index] = currentVolume }
         if now - healthRead >= 60 { health = readHealth(); healthRead = now }
-        guard driver != 0,
-              let stats = IORegistryEntryCreateCFProperty(driver, "Statistics" as CFString, nil, 0)?.takeRetainedValue() as? [String: Any],
+        // Virtual / DMG volumes legitimately lack an IOBlockStorageDriver parent (`driver == 0`);
+        // preserve `openedPath` and `healthRead` so SMART throttling stays at 60s instead of rescanning every second.
+        guard driver != 0 else {
+            counters = nil
+            return (volumes, volumes.first { $0.path == actual }, false, false, 0, 0, health)
+        }
+        guard let stats = IORegistryEntryCreateCFProperty(driver, "Statistics" as CFString, nil, 0)?.takeRetainedValue() as? [String: Any],
               let read = stats["Bytes (Read)"] as? NSNumber, let write = stats["Bytes (Write)"] as? NSNumber else {
-            resetDevice()
+            releaseDeviceHandles()
+            openedPath = ""
+            counters = nil
             return (volumes, volumes.first { $0.path == actual }, false, false, 0, 0, health)
         }
         let current = (read.uint64Value, write.uint64Value, now)
@@ -121,12 +148,26 @@ final class DiskDetails {
                           fileSystem: desc[kDADiskDescriptionVolumeKindKey as String] as? String ?? "未知",
                           model: desc[kDADiskDescriptionDeviceModelKey as String] as? String ?? "", totalGB: total, freeGB: free)
     }
+    private func releaseDeviceHandles() {
+        if customDeviceOpener == nil {
+            if driver != 0 { IOObjectRelease(driver) }
+            if media != 0 { IOObjectRelease(media) }
+        }
+        driver = 0
+        media = 0
+    }
     private func resetDevice() {
-        if driver != 0 { IOObjectRelease(driver); driver = 0 }
-        if media != 0 { IOObjectRelease(media); media = 0 }
+        releaseDeviceHandles()
+        openedPath = ""
         counters = nil; health = nil; healthRead = -100
     }
     private func openDevice(path: String) {
+        if let customDeviceOpener {
+            let handles = customDeviceOpener(path)
+            media = handles.media
+            driver = handles.driver
+            return
+        }
         guard let session, let disk = DADiskCreateFromVolumePath(nil, session, URL(fileURLWithPath: path) as CFURL) else { return }
         media = DADiskCopyIOMedia(disk)
         var node = media
@@ -139,6 +180,9 @@ final class DiskDetails {
         }
     }
     private func readHealth() -> DiskHealth? {
+        if let customHealthReader {
+            return customHealthReader(media)
+        }
         var node = media
         if node != 0 { IOObjectRetain(node) }
         defer { if node != 0 { IOObjectRelease(node) } }

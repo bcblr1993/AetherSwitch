@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] - 2026-11-23 (Build 2026112301)
+
+### Added
+- 新增只读 `AppleSMC` 风扇转速监控（读取 `FNum` 与 `F0Ac`/`F1Ac` 等，兼容 `flt` 与 `fpe2` 编码）：概览页紧凑系统状态条与 CPU 详情页显示「风扇 1850 RPM」或多风扇读数，无风扇机型（如 MacBook Air）自动隐藏；折叠态随温度传感器一同释放 SMC 连接，无常驻开销。
+- 概览页新增 28pt 紧凑系统状态条（温控状态 / 核心温度、风扇、交换内存、运行时长），概览总高度保持在 800pt 内。
+- 新安装默认菜单栏精简为 3 列（CPU + 内存 + 网络，宽度 < 155pt），防止刘海屏遮挡，已保存的偏好不受影响。
+- 应用已在运行时再次打开（`applicationShouldHandleReopen`），自动展开状态栏面板。
+- 新增 `scripts/preflight_check.sh` 发版预检（工作区干净度、版本 / 构建号 / CHANGELOG 对齐、构建号单调递增、Developer ID 证书与 Sparkle 私钥、磁盘空间）与 `scripts/finalize_release.sh` 公证后原子定稿（公证 → staple `.app`/`.dmg` → 重打 `.tar.gz` → 最终 `SHA256SUMS.txt` → 签名 `appcast.xml`）。
+
+### Fixed
+- 修复 Apple Silicon M5 因性能簇频点表缺失（`pCount == 0`）导致 CPU 频率整体显示不可用的问题，动态匹配 `pmgr` 频点表并独立保留可读簇频率。
+- 修复无块存储驱动的卷（DMG / 虚拟卷）每秒重置 SMART 缓存、击穿 60 秒节流的问题；磁盘百分比计算增加零容量守卫。
+- 深色模式切换由常驻 `NSAppleScript` 改为带超时回收的短生命周期 `/usr/bin/osascript` 子进程；状态读取移除阻塞的跨进程 `CFPreferencesSynchronize`。
+- 引入 `PanelTab` 强类型枚举，未知标签统一归一化为「概览」；修复网络详情图首帧插入 4 个重复采样点的问题。
+- 状态栏最小高度自愈增加 Objective-C 方法签名与参数类型校验及重入保护；移除启动时预分配但未使用的 `NSPopover`；迁移废弃的 `NSApp.activate(ignoringOtherApps:)`。
+
+### Performance & Concurrency
+- `FollowingBrightnessTransition` 与 `DisplayGammaBlackout` 不再在 `OSAllocatedUnfairLock` / `os_unfair_lock` 内调用硬件或 WindowServer IPC；Gamma 过渡的中间 60Hz 帧不再执行 JSON 编码与 `defaults.synchronize()`，只在首次备份原始曲线和最终恢复时写入。
+- 每次采样只读取一次 CPU SMC 温度键（原先读两次）；arm64 跳过 Intel 专属 `TC0*` 键。
+- 外接屏 DDC 的 I2C 锁按显示器隔离，慢副屏不再阻塞其他屏；`Get VCP` 只发一次；缓存电源端点，退出时不再反复扫描 EDID；新增「外屏跟随系统亮度」开关。
+- 折叠态定时器设置 20% 容差，后台采样以 `.utility` QoS 运行，便于调度到能效核心；面板各卡片增加 `Equatable` 快照比对，数值未变化时跳过重绘。
+
+### Engineering
+- CI 与 `build_app.sh` 的 `swift build` / `swift test` 启用 `-Xswiftc -warnings-as-errors`，零警告成为硬门禁；`build_app.sh` 增加中途失败时的清理 `trap`。
+- `verify_popover_memory.py` 同时打开菜单栏设置窗口，并在关闭回收后再次校验 `processPeakMB <= 50.0`；子进程异常时输出日志尾部。
+- 删除零引用的 `scripts/make_dmg.sh` 与生产代码中的死代码 `BrightnessTransition.swift`；修正官网 `app.yaml` 与 `TEST_SCENARIOS.md` 中过时的内存与指标描述。
+
+### Tests
+- `AppState`、面板、设置窗口、网络与系统监控支持注入独立 `UserDefaults` 和虚拟时钟，单测不再污染宿主偏好；移除 `Thread.sleep`，测试总耗时明显缩短。
+- 新增 `Stage1CoreHardeningTests`、`Stage1UIHardeningTests` 等 TDD 单测，覆盖锁外 IPC、SMART 节流、osascript 注入、`PanelTab` 归一化、M5 频率、风扇转速（有风扇 / 无风扇展示且高度 ≤ 800pt）、DDC 端点隔离、双栈状态栏交互与默认 3 列（总计 201 项测试全部通过）。
+
 ## [1.10.1] - 2026-11-07
 
 ### Fixed

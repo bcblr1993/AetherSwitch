@@ -11,8 +11,8 @@ cd "$PROJECT_DIR"
 
 APP_NAME="AetherSwitch"
 BUNDLE_ID="com.aethernative.aetherswitch"
-VERSION="1.10.1"
-BUILD_NUMBER="2026110701"
+VERSION="1.10.2"
+BUILD_NUMBER="2026112301"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_DIR/outputs/build-${BUILD_NUMBER}}"
 # 在线更新（Sparkle）：清单地址与更新签名公钥。公钥可公开，对应私钥只存在发布者的登录钥匙串（账户 AetherSwitch）。
 SPARKLE_FEED_URL="https://aethernative.com/apps/aetherswitch/appcast.xml"
@@ -32,6 +32,25 @@ test ! -e "$OUTPUT_DIR" || { echo "Output already exists: $OUTPUT_DIR"; exit 1; 
 security find-identity -v -p codesigning | grep -q "$CERT_NAME" || { echo "Required Developer ID certificate is unavailable"; exit 1; }
 
 # 保留旧候选包与校验清单，供发布验收和回退使用。
+BUILD_SUCCEEDED=0
+CREATED_OUTPUT_DIR=0
+DMG_ROOT=""
+
+cleanup_on_exit() {
+    local exit_code=$?
+    if [ -n "${DMG_ROOT:-}" ] && [ -d "$DMG_ROOT" ]; then
+        rm -rf -- "$DMG_ROOT"
+    fi
+    if [ "$exit_code" -ne 0 ] && [ "$BUILD_SUCCEEDED" -ne 1 ]; then
+        if [ "$CREATED_OUTPUT_DIR" -eq 1 ] && [ -d "$OUTPUT_DIR" ] && [ ! -L "$OUTPUT_DIR" ]; then
+            echo "⚠️  构建中途异常退出 (exit $exit_code)，正在清理半成品目录: $OUTPUT_DIR" >&2
+            rm -rf -- "$OUTPUT_DIR"
+        else
+            echo "❌ 构建未完成，已中止 (exit $exit_code)" >&2
+        fi
+    fi
+}
+trap cleanup_on_exit EXIT
 
 # SwiftPM 的编译中间产物会随反复构建累积；每次从干净的编译目录开始。
 # 仅触碰本项目 .build/out，保留 SwiftPM 的依赖与工作区元数据。
@@ -40,14 +59,15 @@ if [ -d "$SWIFT_BUILD_OUTPUT" ] && [ ! -L "$SWIFT_BUILD_OUTPUT" ]; then
     rm -r -- "$SWIFT_BUILD_OUTPUT"
 fi
 
-echo "==> [1/5] 执行全量单元测试与质量门禁..."
-swift test
+echo "==> [1/5] 执行全量单元测试与质量门禁 (Swift 6 零警告硬门禁)..."
+swift test -Xswiftc -warnings-as-errors
 
-echo "==> [2/5] 编译生产环境 Release 二进制 (Apple Silicon arm64)..."
-swift build -c release --arch arm64
+echo "==> [2/5] 编译生产环境 Release 二进制 (Apple Silicon arm64, 零警告硬门禁)..."
+swift build -c release --arch arm64 -Xswiftc -warnings-as-errors
 
 echo "==> [3/5] 组装 macOS App Bundle..."
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/MacOS"
+CREATED_OUTPUT_DIR=1
 mkdir -p "$OUTPUT_DIR/${APP_NAME}.app/Contents/Resources"
 
 BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
@@ -168,19 +188,21 @@ else
     hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_ROOT" -format UDZO "${APP_NAME}-${VERSION}-arm64.dmg"
 fi
 rm -rf "$DMG_ROOT"
+DMG_ROOT=""
 
 if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
     codesign --force --timestamp --sign "$CERT_NAME" "${APP_NAME}-${VERSION}-arm64.dmg"
 fi
 
 shasum -a 256 "${APP_NAME}-${VERSION}-arm64.dmg" "${APP_NAME}-${VERSION}-arm64.tar.gz" > SHA256SUMS.txt
+BUILD_SUCCEEDED=1
 
 echo "=============================================================================="
 echo "✅ 构建完成！产物路径："
 echo "   App Bundle:  $OUTPUT_DIR/${APP_NAME}.app"
 echo "   DMG Package: $OUTPUT_DIR/${APP_NAME}-${VERSION}-arm64.dmg"
 echo "   Archive:     $OUTPUT_DIR/${APP_NAME}-${VERSION}-arm64.tar.gz"
-echo "   Checksums: "
+echo "   Checksums (公证前初版，正式发版请执行 ./scripts/finalize_release.sh 重算):"
 cat "$OUTPUT_DIR/SHA256SUMS.txt"
 echo "   App Size:    $(du -sh "$OUTPUT_DIR/${APP_NAME}.app" | cut -f1)"
 echo "=============================================================================="

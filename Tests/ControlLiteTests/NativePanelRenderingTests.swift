@@ -13,13 +13,36 @@ private actor RenderingBrightnessHardware: BrightnessHardware {
 
 /// 详情页图表若交给 AppKit 异步绘制，会建立 IOSurface/Metal 资源并把内存峰值推高约 12MB。
 final class NativePanelRenderingTests: XCTestCase {
+    private var snapshotDirectory: URL!
+    private var suiteName: String!
+    private var isolatedDefaults: UserDefaults!
+
+    override func setUpWithError() throws {
+        snapshotDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aetherswitch-panel-rendering-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: snapshotDirectory, withIntermediateDirectories: true)
+
+        suiteName = "com.aethernative.aetherswitch.rendering.\(UUID().uuidString)"
+        isolatedDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    }
+
+    override func tearDownWithError() throws {
+        if let snapshotDirectory {
+            try? FileManager.default.removeItem(at: snapshotDirectory)
+        }
+        snapshotDirectory = nil
+        if let suiteName {
+            isolatedDefaults?.removePersistentDomain(forName: suiteName)
+        }
+        isolatedDefaults = nil
+        suiteName = nil
+    }
+
     @MainActor
     func testDetailPanelsScrollOnShortScreensWhileBrightnessRemainsVisible() throws {
-        let state = AppState.shared
-        let originalTab = state.selectedTab, originalAbout = state.showAbout
-        defer { state.selectedTab = originalTab; state.showAbout = originalAbout }
+        let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
         state.showAbout = false
-        let controller = NativePanelController(maximumHeight: 600)
+        let controller = NativePanelController(state: state, maximumHeight: 600)
         _ = controller.view
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: controller.preferredContentSize), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -28,7 +51,7 @@ final class NativePanelRenderingTests: XCTestCase {
         func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
         for tab in ["cpu", "ram", "disk"] {
             state.selectedTab = tab
-            _ = render(window, appearance: .aqua)
+            _ = try render(window, appearance: .aqua, snapshotName: "short-\(tab)-light")
             XCTAssertEqual(controller.preferredContentSize.height, 600)
             let scroll = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSScrollView }.first)
             XCTAssertGreaterThan(try XCTUnwrap(scroll.documentView).fittingSize.height, scroll.contentSize.height)
@@ -37,14 +60,13 @@ final class NativePanelRenderingTests: XCTestCase {
             XCTAssertTrue(controller.view.bounds.contains(slider.convert(slider.bounds, to: controller.view)))
         }
     }
+
     @MainActor
     func testBrightnessPowerOptionFitsEveryPageInBothAppearances() async throws {
-        let state = AppState.shared
-        let originalTab = state.selectedTab, originalAbout = state.showAbout
-        defer { state.selectedTab = originalTab; state.showAbout = originalAbout }
+        let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
         state.showAbout = false
         let brightness = BrightnessManager(hardware: RenderingBrightnessHardware(), observeScreens: false)
-        let controller = NativePanelController(brightness: brightness)
+        let controller = NativePanelController(state: state, brightness: brightness)
         _ = controller.view
         await brightness.waitUntilIdle()
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: controller.preferredContentSize), styleMask: .borderless, backing: .buffered, defer: false)
@@ -55,10 +77,11 @@ final class NativePanelRenderingTests: XCTestCase {
         let option = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? NSButton }
             .first { $0.accessibilityLabel() == "零亮度时关闭外屏背光" })
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearanceTag = appearance == .aqua ? "light" : "dark"
             for tab in ["overview", "cpu", "gpu", "ram", "disk", "network", "battery"] {
                 state.selectedTab = tab
                 window.setContentSize(controller.preferredContentSize)
-                _ = render(window, appearance: appearance)
+                _ = try render(window, appearance: appearance, snapshotName: "\(tab)-\(appearanceTag)")
                 XCTAssertTrue(option.isEnabled)
                 XCTAssertFalse(option.isHidden)
                 let frame = option.convert(option.bounds, to: controller.view)
@@ -66,18 +89,29 @@ final class NativePanelRenderingTests: XCTestCase {
                 XCTAssertTrue(controller.view.bounds.contains(frame), "Backlight option clipped on \(tab) / \(appearance)")
             }
         }
+        let writtenSnapshots = try FileManager.default.contentsOfDirectory(at: snapshotDirectory, includingPropertiesForKeys: nil)
+        XCTAssertEqual(writtenSnapshots.count, 14, "Snapshots must be written into the isolated per-test temp directory")
     }
+
     @MainActor
     private func layers(_ layer: CALayer) -> [CALayer] {
         [layer] + (layer.sublayers ?? []).flatMap { layers($0) }
     }
 
     @MainActor
-    private func render(_ window: NSWindow, appearance: NSAppearance.Name) -> [CALayer] {
+    private func render(_ window: NSWindow, appearance: NSAppearance.Name, snapshotName: String? = nil) throws -> [CALayer] {
         window.appearance = NSAppearance(named: appearance)
         window.layoutIfNeeded()
         window.displayIfNeeded()
         CATransaction.flush()
+        if let snapshotName, let contentView = window.contentView, contentView.bounds.width > 0, contentView.bounds.height > 0 {
+            if let rep = contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds) {
+                contentView.cacheDisplay(in: contentView.bounds, to: rep)
+                let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                let target = snapshotDirectory.appendingPathComponent("\(snapshotName).png")
+                try png.write(to: target, options: .atomic)
+            }
+        }
         return window.contentView.flatMap(\.layer).map { layers($0) } ?? []
     }
 
@@ -101,12 +135,10 @@ final class NativePanelRenderingTests: XCTestCase {
 
     @MainActor
     func testDetailPageDrawsSynchronouslyIntoOwnBitmaps() throws {
-        let state = AppState.shared
-        let originalTab = state.selectedTab
-        defer { state.selectedTab = originalTab }
+        let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
         state.showAbout = false
         state.selectedTab = "overview"
-        let controller = NativePanelController()
+        let controller = NativePanelController(state: state)
         _ = controller.view
         state.selectedTab = "cpu"
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: controller.preferredContentSize), styleMask: .borderless, backing: .buffered, defer: false)
@@ -114,12 +146,12 @@ final class NativePanelRenderingTests: XCTestCase {
         defer { window.contentViewController = nil; window.close() }
         window.contentViewController = controller
 
-        let dark = render(window, appearance: .darkAqua)
+        let dark = try render(window, appearance: .darkAqua, snapshotName: "cpu-bitmap-dark")
         XCTAssertFalse(dark.contains { $0.drawsAsynchronously }, "详情页不应启用异步（GPU）绘制")
         let darkImages = cardImages(dark)
         XCTAssertGreaterThanOrEqual(darkImages.count, 2, "图表与详细信息应各自提供位图内容")
 
-        let light = render(window, appearance: .aqua)
+        let light = try render(window, appearance: .aqua, snapshotName: "cpu-bitmap-light")
         let lightImages = cardImages(light)
         let darkCard = try XCTUnwrap(darkImages.first)
         let lightCard = try XCTUnwrap(lightImages.first)

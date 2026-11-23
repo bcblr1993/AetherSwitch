@@ -3,8 +3,15 @@ import Darwin
 @testable import ControlLite
 
 final class SystemMonitorTests: XCTestCase {
+    private func makeMonitor() -> SystemMonitor {
+        let suite = "AetherSwitch.SystemMonitorTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        return SystemMonitor(defaults: defaults)
+    }
+
     func testLightweightSampling() {
-        let monitor = SystemMonitor.shared
+        let monitor = makeMonitor()
         let metrics = monitor.sample(fullMetrics: false)
 
         // 轻量模式下 RAM 必须成功采集
@@ -24,9 +31,10 @@ final class SystemMonitorTests: XCTestCase {
     }
 
     func testFullMetricsSampling() {
-        let monitor = SystemMonitor.shared
-        // 进行两次采样以计算 CPU 与网络差值
-        _ = monitor.sample(fullMetrics: true)
+        let monitor = makeMonitor()
+        // 进行两次采样以计算 CPU 与网络差值（首次采样零增量时也必须满足 total + idle == 100）
+        let initial = monitor.sample(fullMetrics: true)
+        XCTAssertEqual(initial.cpuUsage + initial.cpuIdleUsage, 100, accuracy: 0.001)
         Thread.sleep(forTimeInterval: 0.3)
         let metrics = monitor.sample(fullMetrics: true)
 
@@ -85,6 +93,13 @@ final class SystemMonitorTests: XCTestCase {
         let reopened = monitor.sample(fullMetrics: true, activeTab: "disk")
         XCTAssertTrue(reopened.diskIOPending)
         XCTAssertFalse(reopened.diskIOAvailable, "重新打开时不能将收起期间的累计 IO 作为当前速率")
+    }
+
+    func testInvalidTabNormalizesToOverviewAndFanRPMsStayValidOrEmpty() {
+        let monitor = makeMonitor()
+        let metrics = monitor.sample(fullMetrics: true, activeTab: "invalid-external-tab", visibleMetrics: [])
+        XCTAssertGreaterThan(metrics.ramTotalGB, 0, "非法标签页必须归一化为 overview 并采集全量概览指标")
+        XCTAssertTrue(metrics.fanRPMs.allSatisfy { $0 >= 0 && $0 <= 20_000 })
     }
 
 }

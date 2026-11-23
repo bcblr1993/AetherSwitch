@@ -29,15 +29,30 @@ final class FollowingBrightnessTransition: Sendable {
     @discardableResult
     func retarget(_ value: Double, animated: Bool = true) -> Bool {
         guard value.isFinite, (0...1).contains(value) else { return false }
-        return state.withLock { state in
+        if animated {
+            return state.withLock { state in
+                guard !state.stopped else { return false }
+                state.target = value
+                state.failed = false
+                if state.value != state.target, state.worker == nil {
+                    state.worker = Task.detached { [self] in await run() }
+                }
+                return true
+            }
+        }
+        let canProceed = state.withLock { state -> Bool in
             guard !state.stopped else { return false }
             state.target = value
             state.failed = false
-            if !animated {
-                state.failed = !apply(value)
-                if !state.failed { state.value = value }
-            }
-            if state.value != state.target, state.worker == nil {
+            return true
+        }
+        guard canProceed else { return false }
+        let ok = apply(value)
+        return state.withLock { state in
+            guard !state.stopped else { return false }
+            state.failed = !ok
+            if ok { state.value = value }
+            if !state.failed, state.value != state.target, state.worker == nil {
                 state.worker = Task.detached { [self] in await run() }
             }
             return !state.failed
@@ -45,20 +60,32 @@ final class FollowingBrightnessTransition: Sendable {
     }
 
     private func run() async {
-        while state.withLock({ state in
+        while let next = state.withLock({ state -> Double? in
             guard !state.stopped, !state.failed, state.value != state.target else {
                 state.worker = nil
-                return false
+                return nil
             }
             let delta = state.target - state.value
             // Follow the moving target from the last displayed value.
             // Bound each change so a stalled WindowServer cannot cause a large jump.
             let limit = state.value < 0.31 ? 0.015 : 0.04
-            let next = abs(delta) < 0.002 ? state.target : state.value + max(-limit, min(limit, delta * 0.24))
-            state.failed = !apply(next)
-            if !state.failed { state.value = next }
-            return true
+            return abs(delta) < 0.002 ? state.target : state.value + max(-limit, min(limit, delta * 0.24))
         }) {
+            let ok = apply(next)
+            let shouldContinue = state.withLock { state -> Bool in
+                guard !state.stopped else {
+                    state.worker = nil
+                    return false
+                }
+                state.failed = !ok
+                if ok { state.value = next }
+                if state.failed || state.value == state.target {
+                    state.worker = nil
+                    return false
+                }
+                return true
+            }
+            guard shouldContinue else { break }
             try? await Task.sleep(for: interval)
         }
     }

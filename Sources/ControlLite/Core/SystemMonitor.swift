@@ -50,6 +50,7 @@ public struct SystemMetrics: Sendable {
     public var cpuPCoreCount = 0
     public var cpuTemperature: Double?
     public var cpuMaxTemperature: Double?
+    public var fanRPMs: [Int] = []
     public var thermalStateLevel: String = "正常"
     public var thermalStateCode: Int = 0
     public var cpuFrequencyMHz: Double?
@@ -162,9 +163,11 @@ public struct SystemMetrics: Sendable {
 public final class SystemMonitor: @unchecked Sendable {
     public static let shared = SystemMonitor()
 
+    private let defaults: UserDefaults
+    private let nowProvider: () -> TimeInterval
     private let hostPort = mach_host_self()
     private var previousAggregateTicks: [UInt32]?
-    private var lastAggregateCPU = CPUDetail()
+    private var lastAggregateCPU = CPUDetail(idle: 100)
     private var prevCpuInfo: processor_info_array_t?
     private var numPrevCpuInfo: mach_msg_type_number_t = 0
     private var numCPUs: UInt32 = 0
@@ -180,13 +183,19 @@ public final class SystemMonitor: @unchecked Sendable {
     private let hardware = HardwareDetails()
     private var capacityTimestamp = -Double.infinity
     private var cachedCapacity: (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double)?
-    private let disks = DiskDetails()
-    private let networkMonitor = NetworkMonitor()
+    private let disks: DiskDetails
+    private let networkMonitor: NetworkMonitor
     private let batteryMonitor = BatteryMonitor()
     private var selectedDiskPath = "/"
     private let selectionLock = NSLock()
     private var pendingDiskPath: String?
     private var pendingNetworkInterface: String?
+
+    var cpuTemperatureSampleCountForTesting: Int {
+        sampleLock.lock()
+        defer { sampleLock.unlock() }
+        return hardware.cpuTemperatureSampleCountForTesting
+    }
 
     public func selectDisk(path: String) {
         selectionLock.lock()
@@ -241,7 +250,6 @@ public final class SystemMonitor: @unchecked Sendable {
         capacityTimestamp = -Double.infinity
     }
 
-
     // 展开期间保留最近 60 个采样点，折叠时停止并清除基线。
     private var cpuHistoryBuffer: [Double] = []
     private var gpuHistoryBuffer: [Double] = []
@@ -249,7 +257,15 @@ public final class SystemMonitor: @unchecked Sendable {
     private var diskWriteHistoryBuffer: [Double] = []
     private var diskReadHistoryBuffer: [Double] = []
 
-    private init() {
+    init(
+        defaults: UserDefaults = .standard,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
+        self.defaults = defaults
+        self.nowProvider = now
+        self.disks = DiskDetails(now: now)
+        self.networkMonitor = NetworkMonitor(defaults: defaults, now: now)
+
         var numCPUsU: natural_t = 0
         var mib = [CTL_HW, HW_NCPU]
         var sizeOfNumCPUsU = MemoryLayout<natural_t>.size
@@ -298,6 +314,8 @@ public final class SystemMonitor: @unchecked Sendable {
         sampleLock.lock()
         defer { sampleLock.unlock() }
         applyPendingSelections()
+        let activeTab = PanelTab.normalize(activeTab)
+        let currentNow = nowProvider()
         var m = SystemMetrics()
         m.gpuModelName = chipName
         m.gpuCoreCount = gpuCores
@@ -307,7 +325,7 @@ public final class SystemMonitor: @unchecked Sendable {
         m.cpuPCoreCount = pCoreCount
         m.cpuCoreKinds = coreKinds
 
-        // 1. 基础轻量核心指标（RAM、网络、磁盘、CPU、GPU）- 均采用微秒级系统内核原生采样，服务于菜单栏 5 列常驻显示
+        // 1. 基础轻量核心指标（RAM、网络、磁盘、CPU、GPU）- 均采用微秒级系统内核原生采样
         let requested = SamplingPlan.metrics(visible: visibleMetrics, full: fullMetrics, tab: activeTab)
         if requested.contains(.ram) {
             let ramData = fetchRAMDetailed(includeSwap: fullMetrics && (activeTab == "ram" || activeTab == "overview"))
@@ -379,10 +397,10 @@ public final class SystemMonitor: @unchecked Sendable {
                 m.diskModel = volume.model
                 m.diskTotalGB = volume.totalGB
                 m.diskFreeGB = volume.freeGB
-                m.diskUsedGB = volume.totalGB - volume.freeGB
-                m.diskPercent = Int(m.diskUsedGB / m.diskTotalGB * 100)
+                m.diskUsedGB = max(0, volume.totalGB - volume.freeGB)
+                m.diskPercent = m.diskTotalGB > 0 ? min(100, max(0, Int((m.diskUsedGB / m.diskTotalGB) * 100))) : 0
                 cachedCapacity = (m.diskUsedGB, m.diskTotalGB, m.diskPercent, m.diskFreeGB)
-                capacityTimestamp = ProcessInfo.processInfo.systemUptime
+                capacityTimestamp = currentNow
             }
             m.diskHealth = io.health
             m.diskIOAvailable = io.available
@@ -404,6 +422,9 @@ public final class SystemMonitor: @unchecked Sendable {
             m.cpuTemperature = temps.cpuAverage
             m.cpuMaxTemperature = temps.cpuMaximum
             m.gpuTemperature = temps.gpu
+            if fullMetrics && ["overview", "cpu"].contains(activeTab) {
+                m.fanRPMs = hardware.sampleFans(chip: chipName)
+            }
             let thermal = HardwareMath.thermalStateDescription(ProcessInfo.processInfo.thermalState)
             m.thermalStateLevel = thermal.label
             m.thermalStateCode = thermal.code
@@ -412,7 +433,6 @@ public final class SystemMonitor: @unchecked Sendable {
         }
         if fullMetrics && ["cpu", "gpu"].contains(activeTab) {
             let details = hardware.sample(tab: activeTab, chip: chipName, efficiencyCount: eCoreCount, performanceCount: pCoreCount)
-            if m.cpuTemperature == nil { m.cpuTemperature = details.temperature }
             m.cpuFrequencyMHz = details.frequency.total
             m.cpuFrequencyMaximumMHz = details.frequency.maximum
             m.cpuEFrequencyMHz = details.frequency.efficiency
@@ -452,13 +472,13 @@ public final class SystemMonitor: @unchecked Sendable {
 
         // 仅在对应 Tab 需要时才抓取 TOP 进程，确保极度省电
         if includeProcesses && activeTab == "overview" {
-            let overviewProcesses = processes.sampleOverview()
+            let overviewProcesses = processes.sampleOverview(now: currentNow)
             m.cpuTopProcesses = overviewProcesses.cpu.items
             m.ramTopProcesses = overviewProcesses.memory.items
             m.topProcessesAvailable = overviewProcesses.cpu.available || overviewProcesses.memory.available
             m.topProcessesPending = overviewProcesses.cpu.pending
         } else if includeProcesses && ["cpu", "ram", "disk"].contains(activeTab) {
-            let result = processes.sample(activeTab == "cpu" ? .cpu : activeTab == "ram" ? .memory : .disk)
+            let result = processes.sample(activeTab == "cpu" ? .cpu : activeTab == "ram" ? .memory : .disk, now: currentNow)
             m.topProcessesAvailable = result.available
             m.topProcessesPending = result.pending
             switch activeTab {
@@ -598,7 +618,7 @@ public final class SystemMonitor: @unchecked Sendable {
                         if string.hasPrefix("cpu"), let id = Int(string.dropFirst(3)), kinds.indices.contains(id),
                            let data = IORegistryEntryCreateCFProperty(child, "cluster-type" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? Data,
                            let type = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters) {
-                            kinds[id] = type == "E" ? .efficiency : ["P", "M"].contains(type) ? .performance : .unknown
+                            kinds[id] = type == "E" ? .efficiency : ["P", "M", "S"].contains(type) ? .performance : .unknown
                         }
                     }
                     IOObjectRelease(child)
@@ -726,7 +746,7 @@ public final class SystemMonitor: @unchecked Sendable {
     // MARK: - 磁盘容量采样
 
     private func fetchDisk() -> (usedGB: Double, totalGB: Double, percent: Int, freeGB: Double) {
-        let now = ProcessInfo.processInfo.systemUptime
+        let now = nowProvider()
         if let cachedCapacity, now - capacityTimestamp < 30 { return cachedCapacity }
         if let volume = disks.cachedVolume(for: selectedDiskPath), volume.totalGB > 0 {
             let usedGB = max(0, volume.totalGB - volume.freeGB)
@@ -786,7 +806,7 @@ public final class SystemMonitor: @unchecked Sendable {
     }
 
     func selectNetwork(interface: String) {
-        UserDefaults.standard.set(interface, forKey: "networkInterface")
+        defaults.set(interface, forKey: "networkInterface")
         selectionLock.lock()
         pendingNetworkInterface = interface
         selectionLock.unlock()
@@ -795,5 +815,4 @@ public final class SystemMonitor: @unchecked Sendable {
             applyPendingSelections()
         }
     }
-
 }

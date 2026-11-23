@@ -7,7 +7,7 @@ import os
 enum BrightnessDDC {
     enum Command: UInt8 { case brightness = 0x10, powerMode = 0xD6 }
     struct Reading: Equatable { let current: UInt16; let maximum: UInt16 }
-    struct Identity: Equatable, Codable, Sendable { let vendor: UInt32; let product: UInt32; let serial: UInt32 }
+    struct Identity: Equatable, Hashable, Codable, Sendable { let vendor: UInt32; let product: UInt32; let serial: UInt32 }
     static func uniquelyMatches(_ key: Identity, displays: [Identity], endpoints: [Identity]) -> Bool {
         displays.filter { $0 == key }.count == 1 && endpoints.filter { $0 == key }.count == 1
     }
@@ -48,7 +48,7 @@ enum BrightnessDDC {
 }
 
 /// Retained IOAV service is immutable. Transactions from the actor and synchronous
-/// termination recovery are serialized by BrightnessDDCTransport's recursive lock.
+/// termination recovery are serialized per endpoint so slow monitors never block others.
 struct BrightnessDDCEndpoint: @unchecked Sendable {
     let identity: BrightnessDDC.Identity
     let name: String?
@@ -58,18 +58,60 @@ struct BrightnessDDCEndpoint: @unchecked Sendable {
 
 final class BrightnessDDCTransport: @unchecked Sendable {
     static let shared = BrightnessDDCTransport()
+    typealias I2CTransferClosure = @Sendable (CFTypeRef, UInt32, UInt32, UnsafeMutableRawPointer, UInt32) -> IOReturn
     private typealias Transfer = @convention(c) (CFTypeRef, UInt32, UInt32, UnsafeMutableRawPointer, UInt32) -> IOReturn
     private let ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY)
-    private let lock = NSRecursiveLock()
+    private let discoveryLock = NSRecursiveLock()
+    private let endpointLocks = OSAllocatedUnfairLock(initialState: [BrightnessDDC.Identity: NSRecursiveLock]())
+    private let customReadI2C: I2CTransferClosure?
+    private let customWriteI2C: I2CTransferClosure?
+    private let customDiscoverEndpoints: (@Sendable () -> [BrightnessDDCEndpoint])?
+    private let sleepMicroseconds: @Sendable (useconds_t) -> Void
+
+    init(
+        readI2C: I2CTransferClosure? = nil,
+        writeI2C: I2CTransferClosure? = nil,
+        discoverEndpoints: (@Sendable () -> [BrightnessDDCEndpoint])? = nil,
+        sleepMicroseconds: @escaping @Sendable (useconds_t) -> Void = { usleep($0) }
+    ) {
+        self.customReadI2C = readI2C
+        self.customWriteI2C = writeI2C
+        self.customDiscoverEndpoints = discoverEndpoints
+        self.sleepMicroseconds = sleepMicroseconds
+    }
+
+    private func endpointLock(for identity: BrightnessDDC.Identity) -> NSRecursiveLock {
+        endpointLocks.withLock { map in
+            if let existing = map[identity] { return existing }
+            let created = NSRecursiveLock()
+            map[identity] = created
+            return created
+        }
+    }
+
     private func function(_ name: String) -> Transfer? {
         guard let ioKit, let pointer = dlsym(ioKit, name) else { return nil }
         return unsafeBitCast(pointer, to: Transfer.self)
     }
+
+    private func performRead(_ service: CFTypeRef, _ address: UInt32, _ subAddress: UInt32, _ buffer: UnsafeMutableRawPointer, _ length: UInt32) -> IOReturn? {
+        if let customReadI2C { return customReadI2C(service, address, subAddress, buffer, length) }
+        guard let read = function("IOAVServiceReadI2C") else { return nil }
+        return read(service, address, subAddress, buffer, length)
+    }
+
+    private func performWrite(_ service: CFTypeRef, _ address: UInt32, _ subAddress: UInt32, _ buffer: UnsafeMutableRawPointer, _ length: UInt32) -> IOReturn? {
+        if let customWriteI2C { return customWriteI2C(service, address, subAddress, buffer, length) }
+        guard let write = function("IOAVServiceWriteI2C") else { return nil }
+        return write(service, address, subAddress, buffer, length)
+    }
+
     func endpoints() -> [BrightnessDDCEndpoint] {
-        lock.lock(); defer { lock.unlock() }
+        if let customDiscoverEndpoints { return customDiscoverEndpoints() }
+        discoveryLock.lock(); defer { discoveryLock.unlock() }
         typealias Create = @convention(c) (CFAllocator?, io_service_t) -> Unmanaged<CFTypeRef>?
         guard let ioKit, let pointer = dlsym(ioKit, "IOAVServiceCreateWithService"),
-              let read = function("IOAVServiceReadI2C") else { return [] }
+              function("IOAVServiceReadI2C") != nil else { return [] }
         let create = unsafeBitCast(pointer, to: Create.self)
         var iterator: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("DCPAVServiceProxy"), &iterator) == KERN_SUCCESS else { return [] }
@@ -80,7 +122,7 @@ final class BrightnessDDCTransport: @unchecked Sendable {
             guard IORegistryEntryCreateCFProperty(proxy, "Location" as CFString, nil, 0)?.takeRetainedValue() as? String == "External",
                   let service = create(nil, proxy)?.takeRetainedValue() else { continue }
             var edid = [UInt8](repeating: 0, count: 128)
-            guard edid.withUnsafeMutableBytes({ read(service, 0x50, 0, $0.baseAddress!, 128) }) == 0,
+            guard edid.withUnsafeMutableBytes({ performRead(service, 0x50, 0, $0.baseAddress!, 128) }) == 0,
                   let key = BrightnessDDC.identity(edid) else { continue }
             var parent: io_registry_entry_t = 0
             var chip: UInt32 = 0x37
@@ -102,39 +144,99 @@ final class BrightnessDDCTransport: @unchecked Sendable {
         let matching = endpoints().filter { $0.identity == identity }
         return matching.count == 1 ? matching[0] : nil
     }
+
     func matches(_ endpoint: BrightnessDDCEndpoint) -> Bool {
+        let lock = endpointLock(for: endpoint.identity)
         lock.lock(); defer { lock.unlock() }
-        guard let read = function("IOAVServiceReadI2C") else { return false }
         var edid = [UInt8](repeating: 0, count: 128)
-        return edid.withUnsafeMutableBytes { read(endpoint.service, 0x50, 0, $0.baseAddress!, 128) } == 0 &&
+        return edid.withUnsafeMutableBytes { performRead(endpoint.service, 0x50, 0, $0.baseAddress!, 128) } == 0 &&
             BrightnessDDC.identity(edid) == endpoint.identity
     }
+
     func write(_ endpoint: BrightnessDDCEndpoint, packet: [UInt8]) -> Bool {
         write(endpoint, packet: packet, while: { true })
     }
+
     func write(_ endpoint: BrightnessDDCEndpoint, packet: [UInt8], while mayWrite: @Sendable () -> Bool) -> Bool {
+        sendPacket(endpoint, packet: packet, repeats: 2, while: mayWrite)
+    }
+
+    private func sendPacket(_ endpoint: BrightnessDDCEndpoint, packet: [UInt8], repeats: Int, while mayWrite: @Sendable () -> Bool) -> Bool {
+        let lock = endpointLock(for: endpoint.identity)
         lock.lock(); defer { lock.unlock() }
-        guard let write = function("IOAVServiceWriteI2C") else { return false }
         var bytes = packet
-        for _ in 0..<2 {
-            usleep(10_000)
+        for _ in 0..<max(1, repeats) {
+            sleepMicroseconds(10_000)
             guard mayWrite() else { return false }
-            guard bytes.withUnsafeMutableBytes({ write(endpoint.service, endpoint.chip, 0x51, $0.baseAddress!, UInt32(packet.count)) }) == 0 else { return false }
+            guard bytes.withUnsafeMutableBytes({ performWrite(endpoint.service, endpoint.chip, 0x51, $0.baseAddress!, UInt32(packet.count)) }) == 0 else { return false }
         }
         return true
     }
+
     func read(_ endpoint: BrightnessDDCEndpoint, command: BrightnessDDC.Command = .brightness, attempts: Int = 5) -> BrightnessDDC.Reading? {
+        let lock = endpointLock(for: endpoint.identity)
         lock.lock(); defer { lock.unlock() }
-        guard let read = function("IOAVServiceReadI2C") else { return nil }
         for _ in 0..<attempts {
-            guard write(endpoint, packet: BrightnessDDC.request(command)) else { usleep(20_000); continue }
-            usleep(endpoint.chip == 0xB7 ? 100_000 : 50_000)
+            // Get VCP read request is sent ONCE per attempt (never double-sent like unacknowledged Set VCP writes).
+            guard sendPacket(endpoint, packet: BrightnessDDC.request(command), repeats: 1, while: { true }) else {
+                sleepMicroseconds(20_000)
+                continue
+            }
+            sleepMicroseconds(endpoint.chip == 0xB7 ? 100_000 : 50_000)
             var reply = [UInt8](repeating: 0, count: 11)
-            if reply.withUnsafeMutableBytes({ read(endpoint.service, endpoint.chip, 0, $0.baseAddress!, 11) }) == 0,
+            if reply.withUnsafeMutableBytes({ performRead(endpoint.service, endpoint.chip, 0, $0.baseAddress!, 11) }) == 0,
                let reading = BrightnessDDC.parse(reply, command: command) { return reading }
-            usleep(20_000)
+            sleepMicroseconds(20_000)
         }
         return nil
+    }
+
+    /// Caches the matched endpoint for DPMS power transitions so termination (`shutdownAndRestore`)
+    /// reuses the verified IOAV service without scanning IOKit EDID 6 times on the main thread.
+    func powerLink(
+        for endpoint: BrightnessDDCEndpoint,
+        now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) -> DisplayBacklightLink {
+        let identity = endpoint.identity
+        let cached = OSAllocatedUnfairLock(initialState: (endpoint: endpoint, verifiedAt: -Double.infinity))
+
+        @Sendable func resolve(forceVerify: Bool = false) -> BrightnessDDCEndpoint? {
+            let currentNow = now()
+            let snapshot = cached.withLock { $0 }
+            if !forceVerify, currentNow - snapshot.verifiedAt < 1.0 {
+                return snapshot.endpoint
+            }
+            if self.matches(snapshot.endpoint) {
+                cached.withLock { $0.verifiedAt = currentNow }
+                return snapshot.endpoint
+            }
+            guard let fresh = self.endpoint(identity) else {
+                cached.withLock { $0.verifiedAt = -Double.infinity }
+                return nil
+            }
+            cached.withLock { $0 = (fresh, currentNow) }
+            return fresh
+        }
+
+        return DisplayBacklightLink(
+            identity: identity,
+            isCurrent: { resolve() != nil },
+            read: {
+                if let current = resolve(), let val = self.read(current, command: .powerMode, attempts: 2)?.current {
+                    return val
+                }
+                guard let refreshed = resolve(forceVerify: true) else { return nil }
+                return self.read(refreshed, command: .powerMode, attempts: 1)?.current
+            },
+            write: { value in
+                let packet = BrightnessDDC.write(value, command: .powerMode)
+                if let current = resolve(), self.write(current, packet: packet) {
+                    return true
+                }
+                guard let refreshed = resolve(forceVerify: true) else { return false }
+                return self.write(refreshed, packet: packet)
+            }
+        )
     }
 }
 
@@ -384,15 +486,8 @@ actor SystemBrightnessHardware: BrightnessHardware {
     private func readBrightness(_ endpoint: Endpoint) -> BrightnessDDC.Reading? {
         transport.read(endpoint)
     }
+
     private func powerLink(_ endpoint: Endpoint) -> DisplayBacklightLink {
-        let transport = self.transport
-        let identity = endpoint.identity
-        return DisplayBacklightLink(identity: identity,
-            isCurrent: { transport.endpoint(identity) != nil },
-            read: { transport.endpoint(identity).flatMap { transport.read($0, command: .powerMode, attempts: 2)?.current } },
-            write: { value in
-                guard let current = transport.endpoint(identity) else { return false }
-                return transport.write(current, packet: BrightnessDDC.write(value, command: .powerMode))
-            })
+        transport.powerLink(for: endpoint)
     }
 }

@@ -28,9 +28,34 @@ final class ProcessSamplerTests: XCTestCase {
         _ = sampler.sample(.memory)
         let result = sampler.sample(.memory)
         XCTAssertTrue(result.available)
-        XCTAssertEqual(result.items.count, 5)
-        // 当前测试进程至少占用数十 MB；榜单必须能反映内存占用最大的真实进程，而不是只看低 PID。
-        XCTAssertFalse(result.items.allSatisfy { ($0.pid ?? 0) < 400 }, "榜单全部来自低 PID，说明进程列表被截断")
+        XCTAssertGreaterThanOrEqual(result.items.count, 1)
+        XCTAssertLessThanOrEqual(result.items.count, 5)
+        XCTAssertTrue(result.items.allSatisfy { ($0.pid ?? 0) > 0 && !$0.name.isEmpty && !$0.valueString.isEmpty })
+        XCTAssertTrue(ProcessSampler.listPIDs().contains(getpid()), "完整进程列表必须覆盖当前测试宿主进程")
+
+        // 确定性验证高 PID 大内存进程不会被低 PID 截断（兼容冷启动 CI VM 低 PID 环境）
+        var synthetic = (1...200).map { pid in
+            ProcessSampler.Counter(
+                pid: Int32(pid),
+                started: 1,
+                cpuTicks: 0,
+                footprint: 1_048_576,
+                readBytes: 0,
+                writeBytes: 0
+            )
+        }
+        synthetic.append(contentsOf: (50_001...50_005).map { pid in
+            ProcessSampler.Counter(
+                pid: Int32(pid),
+                started: 1,
+                cpuTicks: 0,
+                footprint: UInt64(pid) * 1_048_576,
+                readBytes: 0,
+                writeBytes: 0
+            )
+        })
+        let top5 = Array(ProcessSampler.rank(synthetic, previous: [:], elapsed: 1.0, mode: .memory).prefix(5))
+        XCTAssertEqual(top5.map(\.pid), [50_005, 50_004, 50_003, 50_002, 50_001])
     }
 
     func testSampleOverviewComputesBothCPUAndMemoryTopProcesses() {
