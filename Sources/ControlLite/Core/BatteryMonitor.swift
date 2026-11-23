@@ -10,6 +10,8 @@ struct BatterySnapshot: Sendable {
     var healthPercentage: Int?
     var cycleCount: Int?
     var temperature: Double?
+    var adapterWatts: Int?
+    var batteryPowerWatts: Double?
     var summary: String {
         guard available else { return "无内置电池" }
         let value = percentage.map { "\($0)%" } ?? "不可用"
@@ -28,6 +30,28 @@ final class BatteryMonitor {
     static func decodeTemperature(_ raw: Int) -> Double? {
         let value = Double(raw) / 100.0
         return value.isFinite && value > 5 && value < 95 ? value : nil
+    }
+    static func decodePowerDetails(from properties: [String: Any]) -> (adapterWatts: Int?, batteryPowerWatts: Double?) {
+        let adapterWatts: Int?
+        if let adapter = properties["AdapterDetails"] as? [String: Any],
+           let rawWatts = (adapter["Watts"] as? NSNumber)?.intValue,
+           (1...500).contains(rawWatts) {
+            adapterWatts = rawWatts
+        } else {
+            adapterWatts = nil
+        }
+
+        let batteryPowerWatts: Double?
+        if let voltageMV = (properties["Voltage"] as? NSNumber)?.int64Value,
+           let amperageNumber = properties["InstantAmperage"] as? NSNumber,
+           voltageMV > 0, voltageMV <= 60_000 {
+            let amperageMA = Int64(bitPattern: amperageNumber.uint64Value)
+            let watts = Double(voltageMV) * Double(amperageMA) / 1_000_000.0
+            batteryPowerWatts = (watts.isFinite && abs(watts) <= 300.0) ? watts : nil
+        } else {
+            batteryPowerWatts = nil
+        }
+        return (adapterWatts, batteryPowerWatts)
     }
     func sample(fallbackTemperature: () -> Double? = { nil }) -> BatterySnapshot {
         let now = ProcessInfo.processInfo.systemUptime
@@ -51,17 +75,24 @@ final class BatteryMonitor {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
         if service != 0 {
             defer { IOObjectRelease(service) }
-            func integer(_ key: String) -> Int? {
-                (IORegistryEntryCreateCFProperty(service, key as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber)?.intValue
-            }
-            let batteryData = IORegistryEntryCreateCFProperty(service, "BatteryData" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? [String: Any]
-            result.cycleCount = integer("CycleCount")
-            if let maximum = integer("AppleRawMaxCapacity") ?? batteryData?["NominalChargeCapacity"] as? Int,
-               let design = integer("DesignCapacity") ?? batteryData?["DesignCapacity"] as? Int, design > 0 {
-                result.healthPercentage = min(100, max(0, Int(Double(maximum) / Double(design) * 100)))
-            }
-            if let rawTemp = integer("Temperature") ?? integer("VirtualTemperature") {
-                result.temperature = Self.decodeTemperature(rawTemp)
+            var rawProps: Unmanaged<CFMutableDictionary>?
+            if IORegistryEntryCreateCFProperties(service, &rawProps, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+               let dict = rawProps?.takeRetainedValue() as? [String: Any] {
+                func integer(_ key: String) -> Int? {
+                    (dict[key] as? NSNumber)?.intValue
+                }
+                let batteryData = dict["BatteryData"] as? [String: Any]
+                result.cycleCount = integer("CycleCount")
+                if let maximum = integer("AppleRawMaxCapacity") ?? (batteryData?["NominalChargeCapacity"] as? NSNumber)?.intValue,
+                   let design = integer("DesignCapacity") ?? (batteryData?["DesignCapacity"] as? NSNumber)?.intValue, design > 0 {
+                    result.healthPercentage = min(100, max(0, Int(Double(maximum) / Double(design) * 100)))
+                }
+                if let rawTemp = integer("Temperature") ?? integer("VirtualTemperature") {
+                    result.temperature = Self.decodeTemperature(rawTemp)
+                }
+                let powerDetails = Self.decodePowerDetails(from: dict)
+                result.adapterWatts = powerDetails.adapterWatts
+                result.batteryPowerWatts = powerDetails.batteryPowerWatts
             }
         }
         if result.available && result.temperature == nil {
