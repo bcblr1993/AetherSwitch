@@ -226,6 +226,24 @@ final class MenuBarStatusView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); rasterCache = nil; cachedLayerImage = nil; needsDisplay = true }
 
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? { L10n.string("menubar.accessibility.label") }
+    override func accessibilityValue() -> Any? {
+        let activeMetrics = preferences.order.filter(visible.contains)
+        guard !activeMetrics.isEmpty else { return L10n.string("menubar.accessibility.empty") }
+        let parts: [String] = activeMetrics.map { metric in
+            if metric == .network {
+                return "\(L10n.string("network.download_short")) \(metrics.menuBarDownloadFormatted), \(L10n.string("network.upload_short")) \(metrics.menuBarUploadFormatted)"
+            }
+            let percent = Self.percent(for: metric, metrics: metrics)
+            let unit = metric == .temperature ? "°C" : "%"
+            let formatted = percent.map { "\(Int($0.rounded(.toNearestOrEven)))\(unit)" } ?? L10n.string("card.unavailable")
+            return "\(metric.title) \(formatted)"
+        }
+        return parts.joined(separator: ", ")
+    }
+
     private func text(_ value: String, rect: NSRect, size: CGFloat, weight: NSFont.Weight, color: NSColor, alignment: MenuBarAlignment = .left) {
         let style = Self.textStyles[alignment]!
         (value as NSString).draw(in: rect, withAttributes: [.font: Self.font(size: size, weight: weight, preferences: preferences), .foregroundColor: color, .paragraphStyle: style])

@@ -464,7 +464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         if styleChanged {
             button.imagePosition = .imageLeading
-            button.toolTip = "AetherSwitch · 点击查看系统状态"
+            button.toolTip = L10n.string("menubar.tooltip")
             appliedMenuBarStyle = style
         }
         ensureStatusBarWindowInteractable()
@@ -514,11 +514,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func showContextMenu(_ sender: NSStatusBarButton) {
         LoginItemManager.shared.refresh()
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "AetherSwitch v\(UpdateManager.shared.currentVersion)", action: #selector(showAboutAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.format("menu.version_format", UpdateManager.shared.currentVersion), action: #selector(showAboutAction), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
         // 菜单栏样式子菜单
-        let styleParent = NSMenuItem(title: "菜单栏显示样式", action: nil, keyEquivalent: "")
+        let styleParent = NSMenuItem(title: L10n.string("menu.style"), action: nil, keyEquivalent: "")
         let styleSubmenu = NSMenu()
         for style in MenuBarStyle.allCases {
             let item = NSMenuItem(title: style.title, action: #selector(changeMenuBarStyleAction(_:)), keyEquivalent: "")
@@ -528,31 +528,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         styleParent.submenu = styleSubmenu
         menu.addItem(styleParent)
-        menu.addItem(NSMenuItem(title: "菜单栏外观设置…", action: #selector(showMenuBarSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.appearance_settings"), action: #selector(showMenuBarSettings), keyEquivalent: ","))
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "关于 AetherSwitch...", action: #selector(showAboutAction), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "访问官方网站 (aethernative.com) ↗", action: #selector(openWebsiteAction), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "GitHub 开源仓库 (bcblr1993) ↗", action: #selector(openGitHubAction), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "问题反馈与建议 ↗", action: #selector(openIssuesAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.about"), action: #selector(showAboutAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.website"), action: #selector(openWebsiteAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.github"), action: #selector(openGitHubAction), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.issues"), action: #selector(openIssuesAction), keyEquivalent: ""))
 
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: UpdateManager.shared.checkTitle + "…", action: #selector(checkUpdateAction), keyEquivalent: "u"))
-        let autoCheck = NSMenuItem(title: "自动检查更新", action: #selector(toggleAutoCheckAction), keyEquivalent: "")
+        let updateTitle = UpdateManager.shared.availableVersion.map { L10n.format("footer.update_to_format", $0) } ?? L10n.string("footer.check_updates")
+        menu.addItem(NSMenuItem(title: updateTitle + "…", action: #selector(checkUpdateAction), keyEquivalent: "u"))
+        let autoCheck = NSMenuItem(title: L10n.string("menu.auto_check_updates"), action: #selector(toggleAutoCheckAction), keyEquivalent: "")
         autoCheck.state = UpdateManager.shared.automaticallyChecks ? .on : .off
         autoCheck.isEnabled = UpdateManager.shared.isRunning
         menu.addItem(autoCheck)
-        let loginItem = NSMenuItem(title: "开机自启动", action: #selector(toggleLoginItemAction), keyEquivalent: "")
+        let loginItem = NSMenuItem(title: L10n.string("menu.login_item"), action: #selector(toggleLoginItemAction), keyEquivalent: "")
         let loginStatus = LoginItemManager.shared.snapshot.status
         loginItem.state = loginStatus == .requiresApproval ? .mixed : (loginStatus.isEnabled ? .on : .off)
         loginItem.isEnabled = loginStatus != .unavailable
         menu.addItem(loginItem)
         if loginStatus == .requiresApproval {
-            menu.addItem(NSMenuItem(title: "在系统设置中允许自启动…", action: #selector(openLoginItemSettingsAction), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: L10n.string("menu.login_item_approve"), action: #selector(openLoginItemSettingsAction), keyEquivalent: ""))
         }
-        menu.addItem(NSMenuItem(title: "刷新数据", action: #selector(refreshAction), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.refresh"), action: #selector(refreshAction), keyEquivalent: "r"))
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出 AetherSwitch", action: #selector(quitAction), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.quit"), action: #selector(quitAction), keyEquivalent: "q"))
 
         if let onShowContextMenu {
             onShowContextMenu(menu)
@@ -615,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         manager.setEnabled(manager.snapshot.status == .disabled)
         if let error = manager.snapshot.error {
             let alert = NSAlert()
-            alert.messageText = "开机自启动设置失败"
+            alert.messageText = L10n.string("alert.login_item_failed")
             alert.informativeText = error
             alert.runModal()
         }

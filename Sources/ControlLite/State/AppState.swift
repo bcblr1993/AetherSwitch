@@ -12,12 +12,36 @@ public enum MenuBarStyle: String, CaseIterable, Codable {
 
     public var title: String {
         switch self {
-        case .statsColumns: return "Stats 状态栏 (CPU/GPU/RAM/SSD/温度/网速)"
-        case .compact: return "紧凑单行 (图标 + 内存 + 网速)"
-        case .iconOnly: return "仅应用图标 (极简)"
-        case .iconAndSpeed: return "图标 + 实时网速"
-        case .iconAndRAM: return "图标 + 内存占用"
-        case .iconAndTemperature: return "图标 + 实时温度"
+        case .statsColumns: return L10n.string("menubar.style.stats_columns")
+        case .compact: return L10n.string("menubar.style.compact")
+        case .iconOnly: return L10n.string("menubar.style.icon_only")
+        case .iconAndSpeed: return L10n.string("menubar.style.icon_and_speed")
+        case .iconAndRAM: return L10n.string("menubar.style.icon_and_ram")
+        case .iconAndTemperature: return L10n.string("menubar.style.icon_and_temperature")
+        }
+    }
+}
+
+/// 限时常亮预设时长（预留给内核 `IOPMAssertionCreateWithDescription` 定时释放与低电量自动释放，rawValue 与 Core 层 `KeepAwakeDuration` 1:1 对齐）。
+public enum KeepAwakePreset: Int, CaseIterable, Codable, Sendable {
+    case indefinite = 0
+    case thirtyMinutes = 1800
+    case oneHour = 3600
+    case twoHours = 7200
+
+    static let defaultsKey = "keepAwakeDuration"
+    static let autoReleaseDefaultsKey = "keepAwakeAutoReleaseLowBattery"
+
+    public var seconds: TimeInterval? {
+        self == .indefinite ? nil : TimeInterval(rawValue)
+    }
+
+    public var title: String {
+        switch self {
+        case .indefinite: return L10n.string("keep_awake.duration.indefinite")
+        case .thirtyMinutes: return L10n.string("keep_awake.duration.30m")
+        case .oneHour: return L10n.string("keep_awake.duration.1h")
+        case .twoHours: return L10n.string("keep_awake.duration.2h")
         }
     }
 }
@@ -134,6 +158,20 @@ public final class AppState: ObservableObject {
 
     @Published public internal(set) var switchError: String?
     @Published public private(set) var pendingSwitches: Set<Int> = []
+    @Published public var keepAwakeDuration: KeepAwakePreset {
+        didSet {
+            guard !isInitializing, oldValue != keepAwakeDuration else { return }
+            defaults.set(keepAwakeDuration.rawValue, forKey: KeepAwakePreset.defaultsKey)
+        }
+    }
+    @Published public var keepAwakeAutoReleaseOnLowBattery: Bool {
+        didSet {
+            guard !isInitializing, oldValue != keepAwakeAutoReleaseOnLowBattery else { return }
+            defaults.set(keepAwakeAutoReleaseOnLowBattery, forKey: KeepAwakePreset.autoReleaseDefaultsKey)
+        }
+    }
+    /// 内核定时常亮与低电量自动释放的集成回调钩子（合并 core-v111 后可直接接通 `IOPMAssertion` 超时与电量监控）。
+    public var onKeepAwakeConfigure: ((_ active: Bool, _ duration: KeepAwakePreset, _ autoReleaseLowBattery: Bool) -> Bool)?
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
     private var needsResample = false
@@ -171,13 +209,15 @@ public final class AppState: ObservableObject {
         self.menuBarMetrics = MenuBarMetric.decode(defaults.stringArray(forKey: MenuBarMetric.defaultsKey))
         let savedInterval = defaults.double(forKey: "backgroundSamplingInterval")
         self.backgroundInterval = [1.0, 2.0, 5.0, 10.0].contains(savedInterval) ? savedInterval : 5.0
+        self.keepAwakeDuration = KeepAwakePreset(rawValue: defaults.integer(forKey: KeepAwakePreset.defaultsKey)) ?? .indefinite
+        self.keepAwakeAutoReleaseOnLowBattery = defaults.bool(forKey: KeepAwakePreset.autoReleaseDefaultsKey)
         self.isInitializing = false
 
         guard startMonitoring else { return }
 
         if defaults === UserDefaults.standard {
             let restoredKeepAwake = switchMgr.restoreKeepAwakePreference()
-            if !restoredKeepAwake { switchError = "无法恢复保持常亮，请重新开启。" }
+            if !restoredKeepAwake { switchError = L10n.string("error.keep_awake_restore") }
             self.metrics = monitor.sample(fullMetrics: false, visibleMetrics: SamplingPlan.visible(style: resolvedStyle, metrics: menuBarMetrics))
             self.switches = switchMgr.getCurrentStates()
             wakeSubscription = NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
@@ -267,10 +307,42 @@ public final class AppState: ObservableObject {
     public func toggleKeepAwake() {
         switchError = nil
         switchRevision &+= 1
-        let expected = !switchMgr.getCurrentStates().isKeepAwakeActive
-        let active = switchMgr.toggleKeepAwake()
+        let expected = !switches.isKeepAwakeActive
+        let active: Bool
+        if let onKeepAwakeConfigure {
+            active = onKeepAwakeConfigure(expected, keepAwakeDuration, keepAwakeAutoReleaseOnLowBattery)
+        } else {
+            let coreExpected = !switchMgr.getCurrentStates().isKeepAwakeActive
+            active = switchMgr.toggleKeepAwake()
+            self.switches.isKeepAwakeActive = active
+            if active != coreExpected { switchError = L10n.string("error.keep_awake_toggle") }
+            return
+        }
         self.switches.isKeepAwakeActive = active
-        if active != expected { switchError = "无法设置保持常亮，请稍后重试。" }
+        if active != expected { switchError = L10n.string("error.keep_awake_toggle") }
+    }
+
+    public func selectKeepAwakeDuration(_ duration: KeepAwakePreset, activateIfNeeded: Bool = true) {
+        keepAwakeDuration = duration
+        guard activateIfNeeded || switches.isKeepAwakeActive else { return }
+        switchError = nil
+        switchRevision &+= 1
+        if let onKeepAwakeConfigure {
+            let active = onKeepAwakeConfigure(true, duration, keepAwakeAutoReleaseOnLowBattery)
+            self.switches.isKeepAwakeActive = active
+            if !active { switchError = L10n.string("error.keep_awake_toggle") }
+        } else if !switches.isKeepAwakeActive {
+            toggleKeepAwake()
+        }
+    }
+
+    public func setKeepAwakeAutoReleaseOnLowBattery(_ enabled: Bool) {
+        keepAwakeAutoReleaseOnLowBattery = enabled
+        guard switches.isKeepAwakeActive, let onKeepAwakeConfigure else { return }
+        switchError = nil
+        switchRevision &+= 1
+        let active = onKeepAwakeConfigure(true, keepAwakeDuration, enabled)
+        self.switches.isKeepAwakeActive = active
     }
 
     public func toggleHideDesktop() {
@@ -292,7 +364,7 @@ public final class AppState: ObservableObject {
             self.switches[keyPath: keyPath] = value
             switchRevision &+= 1
             pendingSwitches.remove(index)
-            if value != expected { switchError = "无法修改 Finder 设置，请稍后重试。" }
+            if value != expected { switchError = L10n.string("error.finder_toggle") }
         }
     }
 
@@ -310,7 +382,7 @@ public final class AppState: ObservableObject {
             switchRevision &+= 1
             pendingSwitches.remove(3)
             if isDark != expected {
-                self.switchError = "无法切换外观。请在系统设置的隐私与安全性中允许 AetherSwitch 控制系统事件。"
+                self.switchError = L10n.string("error.dark_mode_toggle")
             }
         }
     }
