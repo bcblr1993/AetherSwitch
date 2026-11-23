@@ -49,10 +49,12 @@ final class NetworkMonitor {
         self.selection = defaults.string(forKey: "networkInterface") ?? "auto"
     }
 
-    func select(_ interface: String) {
+    func select(_ interface: String, persist: Bool = true) {
         guard selection != interface else { return }
         selection = interface
-        defaults.set(interface, forKey: "networkInterface")
+        if persist {
+            defaults.set(interface, forKey: "networkInterface")
+        }
         active = ""; previous = nil; timestamp = 0
         downloaded = 0; uploaded = 0
         cachedPrimary = ""; primaryTimestamp = -Double.infinity
