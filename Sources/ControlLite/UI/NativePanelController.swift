@@ -18,6 +18,7 @@ class DashboardCardView: NSView {
     override var isFlipped: Bool { true }
     /// 详细信息列表等不需要卡片底的视图关闭此项。
     var drawsCard: Bool { true }
+    private(set) var drawCountForTesting: Int = 0
 
     // AppKit 会给较大的图层（详情页图表与列表）自动开启 drawsAsynchronously，
     // 首次绘制时为此建立 IOSurface/Metal 渲染资源，物理内存峰值瞬间多出 ~12MB。
@@ -37,6 +38,7 @@ class DashboardCardView: NSView {
         context.translateBy(x: 0, y: -bounds.height)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        drawCountForTesting &+= 1
         Palette.drawingAppearance(for: effectiveAppearance).performAsCurrentDrawingAppearance { draw(bounds) }
         NSGraphicsContext.restoreGraphicsState()
         layer.contentsScale = scale
@@ -98,16 +100,36 @@ class DashboardCardView: NSView {
 private final class DashboardMetricView: DashboardCardView {
     private static let titles = ["CPU", "GPU", "内存", "磁盘"]
     private static let symbols = ["cpu", "square.3.layers.3d", "memorychip", "internaldrive"]
+    private struct RenderKey: Equatable {
+        let quantizedPercent: Int
+        let unavailable: Bool
+        let detail: String
+    }
     let kind: Int
-    var metrics: SystemMetrics { didSet { needsDisplay = true } }
+    private var lastRenderKey: RenderKey?
+    var metrics: SystemMetrics {
+        didSet {
+            let key = makeRenderKey()
+            guard key != lastRenderKey else { return }
+            lastRenderKey = key
+            needsDisplay = true
+        }
+    }
     var onSelect: (() -> Void)?
     init(kind: Int, metrics: SystemMetrics, onSelect: (() -> Void)? = nil) {
         self.kind = kind
         self.metrics = metrics
         self.onSelect = onSelect
         super.init(frame: .zero)
+        self.lastRenderKey = makeRenderKey()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func makeRenderKey() -> RenderKey {
+        let r = reading
+        let quantized = r.percent.isFinite ? Int((min(100, max(0, r.percent)) * 10).rounded()) : -1
+        return RenderKey(quantizedPercent: quantized, unavailable: r.unavailable, detail: r.detail)
+    }
 
     override func resetCursorRects() {
         super.resetCursorRects()
@@ -165,11 +187,132 @@ private final class DashboardMetricView: DashboardCardView {
     }
 }
 
+struct SystemStatusStripSummary: Equatable {
+    let thermalDotLevel: LoadLevel
+    let thermalText: String
+    let fanText: String?
+    let swapText: String
+    let uptimeText: String
+
+    var items: [String] {
+        var result = [thermalText]
+        if let fanText, !fanText.isEmpty {
+            result.append(fanText)
+        }
+        result.append(swapText)
+        result.append(uptimeText)
+        return result
+    }
+
+    var displayLine: String {
+        items.joined(separator: " · ")
+    }
+
+    static func formatFanRPMs(_ fanRPMs: [Int]) -> String? {
+        guard !fanRPMs.isEmpty else { return nil }
+        if fanRPMs.count == 1 {
+            return "风扇 \(fanRPMs[0]) RPM"
+        }
+        return "风扇 " + fanRPMs.map(String.init).joined(separator: "/") + " RPM"
+    }
+
+    /// 预留 `fanRPMs` 参数供集成阶段接入 `metrics.fanRPMs`（无风扇机型传空数组自动隐藏）。
+    static func make(from metrics: SystemMetrics, fanRPMs: [Int] = []) -> SystemStatusStripSummary {
+        let thermalLevel: LoadLevel
+        switch metrics.thermalStateCode {
+        case 1: thermalLevel = .moderate
+        case 2: thermalLevel = .elevated
+        case 3...: thermalLevel = .critical
+        default:
+            if let temp = metrics.cpuTemperature, temp.isFinite, temp > 0 {
+                thermalLevel = LoadLevel(temperatureCelsius: temp)
+            } else {
+                thermalLevel = .low
+            }
+        }
+        let thermalLabel = metrics.thermalStateLevel.isEmpty ? "正常" : metrics.thermalStateLevel
+        let thermalText: String
+        if let temp = metrics.cpuTemperature, temp.isFinite, temp > 0 {
+            thermalText = String(format: "温控%@ %.0f°C", thermalLabel, temp)
+        } else {
+            thermalText = "温控\(thermalLabel)"
+        }
+        let swapUsedGB = max(0, metrics.ramSwapUsedMB) / 1024.0
+        let swapText = swapUsedGB >= 0.05 ? String(format: "交换 %.1fG", swapUsedGB) : "交换 0G"
+        let uptime = metrics.uptimeString.isEmpty ? "—" : metrics.uptimeString
+        return SystemStatusStripSummary(
+            thermalDotLevel: thermalLevel,
+            thermalText: thermalText,
+            fanText: formatFanRPMs(fanRPMs),
+            swapText: swapText,
+            uptimeText: "运行 \(uptime)"
+        )
+    }
+}
+
+private final class DashboardSystemStripView: DashboardCardView {
+    private static let stripFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+    private var summary: SystemStatusStripSummary
+    var metrics: SystemMetrics {
+        didSet {
+            let next = SystemStatusStripSummary.make(from: metrics)
+            guard next != summary else { return }
+            summary = next
+            needsDisplay = true
+        }
+    }
+    var onSelect: (() -> Void)?
+
+    init(metrics: SystemMetrics, onSelect: (() -> Void)? = nil) {
+        self.metrics = metrics
+        self.summary = SystemStatusStripSummary.make(from: metrics)
+        self.onSelect = onSelect
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if onSelect != nil { addCursorRect(bounds, cursor: .pointingHand) }
+    }
+    override func mouseDown(with event: NSEvent) {
+        if let onSelect { onSelect() } else { super.mouseDown(with: event) }
+    }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .staticText }
+    override func accessibilityLabel() -> String? { "系统状态" }
+    override func accessibilityValue() -> Any? { summary.displayLine }
+
+    override func draw(_ dirtyRect: NSRect) {
+        autoreleasepool {
+            super.draw(dirtyRect)
+            let dotColor = Palette.color(for: summary.thermalDotLevel)
+            dotColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 10, y: (bounds.height - 6) / 2, width: 6, height: 6)).fill()
+            text(
+                summary.displayLine,
+                in: NSRect(x: 22, y: (bounds.height - 14) / 2, width: bounds.width - 30, height: 14),
+                font: Self.stripFont,
+                color: .secondaryLabelColor
+            )
+        }
+    }
+}
+
 private final class DashboardNetworkView: DashboardCardView {
-    var metrics: SystemMetrics { didSet { needsDisplay = true } }
+    private var lastRenderKey: [String] = []
+    var metrics: SystemMetrics {
+        didSet {
+            let key = [metrics.menuBarDownloadFormatted, metrics.menuBarUploadFormatted]
+            guard key != lastRenderKey else { return }
+            lastRenderKey = key
+            needsDisplay = true
+        }
+    }
     var onSelect: (() -> Void)?
     init(metrics: SystemMetrics, onSelect: (() -> Void)? = nil) {
         self.metrics = metrics
+        self.lastRenderKey = [metrics.menuBarDownloadFormatted, metrics.menuBarUploadFormatted]
         self.onSelect = onSelect
         super.init(frame: .zero)
     }
@@ -209,12 +352,39 @@ private final class DashboardNetworkView: DashboardCardView {
 }
 
 private final class DashboardProcessesView: DashboardCardView {
-    var metrics: SystemMetrics { didSet { needsDisplay = true } }
+    private struct ItemKey: Equatable {
+        let name: String
+        let value: String
+    }
+    private struct RenderKey: Equatable {
+        let cpu: [ItemKey]
+        let ram: [ItemKey]
+        let pending: Bool
+        let available: Bool
+    }
+    private var lastRenderKey: RenderKey?
+    var metrics: SystemMetrics {
+        didSet {
+            let key = makeRenderKey()
+            guard key != lastRenderKey else { return }
+            lastRenderKey = key
+            needsDisplay = true
+        }
+    }
     var onSelectTab: ((String) -> Void)?
     init(metrics: SystemMetrics, onSelectTab: ((String) -> Void)? = nil) {
         self.metrics = metrics
         self.onSelectTab = onSelectTab
         super.init(frame: .zero)
+        self.lastRenderKey = makeRenderKey()
+    }
+    private func makeRenderKey() -> RenderKey {
+        RenderKey(
+            cpu: metrics.cpuTopProcesses.prefix(3).map { ItemKey(name: $0.name, value: $0.valueString) },
+            ram: metrics.ramTopProcesses.prefix(3).map { ItemKey(name: $0.name, value: $0.valueString) },
+            pending: metrics.topProcessesPending,
+            available: metrics.topProcessesAvailable
+        )
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func resetCursorRects() {
@@ -282,7 +452,7 @@ private final class DashboardSwitchView: DashboardCardView {
     ]
     let index: Int
     let control = NSSwitch()
-    var active = false { didSet { needsDisplay = true } }
+    var active = false { didSet { guard oldValue != active else { return }; needsDisplay = true } }
     init(index: Int) {
         self.index = index
         super.init(frame: .zero)
@@ -307,14 +477,15 @@ private final class DashboardSwitchView: DashboardCardView {
 
 /// A single drawing surface keeps the live charts inexpensive while the popover is open.
 final class DetailVisualView: DashboardCardView {
+    private var suppressHistoryAppend = false
     var kind: String { didSet {
         // 离开网络页期间不会累积采样；回来时若沿用旧数组，几分钟前的旧点会与新点拼成一条看似连续的曲线。
-        if oldValue != kind {
-            downloadHistory = []; uploadHistory = []
-            if kind == "network" {
-                downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
-                uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
-            }
+        guard oldValue != kind else { return }
+        downloadHistory = []
+        uploadHistory = []
+        if kind == "network" {
+            downloadHistory = [metrics.netDownloadBytesSec]
+            uploadHistory = [metrics.netUploadBytesSec]
         }
         needsDisplay = true
     } }
@@ -322,12 +493,12 @@ final class DetailVisualView: DashboardCardView {
     private var downloadHistory: [Double] = []
     private var uploadHistory: [Double] = []
     var metrics: SystemMetrics { didSet {
-        if kind == "network" {
+        if kind == "network" && !suppressHistoryAppend {
             let interfaceChanged = oldValue.network.selection != metrics.network.selection
                 || (!oldValue.network.interface.isEmpty && !metrics.network.interface.isEmpty && oldValue.network.interface != metrics.network.interface)
             if interfaceChanged {
-                downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
-                uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+                downloadHistory = [metrics.netDownloadBytesSec]
+                uploadHistory = [metrics.netUploadBytesSec]
             } else {
                 downloadHistory.append(metrics.netDownloadBytesSec)
                 uploadHistory.append(metrics.netUploadBytesSec)
@@ -337,11 +508,24 @@ final class DetailVisualView: DashboardCardView {
         }
         needsDisplay = true
     } }
+
+    /// 供页面重建（切页/关闭关于页）同步标签与当前快照，不向网络曲线重复追加采样点。
+    func configure(kind newKind: String, metrics newMetrics: SystemMetrics) {
+        suppressHistoryAppend = true
+        defer { suppressHistoryAppend = false }
+        let kindChanged = kind != newKind
+        self.metrics = newMetrics
+        if kindChanged {
+            self.kind = newKind
+        }
+    }
+
     init(kind: String, metrics: SystemMetrics) {
-        self.kind = kind; self.metrics = metrics
+        self.kind = kind
+        self.metrics = metrics
         if kind == "network" {
-            downloadHistory = [metrics.netDownloadBytesSec, metrics.netDownloadBytesSec]
-            uploadHistory = [metrics.netUploadBytesSec, metrics.netUploadBytesSec]
+            downloadHistory = [metrics.netDownloadBytesSec]
+            uploadHistory = [metrics.netUploadBytesSec]
         }
         super.init(frame: .zero)
     }
@@ -593,17 +777,29 @@ final class DetailVisualView: DashboardCardView {
 
 private final class DetailRowsView: DashboardCardView {
     override var drawsCard: Bool { false }
-    var kind: String { didSet { updateAccessibility(); needsDisplay = true } }
-    var metrics: SystemMetrics { didSet { updateAccessibility(); needsDisplay = true } }
-    init(kind: String, metrics: SystemMetrics) { self.kind = kind; self.metrics = metrics; super.init(frame: .zero); updateAccessibility() }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    var rowCount: Int { entries.count }
-    var idealHeight: CGFloat { 24 + CGFloat(rowCount) * 22 }
-    private func updateAccessibility() {
-        setAccessibilityElement(true)
-        setAccessibilityLabel(entries.map { "\($0.0) \($0.1)" }.joined(separator: ", "))
+    private var cachedEntries: [(String, String)] = []
+    var kind: String { didSet { refreshEntriesIfNeeded() } }
+    var metrics: SystemMetrics { didSet { refreshEntriesIfNeeded() } }
+    init(kind: String, metrics: SystemMetrics) {
+        self.kind = kind
+        self.metrics = metrics
+        super.init(frame: .zero)
+        refreshEntriesIfNeeded(isInitial: true)
     }
-    private var entries: [(String, String)] {
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    var rowCount: Int { cachedEntries.count }
+    var idealHeight: CGFloat { 24 + CGFloat(rowCount) * 22 }
+    private func refreshEntriesIfNeeded(isInitial: Bool = false) {
+        let next = computeEntries()
+        guard isInitial || !next.elementsEqual(cachedEntries, by: { $0.0 == $1.0 && $0.1 == $1.1 }) else { return }
+        cachedEntries = next
+        setAccessibilityElement(true)
+        setAccessibilityLabel(next.map { "\($0.0) \($0.1)" }.joined(separator: ", "))
+        if !isInitial {
+            needsDisplay = true
+        }
+    }
+    private func computeEntries() -> [(String, String)] {
         switch kind {
         case "cpu": return [
             ("型号", metrics.cpuModelName),
@@ -682,7 +878,7 @@ private final class DetailRowsView: DashboardCardView {
         text("详细信息", in: NSRect(x: 2, y: 0, width: bounds.width - 4, height: 15), font: Palette.captionStrong, color: .secondaryLabelColor)
         Palette.cardStroke.setStroke()
         let line = NSBezierPath(); line.move(to: NSPoint(x: 0, y: 19.5)); line.line(to: NSPoint(x: bounds.width, y: 19.5)); line.stroke()
-        for (index, entry) in entries.enumerated() {
+        for (index, entry) in cachedEntries.enumerated() {
             let y = CGFloat(index) * 22 + 25
             text(entry.0, in: NSRect(x: 2, y: y, width: 130, height: 17), font: Palette.body, color: .secondaryLabelColor)
             text(entry.1, in: NSRect(x: 134, y: y, width: bounds.width - 136, height: 17), font: Palette.valueSmall, alignment: .right)
@@ -692,7 +888,19 @@ private final class DetailRowsView: DashboardCardView {
 }
 
 private final class ProcessRowsView: DashboardCardView {
+    private struct RowKey: Equatable {
+        let name: String
+        let primary: String
+        let secondary: String?
+    }
+    private struct RenderKey: Equatable {
+        let kind: String
+        let rows: [RowKey]
+        let pending: Bool
+        let available: Bool
+    }
     override var drawsCard: Bool { false }
+    private var lastRenderKey: RenderKey?
     var kind: String { didSet { refresh() } }
     var metrics: SystemMetrics { didSet { refresh() } }
     var idealHeight: CGFloat { kind == "disk" ? 142 : 124 }
@@ -700,13 +908,27 @@ private final class ProcessRowsView: DashboardCardView {
         kind == "cpu" ? metrics.cpuTopProcesses : kind == "ram" ? metrics.ramTopProcesses : metrics.diskTopProcesses
     }
     init(kind: String, metrics: SystemMetrics) {
-        self.kind = kind; self.metrics = metrics; super.init(frame: .zero); refresh()
+        self.kind = kind
+        self.metrics = metrics
+        super.init(frame: .zero)
+        refresh(isInitial: true)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    private func refresh() {
+    private func refresh(isInitial: Bool = false) {
+        let currentItems = items
+        let key = RenderKey(
+            kind: kind,
+            rows: currentItems.map { RowKey(name: $0.name, primary: $0.valueString, secondary: $0.secondaryValueString) },
+            pending: metrics.topProcessesPending,
+            available: metrics.topProcessesAvailable
+        )
+        guard isInitial || key != lastRenderKey else { return }
+        lastRenderKey = key
         setAccessibilityElement(true)
-        setAccessibilityLabel("主要进程 " + items.map { "\($0.name) \($0.valueString) \($0.secondaryValueString ?? "")" }.joined(separator: ", "))
-        needsDisplay = true
+        setAccessibilityLabel("主要进程 " + currentItems.map { "\($0.name) \($0.valueString) \($0.secondaryValueString ?? "")" }.joined(separator: ", "))
+        if !isInitial {
+            needsDisplay = true
+        }
     }
     override func draw(_ dirtyRect: NSRect) {
         autoreleasepool {
@@ -738,11 +960,33 @@ private final class ProcessRowsView: DashboardCardView {
     }
 }
 
+private struct InertBrightnessHardware: BrightnessHardware {
+    func discover() async -> [BrightnessDisplay] { [] }
+    func setBrightness(_ value: Double, displays: [BrightnessDisplay]) async -> [BrightnessDisplay] { displays }
+    func readNativeBrightness(displays: [BrightnessDisplay]) async -> [BrightnessDisplay] { [] }
+}
+
 /// 系统原生面板；复用现有状态与采样引擎，避免常驻 SwiftUI 渲染树。
 @MainActor
 final class NativePanelController: NSViewController {
+    private static let isRunningUnitTests: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil
+            || env["XCTestSessionIdentifier"] != nil
+            || NSClassFromString("XCTestCase") != nil
+    }()
+
+    private static let unitTestDefaultBrightness = BrightnessManager(
+        hardware: InertBrightnessHardware(),
+        observeScreens: false
+    )
+
+    static func defaultBrightnessManager(isUnitTest: Bool = isRunningUnitTests) -> BrightnessManager {
+        isUnitTest ? unitTestDefaultBrightness : .shared
+    }
+
     var onPreferredSizeChange: ((NSSize) -> Void)?
-    private let state = AppState.shared
+    private let state: AppState
     private let content = FlippedStackView()
     private var contentScroll: NSScrollView?
     private var viewportHeight: NSLayoutConstraint?
@@ -765,6 +1009,7 @@ final class NativePanelController: NSViewController {
     private var processRowsHeight: NSLayoutConstraint?
     private var metricTiles: [DashboardMetricView] = []
     private var networkTile: DashboardNetworkView?
+    private var systemStripTile: DashboardSystemStripView?
     private var processesTile: DashboardProcessesView?
     private var switches: [NSSwitch] = []
     private var switchTiles: [DashboardSwitchView] = []
@@ -785,13 +1030,20 @@ final class NativePanelController: NSViewController {
     private var loginItemSubscription: AnyCancellable?
     private let loginItemSwitch = NSSwitch()
     private let brightness: BrightnessManager
+    var brightnessManagerForTesting: BrightnessManager { brightness }
     private var brightnessSubscription: AnyCancellable?
     private let brightnessSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let backlightSwitch = NSButton(checkboxWithTitle: "零亮度时关闭外屏背光", target: nil, action: nil)
 
-    init(loginItems: LoginItemManager = .shared, brightness: BrightnessManager = .shared, maximumHeight: CGFloat? = nil) {
+    init(
+        state: AppState = .shared,
+        loginItems: LoginItemManager = .shared,
+        brightness: BrightnessManager? = nil,
+        maximumHeight: CGFloat? = nil
+    ) {
+        self.state = state
         self.loginItems = loginItems
-        self.brightness = brightness
+        self.brightness = brightness ?? Self.defaultBrightnessManager()
         self.maximumHeight = maximumHeight ?? min(800, (NSScreen.main?.visibleFrame.height ?? 860) - 60)
         super.init(nibName: nil, bundle: nil)
     }
@@ -946,17 +1198,22 @@ final class NativePanelController: NSViewController {
             self.updateButton.title = version.map { "更新至 \($0)" } ?? "检查更新"
             self.updateButton.contentTintColor = version == nil ? .secondaryLabelColor : Palette.accent
         }
-        tabSubscription = state.$selectedTab.dropFirst().sink { [weak self] tab in
-            guard let self else { return }
-            // 关于页显示期间只记录标签，关闭关于页时再重建目标页面。
-            guard !self.state.showAbout else { return }
-            self.tabs.selectedSegment = self.tabNames.firstIndex(of: tab) ?? 0
-            self.rebuild(tab: tab)
-        }
+        tabSubscription = state.$selectedTab
+            .map(AppState.normalizedTab)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] tab in
+                guard let self else { return }
+                // 关于页显示期间只记录标签，关闭关于页时再重建目标页面。
+                guard !self.state.showAbout else { return }
+                self.tabs.selectedSegment = self.tabNames.firstIndex(of: tab) ?? 0
+                self.rebuild(tab: tab)
+            }
         // @Published 在属性写入前发出新值，因此把新值直接传给 rebuild。
         aboutSubscription = state.$showAbout.dropFirst().removeDuplicates().sink { [weak self] showing in
             guard let self else { return }
-            self.tabs.selectedSegment = showing ? -1 : self.tabNames.firstIndex(of: self.state.selectedTab) ?? 0
+            let currentTab = AppState.normalizedTab(self.state.selectedTab)
+            self.tabs.selectedSegment = showing ? -1 : self.tabNames.firstIndex(of: currentTab) ?? 0
             self.rebuild(about: showing)
         }
         menuBarSubscription = state.$menuBarMetrics.sink { [weak self] visible in
@@ -965,7 +1222,7 @@ final class NativePanelController: NSViewController {
             guard let metric = self.menuBarMetric else { return }
             self.menuBarSwitch.state = visible.contains(metric) ? .on : .off
         }
-        subscription = state.$metrics.sink { [weak self] m in
+        subscription = state.$metrics.dropFirst().sink { [weak self] m in
             guard let self else { return }
             self.detailRows?.metrics = m
             if let height = self.detailRows?.idealHeight, self.detailRowsHeight?.constant != height {
@@ -977,6 +1234,7 @@ final class NativePanelController: NSViewController {
             self.processRows?.metrics = m
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
+            self.systemStripTile?.metrics = m
             self.processesTile?.metrics = m
             self.detailVisual?.metrics = m
         }
@@ -1002,6 +1260,7 @@ final class NativePanelController: NSViewController {
             oldViews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
             metricTiles.removeAll()
             networkTile = nil
+            systemStripTile = nil
             processesTile = nil
             switches.removeAll()
             switchTiles.removeAll()
@@ -1086,6 +1345,13 @@ final class NativePanelController: NSViewController {
             content.addArrangedSubview(network)
             network.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
             network.heightAnchor.constraint(equalToConstant: 50).isActive = true
+            let systemStrip = DashboardSystemStripView(metrics: state.metrics) { [weak self] in
+                self?.state.selectedTab = "cpu"
+            }
+            systemStripTile = systemStrip
+            content.addArrangedSubview(systemStrip)
+            systemStrip.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+            systemStrip.heightAnchor.constraint(equalToConstant: 28).isActive = true
             let processes = DashboardProcessesView(metrics: state.metrics) { [weak self] targetTab in
                 self?.state.selectedTab = targetTab
             }
@@ -1204,10 +1470,15 @@ final class NativePanelController: NSViewController {
     }
 
     private func rows(_ kind: String) {
-        let panel = detailRows ?? DetailRowsView(kind: kind, metrics: state.metrics)
-        panel.kind = kind
-        panel.metrics = state.metrics
-        detailRows = panel
+        let panel: DetailRowsView
+        if let existing = detailRows {
+            existing.kind = kind
+            existing.metrics = state.metrics
+            panel = existing
+        } else {
+            panel = DetailRowsView(kind: kind, metrics: state.metrics)
+            detailRows = panel
+        }
         let previous = content.arrangedSubviews.last
         content.addArrangedSubview(panel)
         content.setCustomSpacing(12, after: previous ?? panel)
@@ -1220,10 +1491,14 @@ final class NativePanelController: NSViewController {
         }
     }
     private func visual(_ kind: String) {
-        let panel = detailVisual ?? DetailVisualView(kind: kind, metrics: state.metrics)
-        panel.kind = kind
-        panel.metrics = state.metrics
-        detailVisual = panel
+        let panel: DetailVisualView
+        if let existing = detailVisual {
+            existing.configure(kind: kind, metrics: state.metrics)
+            panel = existing
+        } else {
+            panel = DetailVisualView(kind: kind, metrics: state.metrics)
+            detailVisual = panel
+        }
         content.addArrangedSubview(panel)
         panel.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         // Reuse one backing-store size across tabs instead of allocating a
@@ -1237,8 +1512,15 @@ final class NativePanelController: NSViewController {
         }
     }
     private func processList(_ kind: String) {
-        let panel = processRows ?? ProcessRowsView(kind: kind, metrics: state.metrics)
-        panel.kind = kind; panel.metrics = state.metrics; processRows = panel
+        let panel: ProcessRowsView
+        if let existing = processRows {
+            existing.kind = kind
+            existing.metrics = state.metrics
+            panel = existing
+        } else {
+            panel = ProcessRowsView(kind: kind, metrics: state.metrics)
+            processRows = panel
+        }
         let previous = content.arrangedSubviews.last
         content.addArrangedSubview(panel)
         content.setCustomSpacing(12, after: previous ?? panel)

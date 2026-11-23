@@ -1,11 +1,13 @@
 import Cocoa
 import Combine
+import ObjectiveC.runtime
 
 @main
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem!
-    var popover: NSPopover!
+    var popover: NSPopover?
+    private static var isApplyingMinimumMenuBarHeight = false
     private var cancellables = Set<AnyCancellable>()
     private var menuBarStatusView: MenuBarStatusView?
     private var appliedMenuBarStyle: MenuBarStyle?
@@ -84,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             let tab = note.userInfo?["tab"] as? String
             Task { @MainActor in
                 if let tab {
-                    AppState.shared.selectedTab = tab
+                    AppState.shared.selectedTab = AppState.normalizedTab(tab)
                 }
                 AppState.shared.showAbout = false
                 if let self = self, self.popover?.isShown != true {
@@ -165,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         } else if CommandLine.arguments.contains("--acceptance-cycle") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if let initialTab = ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_INITIAL_TAB"] {
-                    AppState.shared.selectedTab = initialTab
+                    AppState.shared.selectedTab = AppState.normalizedTab(initialTab)
                 }
                 self.togglePopover()
                 self.runAcceptanceCycle(at: 0)
@@ -199,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             if index == 0 && ProcessInfo.processInfo.environment["AETHERSWITCH_ACCEPTANCE_MENU_BAR_SETTINGS"] == "1" {
                 self.showMenuBarSettings()
             }
-            let tab = sequence[index]
+            let tab = AppState.normalizedTab(sequence[index])
             if AppState.shared.selectedTab != tab {
                 AppState.shared.selectedTab = tab
             }
@@ -235,13 +237,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         SwitchManager.shared.releaseKeepAwake()
     }
 
-    func setupStatusItem() {
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = false
-        popover.delegate = self
-        self.popover = popover
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if popover?.isShown != true {
+            togglePopover()
+        } else {
+            NSApp.activate()
+        }
+        return true
+    }
 
+    func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
@@ -275,19 +280,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// macOS 27 `NSSceneStatusItem` 在 `MenuBarAgent` 尚未完成异步场景握手或处于 `XX-None[0]` 状态时，
     /// 会将宿主 `NSStatusBarWindow` 的 `menuBarHeight` 设为 `0`，导致窗口高度坍缩为 `0` 且合成点击事件在 `hitTest` 阶段全部丢失。
     /// 此处主动将窗口最小菜单栏高度锁定在 `>= 22pt` 并监听窗口尺寸重置以自愈。
-    private static func applyMinimumMenuBarHeight(to window: NSWindow) {
+    static func menuBarHeightArgumentScalarType(for method: Method) -> Character? {
+        guard method_getNumberOfArguments(method) == 3,
+              let rawType = method_copyArgumentType(method, 2) else {
+            return nil
+        }
+        defer { free(rawType) }
+        let encoding = String(cString: rawType)
+        let stripped = encoding.drop { "rnNoORV".contains($0) }
+        guard stripped.count == 1, let scalar = stripped.first, scalar == "d" || scalar == "f" else {
+            return nil
+        }
+        return scalar
+    }
+
+    static func applyMinimumMenuBarHeight(to window: NSWindow) {
+        guard !isApplyingMinimumMenuBarHeight else { return }
         guard window.frame.height < 22 else { return }
+        isApplyingMinimumMenuBarHeight = true
+        defer { isApplyingMinimumMenuBarHeight = false }
+
         let minHeight = max(NSStatusBar.system.thickness, 22)
         let setHeightSel = NSSelectorFromString("setMenuBarHeight:")
-        if let method = class_getInstanceMethod(object_getClass(window), setHeightSel) {
-            typealias SetHeightFn = @convention(c) (AnyObject, Selector, CGFloat) -> Void
-            let setHeight = unsafeBitCast(method_getImplementation(method), to: SetHeightFn.self)
-            setHeight(window, setHeightSel, minHeight)
+        if let cls = object_getClass(window),
+           let method = class_getInstanceMethod(cls, setHeightSel),
+           let scalarType = menuBarHeightArgumentScalarType(for: method) {
+            if scalarType == "d" {
+                typealias SetDoubleHeightFn = @convention(c) (AnyObject, Selector, Double) -> Void
+                let setHeight = unsafeBitCast(method_getImplementation(method), to: SetDoubleHeightFn.self)
+                setHeight(window, setHeightSel, Double(minHeight))
+            } else if scalarType == "f" {
+                typealias SetFloatHeightFn = @convention(c) (AnyObject, Selector, Float) -> Void
+                let setHeight = unsafeBitCast(method_getImplementation(method), to: SetFloatHeightFn.self)
+                setHeight(window, setHeightSel, Float(minHeight))
+            }
             window.layoutIfNeeded()
         }
         if window.frame.height < minHeight {
             window.setFrame(
-                NSRect(x: window.frame.origin.x, y: -minHeight, width: max(window.frame.width, 24), height: minHeight),
+                NSRect(
+                    x: window.frame.origin.x,
+                    y: window.frame.origin.y,
+                    width: max(window.frame.width, 24),
+                    height: minHeight
+                ),
                 display: false
             )
         }
@@ -363,7 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // MARK: - 动态调整状态栏宽度
 
     func updateStatusItemWidth(metrics: SystemMetrics? = nil, style: MenuBarStyle? = nil, visible: Set<MenuBarMetric>? = nil, preferences: MenuBarPreferences? = nil) {
-        guard let button = statusItem.button else { return }
+        guard let button = statusItem?.button else { return }
         let state = AppState.shared
         // @Published emits before the stored property changes; render the emitted value.
         let m = metrics ?? state.metrics
@@ -451,10 +487,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     func togglePopover() {
-        guard let button = statusItem.button else { return }
+        guard let button = statusItem?.button else { return }
 
         if popover?.isShown == true {
-            popover.performClose(nil)
+            popover?.performClose(nil)
             AppState.shared.isPopoverOpen = false
         } else {
             let popover = NSPopover()
@@ -471,7 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.contentSize = controller.preferredContentSize
             AppState.shared.isPopoverOpen = true
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
         }
     }
 
@@ -537,12 +573,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func showMenuBarSettings() {
-        if let menuBarSettings { menuBarSettings.showWindow(nil); NSApp.activate(ignoringOtherApps: true); return }
+        if let menuBarSettings { menuBarSettings.showWindow(nil); NSApp.activate(); return }
         let controller = MenuBarSettingsController()
         controller.onClose = { [weak self] in self?.menuBarSettings = nil }
         menuBarSettings = controller
         controller.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 
     @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {
