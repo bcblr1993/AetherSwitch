@@ -267,6 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover?.isShown == true {
             popover?.performClose(nil)
         }
+        (popover?.contentViewController as? NativePanelController)?.prepareForClose()
         popover = nil
         AppState.shared.isPopoverOpen = false
         if let statusItem {
@@ -576,10 +577,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func showMenuBarSettings() {
         if let menuBarSettings { menuBarSettings.showWindow(nil); NSApp.activate(); return }
         let controller = MenuBarSettingsController()
-        controller.onClose = { [weak self] in self?.menuBarSettings = nil }
+        controller.onClose = { [weak self] in
+            self?.menuBarSettings = nil
+            malloc_zone_pressure_relief(nil, 0)
+        }
         menuBarSettings = controller
         controller.showWindow(nil)
         NSApp.activate()
+        DispatchQueue.main.async {
+            malloc_zone_pressure_relief(nil, 0)
+        }
     }
 
     @objc private func changeMenuBarStyleAction(_ sender: NSMenuItem) {
@@ -641,8 +648,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         AppState.shared.isPopoverOpen = false
         AppState.shared.showAbout = false
+        (popover?.contentViewController as? NativePanelController)?.prepareForClose()
         popover?.contentViewController = nil
         popover = nil
+        Palette.clearSymbolCache()
         malloc_zone_pressure_relief(nil, 0)
     }
 }

@@ -60,6 +60,14 @@ final class MenuBarStatusView: NSView {
         cachedLayerImage = nil
         needsDisplay = true
     }
+
+    func releaseRasterCache() {
+        rasterCache = nil
+        cachedLayerImage = nil
+        cachedLayout = nil
+        dirtyColumns.removeAll(keepingCapacity: false)
+        layer?.contents = nil
+    }
     static let padding: CGFloat = 2
     static let glyphWidth: CGFloat = 20
     var metrics = SystemMetrics() {

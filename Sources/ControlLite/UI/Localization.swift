@@ -5,6 +5,12 @@ import os
 /// 查找顺序：测试语言覆盖 / 系统语言对应的 `.lproj` bundle → 内置完整双语字典兜底。
 public enum L10n {
     private static let languageOverrideLock = OSAllocatedUnfairLock<String?>(initialState: nil)
+    private static let simulateMissingBundleLock = OSAllocatedUnfairLock<Bool>(initialState: false)
+    private static let lprojBundleCacheLock = OSAllocatedUnfairLock<[String: [Bundle]]>(initialState: [:])
+    private static let fallbackTableCacheLock = OSAllocatedUnfairLock<[String: [String: String]]>(initialState: [:])
+    private static let zhLocale = Locale(identifier: "zh_Hans_CN")
+    private static let enLocale = Locale(identifier: "en_US_POSIX")
+    private static let missingSentinel = "__AETHERSWITCH_L10N_MISSING__"
 
     private static let isRunningUnitTests: Bool = {
         let env = ProcessInfo.processInfo.environment
@@ -17,6 +23,22 @@ public enum L10n {
     public static var overrideLanguageForTesting: String? {
         get { languageOverrideLock.withLock { $0 } }
         set { languageOverrideLock.withLock { $0 = newValue } }
+    }
+
+    /// 测试专用：强制跳过 `.lproj` bundle 查找，验证内置兜底表。
+    static var simulateMissingBundleForTesting: Bool {
+        get { simulateMissingBundleLock.withLock { $0 } }
+        set { simulateMissingBundleLock.withLock { $0 = newValue } }
+    }
+
+    /// 测试专用：记录当前已按需构造并常驻的兜底字典语言集合（`.lproj` 命中时应始终为空）。
+    static var loadedFallbackLanguagesForTesting: Set<String> {
+        fallbackTableCacheLock.withLock { Set($0.keys) }
+    }
+
+    static func resetCachesForTesting() {
+        lprojBundleCacheLock.withLock { $0.removeAll(keepingCapacity: false) }
+        fallbackTableCacheLock.withLock { $0.removeAll(keepingCapacity: false) }
     }
 
     public static var currentLanguage: String {
@@ -38,8 +60,9 @@ public enum L10n {
         return "en"
     }
 
+    /// 供测试校验键集合一致性；按需临时构造键集合，不在进程常驻缓存大字典。
     public static var allKeys: Set<String> {
-        Set(zhHansStrings.keys)
+        Set(buildZhHansFallbackStrings().keys)
     }
 
     public static func string(_ key: String) -> String {
@@ -47,15 +70,16 @@ public enum L10n {
         if let bundled = lookupInBundle(key: key, language: lang) {
             return bundled
         }
-        if lang == "en" {
-            return enStrings[key] ?? zhHansStrings[key] ?? key
+        if let primary = fallbackString(for: key, language: lang) {
+            return primary
         }
-        return zhHansStrings[key] ?? enStrings[key] ?? key
+        let secondaryLang = lang == "en" ? "zh-Hans" : "en"
+        return fallbackString(for: key, language: secondaryLang) ?? key
     }
 
     public static func format(_ key: String, _ args: CVarArg...) -> String {
         let template = string(key)
-        let locale = Locale(identifier: currentLanguage == "en" ? "en_US_POSIX" : "zh_Hans_CN")
+        let locale = currentLanguage == "en" ? enLocale : zhLocale
         return String(format: template, locale: locale, arguments: args)
     }
 
@@ -80,17 +104,40 @@ public enum L10n {
     }
 
     private static func lookupInBundle(key: String, language: String) -> String? {
-        let sentinel = "__AETHERSWITCH_L10N_MISSING__"
-        for bundle in candidateBundles() {
-            if let path = bundle.path(forResource: language, ofType: "lproj"),
-               let langBundle = Bundle(path: path) {
-                let value = langBundle.localizedString(forKey: key, value: sentinel, table: nil)
-                if value != sentinel {
-                    return value
-                }
+        guard !simulateMissingBundleForTesting else { return nil }
+        for langBundle in resolvedLanguageBundles(for: language) {
+            let value = langBundle.localizedString(forKey: key, value: missingSentinel, table: nil)
+            if value != missingSentinel {
+                return value
             }
         }
         return nil
+    }
+
+    private static func resolvedLanguageBundles(for language: String) -> [Bundle] {
+        if let cached = lprojBundleCacheLock.withLock({ $0[language] }) {
+            return cached
+        }
+        var found: [Bundle] = []
+        for bundle in candidateBundles() {
+            if let path = bundle.path(forResource: language, ofType: "lproj"),
+               let langBundle = Bundle(path: path),
+               !found.contains(where: { $0 === langBundle }) {
+                found.append(langBundle)
+            }
+        }
+        let resolved = found
+        lprojBundleCacheLock.withLock { $0[language] = resolved }
+        return resolved
+    }
+
+    private static func fallbackString(for key: String, language: String) -> String? {
+        if let existing = fallbackTableCacheLock.withLock({ $0[language] }) {
+            return existing[key]
+        }
+        let table = language == "en" ? buildEnFallbackStrings() : buildZhHansFallbackStrings()
+        fallbackTableCacheLock.withLock { $0[language] = table }
+        return table[key]
     }
 
     private static func candidateBundles() -> [Bundle] {
@@ -115,7 +162,8 @@ public enum L10n {
         return bundles
     }
 
-    static let zhHansStrings: [String: String] = [
+    private static func buildZhHansFallbackStrings() -> [String: String] {
+        [
         // Tabs
         "tab.overview": "概览",
         "tab.cpu": "CPU",
@@ -235,6 +283,7 @@ public enum L10n {
         "strip.swap_format": "交换 %.1fG",
         "strip.swap_zero": "交换 0G",
         "strip.uptime_format": "运行 %@",
+        "strip.power_saving": "节能降频",
 
         // Network card
         "network.a11y_label": "网络速率",
@@ -389,6 +438,13 @@ public enum L10n {
         "detail.minutes_format": "%d 分钟",
         "detail.battery_health": "最大容量",
         "detail.battery_cycles": "循环次数",
+        "detail.accessory_batteries": "外设电量",
+        "accessory.category.mouse": "鼠标",
+        "accessory.category.trackpad": "触控板",
+        "accessory.category.keyboard": "键盘",
+        "accessory.category.headphones": "耳机",
+        "accessory.category.other": "蓝牙外设",
+        "accessory.battery.charging_format": "%d%% · 充电中",
         "detail.net_interface": "当前接口",
         "detail.net_ip": "IP 地址",
         "detail.net_wifi": "Wi-Fi 名称",
@@ -422,6 +478,15 @@ public enum L10n {
         "brightness.backlight_tooltip": "需要显示器支持可靠的关闭与唤醒；不支持时使用软件全黑。",
         "brightness.status_backlight_off": "背光已关闭",
         "brightness.status_software_blackout": "软件全黑，背光仍可能亮",
+        "brightness.per_display_toggle": "分屏微调",
+        "brightness.per_display_tooltip": "展开或收起各显示器独立亮度调节",
+        "brightness.drawer_expanded": "已展开",
+        "brightness.drawer_collapsed": "已收起",
+        "brightness.display_slider_a11y_format": "%@ 亮度",
+        "brightness.display_builtin_badge": "内建",
+        "brightness.display_external_badge": "外接",
+        "brightness.follow_external": "外屏跟随系统自动亮度",
+        "brightness.follow_external_tooltip": "关闭后，仅手动拖动总滑条会同步外屏，系统自动亮度微调不再写入外屏。",
         "login_item.title": "开机自启动",
         "login_item.open_settings": "打开登录项设置",
         "about.dev_build": "开发版本",
@@ -431,9 +496,11 @@ public enum L10n {
         "about.github": "GitHub",
         "about.issues": "问题反馈",
         "about.back": "返回"
-    ]
+        ]
+    }
 
-    static let enStrings: [String: String] = [
+    private static func buildEnFallbackStrings() -> [String: String] {
+        [
         // Tabs
         "tab.overview": "Overview",
         "tab.cpu": "CPU",
@@ -553,6 +620,7 @@ public enum L10n {
         "strip.swap_format": "Swap %.1fG",
         "strip.swap_zero": "Swap 0G",
         "strip.uptime_format": "Up %@",
+        "strip.power_saving": "Power Save",
 
         // Network card
         "network.a11y_label": "Network Speed",
@@ -707,6 +775,13 @@ public enum L10n {
         "detail.minutes_format": "%d min",
         "detail.battery_health": "Maximum Capacity",
         "detail.battery_cycles": "Cycle Count",
+        "detail.accessory_batteries": "Accessories",
+        "accessory.category.mouse": "Mouse",
+        "accessory.category.trackpad": "Trackpad",
+        "accessory.category.keyboard": "Keyboard",
+        "accessory.category.headphones": "Headphones",
+        "accessory.category.other": "Accessory",
+        "accessory.battery.charging_format": "%d%% · Charging",
         "detail.net_interface": "Interface",
         "detail.net_ip": "IP Address",
         "detail.net_wifi": "Wi-Fi Network",
@@ -740,6 +815,15 @@ public enum L10n {
         "brightness.backlight_tooltip": "Requires reliable DDC power off/wake support; falls back to software blackout otherwise.",
         "brightness.status_backlight_off": "Backlight off",
         "brightness.status_software_blackout": "Software blackout (backlight may stay on)",
+        "brightness.per_display_toggle": "Per-Display",
+        "brightness.per_display_tooltip": "Show or hide individual display brightness sliders",
+        "brightness.drawer_expanded": "Expanded",
+        "brightness.drawer_collapsed": "Collapsed",
+        "brightness.display_slider_a11y_format": "%@ Brightness",
+        "brightness.display_builtin_badge": "Built-in",
+        "brightness.display_external_badge": "External",
+        "brightness.follow_external": "Sync external displays with system brightness",
+        "brightness.follow_external_tooltip": "When off, automatic ambient-light adjustments will not write brightness to external displays.",
         "login_item.title": "Launch at Login",
         "login_item.open_settings": "Open Login Items Settings",
         "about.dev_build": "Dev Build",
@@ -749,5 +833,6 @@ public enum L10n {
         "about.github": "GitHub",
         "about.issues": "Issues",
         "about.back": "Back"
-    ]
+        ]
+    }
 }

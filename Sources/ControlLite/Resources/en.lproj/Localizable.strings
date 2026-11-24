@@ -112,6 +112,7 @@
 "strip.swap_format" = "Swap %.1fG";
 "strip.swap_zero" = "Swap 0G";
 "strip.uptime_format" = "Up %@";
+"strip.power_saving" = "Power Save";
 
 "network.a11y_label" = "Network Speed";
 "network.a11y_value_format" = "Down %@, Up %@";
@@ -260,6 +261,13 @@
 "detail.minutes_format" = "%d min";
 "detail.battery_health" = "Maximum Capacity";
 "detail.battery_cycles" = "Cycle Count";
+"detail.accessory_batteries" = "Accessories";
+"accessory.category.mouse" = "Mouse";
+"accessory.category.trackpad" = "Trackpad";
+"accessory.category.keyboard" = "Keyboard";
+"accessory.category.headphones" = "Headphones";
+"accessory.category.other" = "Accessory";
+"accessory.battery.charging_format" = "%d%% · Charging";
 "detail.net_interface" = "Interface";
 "detail.net_ip" = "IP Address";
 "detail.net_wifi" = "Wi-Fi Network";
@@ -291,6 +299,15 @@
 "brightness.backlight_tooltip" = "Requires reliable DDC power off/wake support; falls back to software blackout otherwise.";
 "brightness.status_backlight_off" = "Backlight off";
 "brightness.status_software_blackout" = "Software blackout (backlight may stay on)";
+"brightness.per_display_toggle" = "Per-Display";
+"brightness.per_display_tooltip" = "Show or hide individual display brightness sliders";
+"brightness.drawer_expanded" = "Expanded";
+"brightness.drawer_collapsed" = "Collapsed";
+"brightness.display_slider_a11y_format" = "%@ Brightness";
+"brightness.display_builtin_badge" = "Built-in";
+"brightness.display_external_badge" = "External";
+"brightness.follow_external" = "Sync external displays with system brightness";
+"brightness.follow_external_tooltip" = "When off, automatic ambient-light adjustments will not write brightness to external displays.";
 "login_item.title" = "Launch at Login";
 "login_item.open_settings" = "Open Login Items Settings";
 "about.dev_build" = "Dev Build";

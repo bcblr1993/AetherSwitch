@@ -118,16 +118,20 @@ final class DashboardMetricView: DashboardCardView {
     }
 }
 
-/// 紧凑系统状态条摘要（温控 + 可选风扇转速 + 交换空间 + 运行时间）。
+/// 紧凑系统状态条摘要（温控 + 可选节能降频提示 + 可选风扇转速 + 交换空间 + 运行时间）。
 struct SystemStatusStripSummary: Equatable {
     let thermalDotLevel: LoadLevel
     let thermalText: String
+    let powerSavingText: String?
     let fanText: String?
     let swapText: String
     let uptimeText: String
 
     var items: [String] {
         var result = [thermalText]
+        if let powerSavingText, !powerSavingText.isEmpty {
+            result.append(powerSavingText)
+        }
         if let fanText, !fanText.isEmpty {
             result.append(fanText)
         }
@@ -147,7 +151,11 @@ struct SystemStatusStripSummary: Equatable {
     }
 
     /// 默认读取 `metrics.fanRPMs`；无风扇机型为空数组时自动隐藏风扇段。`fanRPMs` 仅供测试覆盖。
-    static func make(from metrics: SystemMetrics, fanRPMs: [Int]? = nil) -> SystemStatusStripSummary {
+    static func make(
+        from metrics: SystemMetrics,
+        fanRPMs: [Int]? = nil,
+        isPowerSavingSamplingActive: Bool = false
+    ) -> SystemStatusStripSummary {
         let thermalLevel: LoadLevel
         switch metrics.thermalStateCode {
         case 1: thermalLevel = .moderate
@@ -175,6 +183,7 @@ struct SystemStatusStripSummary: Equatable {
         return SystemStatusStripSummary(
             thermalDotLevel: thermalLevel,
             thermalText: thermalText,
+            powerSavingText: isPowerSavingSamplingActive ? L10n.string("strip.power_saving") : nil,
             fanText: formatFanRPMs(fanRPMs ?? metrics.fanRPMs),
             swapText: swapText,
             uptimeText: L10n.format("strip.uptime_format", uptime)
@@ -185,9 +194,24 @@ struct SystemStatusStripSummary: Equatable {
 final class DashboardSystemStripView: DashboardCardView {
     private static let stripFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
     private var summary: SystemStatusStripSummary
+    var isPowerSavingSamplingActive: Bool {
+        didSet {
+            guard oldValue != isPowerSavingSamplingActive else { return }
+            let next = SystemStatusStripSummary.make(
+                from: metrics,
+                isPowerSavingSamplingActive: isPowerSavingSamplingActive
+            )
+            guard next != summary else { return }
+            summary = next
+            needsDisplay = true
+        }
+    }
     var metrics: SystemMetrics {
         didSet {
-            let next = SystemStatusStripSummary.make(from: metrics)
+            let next = SystemStatusStripSummary.make(
+                from: metrics,
+                isPowerSavingSamplingActive: isPowerSavingSamplingActive
+            )
             guard next != summary else { return }
             summary = next
             needsDisplay = true
@@ -195,9 +219,17 @@ final class DashboardSystemStripView: DashboardCardView {
     }
     var onSelect: (() -> Void)?
 
-    init(metrics: SystemMetrics, onSelect: (() -> Void)? = nil) {
+    init(
+        metrics: SystemMetrics,
+        isPowerSavingSamplingActive: Bool = false,
+        onSelect: (() -> Void)? = nil
+    ) {
         self.metrics = metrics
-        self.summary = SystemStatusStripSummary.make(from: metrics)
+        self.isPowerSavingSamplingActive = isPowerSavingSamplingActive
+        self.summary = SystemStatusStripSummary.make(
+            from: metrics,
+            isPowerSavingSamplingActive: isPowerSavingSamplingActive
+        )
         self.onSelect = onSelect
         super.init(frame: .zero)
     }
@@ -250,10 +282,20 @@ final class DashboardSystemStripView: DashboardCardView {
 }
 
 final class DashboardNetworkView: DashboardCardView {
-    private var lastRenderKey: [String] = []
+    private struct RenderKey: Equatable {
+        let download: String
+        let upload: String
+        let language: String
+    }
+
+    private var lastRenderKey: RenderKey
     var metrics: SystemMetrics {
         didSet {
-            let key = [metrics.menuBarDownloadFormatted, metrics.menuBarUploadFormatted, L10n.currentLanguage]
+            let key = RenderKey(
+                download: metrics.menuBarDownloadFormatted,
+                upload: metrics.menuBarUploadFormatted,
+                language: L10n.currentLanguage
+            )
             guard key != lastRenderKey else { return }
             lastRenderKey = key
             needsDisplay = true
@@ -263,7 +305,11 @@ final class DashboardNetworkView: DashboardCardView {
 
     init(metrics: SystemMetrics, onSelect: (() -> Void)? = nil) {
         self.metrics = metrics
-        self.lastRenderKey = [metrics.menuBarDownloadFormatted, metrics.menuBarUploadFormatted, L10n.currentLanguage]
+        self.lastRenderKey = RenderKey(
+            download: metrics.menuBarDownloadFormatted,
+            upload: metrics.menuBarUploadFormatted,
+            language: L10n.currentLanguage
+        )
         self.onSelect = onSelect
         super.init(frame: .zero)
     }
@@ -646,15 +692,53 @@ final class DashboardSwitchView: DashboardCardView {
     }
 }
 
-/// 同步屏幕亮度与外屏零亮度背光控制区。
+/// 同步屏幕亮度、按需展开的分屏幕独立亮度抽屉与外屏自动亮度跟随控制区。
 @MainActor
 final class BrightnessControlSectionView: NSStackView {
+    private struct DrawerRowControls {
+        let displayID: CGDirectDisplayID
+        let name: String
+        let isBuiltIn: Bool
+        let supportsControl: Bool
+        let rowView: NSStackView
+        let slider: NSSlider
+        let valueLabel: NSTextField
+    }
+
     let slider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
     let backlightSwitch = NSButton(checkboxWithTitle: L10n.string("brightness.backlight_off"), target: nil, action: nil)
+    let drawerToggleButton = NSButton(title: L10n.string("brightness.per_display_toggle"), target: nil, action: nil)
+    private let drawerHeaderRow = NSStackView()
     private let valueLabel = NSTextField(labelWithString: "—")
     private let messageLabel = NSTextField(wrappingLabelWithString: L10n.string("brightness.loading"))
 
-    init(target: AnyObject?, sliderAction: Selector, backlightAction: Selector, initialBacklightOff: Bool) {
+    private(set) var isDrawerExpanded = false
+    private var displayRows: [DisplayBrightnessRowItem] = []
+    private var followExternalDisplays: Bool
+    private var drawerContainer: NSStackView?
+    private var drawerRowControls: [DrawerRowControls] = []
+    private var followExternalSwitch: NSButton?
+
+    var onAdjustDisplayBrightness: ((Double, CGDirectDisplayID) -> Void)?
+    var onToggleFollowExternalDisplays: ((Bool) -> Void)?
+    var onDrawerStateChange: (() -> Void)?
+
+    var drawerSliderCountForTesting: Int { drawerRowControls.count }
+    var drawerSlidersForTesting: [NSSlider] { drawerRowControls.map(\.slider) }
+    var followExternalSwitchForTesting: NSButton? { followExternalSwitch }
+
+    private var shouldShowDrawerToggle: Bool {
+        displayRows.count > 1 || displayRows.contains(where: { !$0.isBuiltIn })
+    }
+
+    init(
+        target: AnyObject?,
+        sliderAction: Selector,
+        backlightAction: Selector,
+        initialBacklightOff: Bool,
+        initialFollowExternal: Bool = true
+    ) {
+        self.followExternalDisplays = initialFollowExternal
         super.init(frame: .zero)
         let titleLabel = NSTextField(labelWithString: L10n.string("brightness.title"))
         titleLabel.font = Palette.captionStrong
@@ -683,16 +767,41 @@ final class BrightnessControlSectionView: NSStackView {
         backlightSwitch.setAccessibilityLabel(L10n.string("brightness.backlight_off"))
         backlightSwitch.toolTip = L10n.string("brightness.backlight_tooltip")
 
+        drawerToggleButton.isBordered = false
+        drawerToggleButton.controlSize = .mini
+        drawerToggleButton.font = Palette.caption
+        drawerToggleButton.imagePosition = .imageTrailing
+        drawerToggleButton.imageHugsTitle = true
+        drawerToggleButton.symbolConfiguration = .init(pointSize: 9.5, weight: .medium)
+        drawerToggleButton.contentTintColor = .secondaryLabelColor
+        drawerToggleButton.target = self
+        drawerToggleButton.action = #selector(toggleDrawer)
+        drawerToggleButton.toolTip = L10n.string("brightness.per_display_tooltip")
+        drawerToggleButton.setAccessibilityLabel(L10n.string("brightness.per_display_toggle"))
+        drawerToggleButton.isHidden = true
+        updateDrawerToggleAppearance()
+
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        drawerHeaderRow.orientation = .horizontal
+        drawerHeaderRow.alignment = .centerY
+        drawerHeaderRow.spacing = 4
+        drawerHeaderRow.addArrangedSubview(drawerToggleButton)
+        drawerHeaderRow.addArrangedSubview(headerSpacer)
+        drawerHeaderRow.isHidden = true
+
         orientation = .vertical
         alignment = .leading
         spacing = 2
         addArrangedSubview(row)
         addArrangedSubview(messageLabel)
         addArrangedSubview(backlightSwitch)
+        addArrangedSubview(drawerHeaderRow)
 
         NSLayoutConstraint.activate([
             row.widthAnchor.constraint(equalTo: widthAnchor),
-            messageLabel.widthAnchor.constraint(equalTo: widthAnchor)
+            messageLabel.widthAnchor.constraint(equalTo: widthAnchor),
+            drawerHeaderRow.widthAnchor.constraint(equalTo: widthAnchor)
         ])
     }
 
@@ -722,6 +831,222 @@ final class BrightnessControlSectionView: NSStackView {
             return "\(display.name)：\(detail)"
         }.joined(separator: "\n")
         return messageChanged
+    }
+
+    /// 同步各显示器行快照；返回布局是否变化（仅显隐或抽屉拓扑变化时需重算弹窗尺寸）。
+    @discardableResult
+    func updateDisplayRows(_ rows: [DisplayBrightnessRowItem]) -> Bool {
+        displayRows = rows
+        let showToggle = shouldShowDrawerToggle
+        let visibilityChanged = drawerHeaderRow.isHidden == showToggle
+        drawerHeaderRow.isHidden = !showToggle
+        drawerToggleButton.isHidden = !showToggle
+
+        if !showToggle {
+            let wasExpanded = isDrawerExpanded
+            if wasExpanded {
+                tearDownDrawer(notifyLayout: false)
+            }
+            return visibilityChanged || wasExpanded
+        }
+
+        guard isDrawerExpanded else { return visibilityChanged }
+
+        let sameTopology = drawerRowControls.count == rows.count
+            && zip(drawerRowControls, rows).allSatisfy {
+                $0.displayID == $1.id
+                    && $0.name == $1.name
+                    && $0.isBuiltIn == $1.isBuiltIn
+                    && $0.supportsControl == $1.supportsControl
+            }
+
+        if sameTopology {
+            let isDragging = NSApp.currentEvent?.type == .leftMouseDragged
+            for (controls, item) in zip(drawerRowControls, rows) {
+                if !isDragging || abs(controls.slider.doubleValue - item.brightness) > 0.05 {
+                    controls.slider.doubleValue = item.brightness
+                }
+                controls.valueLabel.stringValue = item.supportsControl
+                    ? "\(Int((item.brightness * 100).rounded()))%"
+                    : "—"
+            }
+            return visibilityChanged
+        }
+
+        tearDownDrawer(notifyLayout: false)
+        isDrawerExpanded = true
+        buildDrawerViews()
+        updateDrawerToggleAppearance()
+        return true
+    }
+
+    func updateFollowExternalDisplays(_ enabled: Bool) {
+        followExternalDisplays = enabled
+        followExternalSwitch?.state = enabled ? .on : .off
+    }
+
+    @objc private func toggleDrawer() {
+        setDrawerExpanded(!isDrawerExpanded)
+    }
+
+    func setDrawerExpanded(_ expanded: Bool) {
+        if expanded {
+            guard shouldShowDrawerToggle, !isDrawerExpanded else { return }
+            isDrawerExpanded = true
+            buildDrawerViews()
+            updateDrawerToggleAppearance()
+            onDrawerStateChange?()
+        } else {
+            tearDownDrawer(notifyLayout: true)
+        }
+    }
+
+    /// 收起抽屉或关闭弹窗时立即移除并彻底销毁所有独立滑条与开关子视图，释放内存。
+    func tearDownDrawer(notifyLayout: Bool = false) {
+        let wasExpanded = isDrawerExpanded
+        for controls in drawerRowControls {
+            controls.slider.target = nil
+            controls.slider.action = nil
+            controls.rowView.arrangedSubviews.forEach {
+                controls.rowView.removeArrangedSubview($0)
+                $0.removeFromSuperview()
+            }
+        }
+        drawerRowControls.removeAll(keepingCapacity: false)
+
+        if let followSwitch = followExternalSwitch {
+            followSwitch.target = nil
+            followSwitch.action = nil
+            followSwitch.removeFromSuperview()
+            followExternalSwitch = nil
+        }
+
+        if let container = drawerContainer {
+            let attached = constraints.filter {
+                $0.firstItem as AnyObject? === container || $0.secondItem as AnyObject? === container
+            }
+            NSLayoutConstraint.deactivate(attached)
+            container.arrangedSubviews.forEach {
+                container.removeArrangedSubview($0)
+                $0.removeFromSuperview()
+            }
+            removeArrangedSubview(container)
+            container.removeFromSuperview()
+            drawerContainer = nil
+        }
+
+        isDrawerExpanded = false
+        updateDrawerToggleAppearance()
+
+        if wasExpanded {
+            if notifyLayout {
+                onDrawerStateChange?()
+            }
+            malloc_zone_pressure_relief(nil, 0)
+        }
+    }
+
+    private func updateDrawerToggleAppearance() {
+        drawerToggleButton.title = L10n.string("brightness.per_display_toggle")
+        let symbolName = isDrawerExpanded ? "chevron.up" : "chevron.down"
+        drawerToggleButton.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        drawerToggleButton.setAccessibilityLabel(L10n.string("brightness.per_display_toggle"))
+        drawerToggleButton.setAccessibilityValue(
+            L10n.string(isDrawerExpanded ? "brightness.drawer_expanded" : "brightness.drawer_collapsed")
+        )
+        drawerToggleButton.setAccessibilityExpanded(isDrawerExpanded)
+    }
+
+    private func buildDrawerViews() {
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 4
+        container.edgeInsets = NSEdgeInsets(top: 3, left: 4, bottom: 2, right: 0)
+
+        var builtRows: [DrawerRowControls] = []
+        builtRows.reserveCapacity(displayRows.count)
+
+        for item in displayRows {
+            let nameLabel = NSTextField(labelWithString: item.name)
+            nameLabel.font = Palette.caption
+            nameLabel.textColor = .secondaryLabelColor
+            nameLabel.lineBreakMode = .byTruncatingTail
+            let badge = L10n.string(item.isBuiltIn ? "brightness.display_builtin_badge" : "brightness.display_external_badge")
+            nameLabel.toolTip = "\(item.name) (\(badge))"
+            nameLabel.widthAnchor.constraint(equalToConstant: 86).isActive = true
+
+            let itemSlider = NSSlider(
+                value: item.brightness,
+                minValue: 0,
+                maxValue: 1,
+                target: self,
+                action: #selector(handleDisplaySliderChanged(_:))
+            )
+            itemSlider.controlSize = .mini
+            itemSlider.isContinuous = true
+            itemSlider.isEnabled = item.supportsControl
+            itemSlider.setAccessibilityLabel(L10n.format("brightness.display_slider_a11y_format", item.name))
+
+            let pctLabel = NSTextField(
+                labelWithString: item.supportsControl ? "\(Int((item.brightness * 100).rounded()))%" : "—"
+            )
+            pctLabel.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+            pctLabel.textColor = item.supportsControl ? .labelColor : .tertiaryLabelColor
+            pctLabel.alignment = .right
+            pctLabel.widthAnchor.constraint(equalToConstant: 32).isActive = true
+
+            let rowStack = NSStackView(views: [nameLabel, itemSlider, pctLabel])
+            rowStack.orientation = .horizontal
+            rowStack.alignment = .centerY
+            rowStack.spacing = 6
+            container.addArrangedSubview(rowStack)
+            rowStack.widthAnchor.constraint(equalTo: container.widthAnchor, constant: -4).isActive = true
+
+            builtRows.append(
+                DrawerRowControls(
+                    displayID: item.id,
+                    name: item.name,
+                    isBuiltIn: item.isBuiltIn,
+                    supportsControl: item.supportsControl,
+                    rowView: rowStack,
+                    slider: itemSlider,
+                    valueLabel: pctLabel
+                )
+            )
+        }
+
+        let followSwitch = NSButton(
+            checkboxWithTitle: L10n.string("brightness.follow_external"),
+            target: self,
+            action: #selector(handleFollowExternalToggle(_:))
+        )
+        followSwitch.controlSize = .mini
+        followSwitch.font = Palette.caption
+        followSwitch.state = followExternalDisplays ? .on : .off
+        followSwitch.setAccessibilityLabel(L10n.string("brightness.follow_external"))
+        followSwitch.setAccessibilityHelp(L10n.string("brightness.follow_external_tooltip"))
+        followSwitch.toolTip = L10n.string("brightness.follow_external_tooltip")
+        container.addArrangedSubview(followSwitch)
+
+        drawerRowControls = builtRows
+        followExternalSwitch = followSwitch
+        drawerContainer = container
+        addArrangedSubview(container)
+        container.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+    }
+
+    @objc private func handleDisplaySliderChanged(_ sender: NSSlider) {
+        guard let row = drawerRowControls.first(where: { $0.slider === sender }) else { return }
+        let clamped = min(1, max(0, sender.doubleValue))
+        row.valueLabel.stringValue = "\(Int((clamped * 100).rounded()))%"
+        onAdjustDisplayBrightness?(clamped, row.displayID)
+    }
+
+    @objc private func handleFollowExternalToggle(_ sender: NSButton) {
+        let enabled = sender.state == .on
+        followExternalDisplays = enabled
+        onToggleFollowExternalDisplays?(enabled)
     }
 }
 
