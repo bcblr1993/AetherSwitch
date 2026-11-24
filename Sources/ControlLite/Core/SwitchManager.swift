@@ -568,6 +568,20 @@ public final class SwitchManager: @unchecked Sendable {
 
     // MARK: - 2. 隐藏桌面 (Hide Desktop Icons)
 
+    @discardableResult
+    public func setDesktopHidden(_ hidden: Bool) -> Bool {
+        finderLock.lock()
+        defer { finderLock.unlock() }
+        let currentHidden = finder.isDesktopHidden()
+        if currentHidden == hidden {
+            return currentHidden
+        }
+        // 隐藏桌面即 CreateDesktop = false
+        guard finder.write("CreateDesktop", value: !hidden) else { return currentHidden }
+        finder.restart()
+        return finder.isDesktopHidden()
+    }
+
     public func toggleHideDesktop() -> Bool {
         finderLock.lock()
         defer { finderLock.unlock() }
