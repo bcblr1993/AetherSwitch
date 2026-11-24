@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] - 2026-11-24 (Build 2026112402)
+
+### Changed
+- **全新液态玻璃双开关应用图标（`AppIcon.icns` & 官网 `icon.png`）**：全面重设计应用主图标，告别旧版扁平深蓝 S 线条，采用符合 macOS 原生 Liquid Glass 控制中心美学的曜石蓝液态玻璃超椭圆底板，搭配青绿流光毛玻璃开关与深烟熏遥测脉冲槽；通过 `generate_icon.swift` 精确抠除底色生成透明 `1024x1024` sRGB PNG（标准 `824x824` 视觉框 + 柔和 Dock 投影）及全分辨率 `.icns` 图标包，深浅色 Dock 与壁纸边缘均锐利自然。
+- **重绘菜单栏与面板头部矢量标识（`BrandGlyph`）**：按新应用图标的「上层开启态开关 + 下层脉冲遥测开关」双胶囊几何同步重绘单色矢量标识；主胶囊采用 `evenOdd` 复合路径镂空右侧旋钮（避免破坏背景底色），并自动适配 `flipped` 模板图与非 `flipped` `MenuBarStatusView` 绘图坐标系。
+
+### Tests
+- 在 `MenuBarSnapshotTests` 新增双开关几何拓扑及 `flipped` / 非 `flipped` 上下方向一致性像素级单元测试，并补全浅色/深色 `BrandGlyph` 与 `AppIcon` 视觉核验。
+
 ## [1.12.0] - 2026-11-24 (Build 2026112401)
 
 ### Added
