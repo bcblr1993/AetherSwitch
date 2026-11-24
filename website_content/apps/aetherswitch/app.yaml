@@ -7,15 +7,15 @@ sparklePublicKey: Ks+dYalMGrthBEP6rSTv8Cjs9Um5R9a5VO6cXH6tDq0=
 # 软件开启了 SURequireSignedFeed，更新清单必须原样转发软件自己签名的 appcast.xml
 appcastMode: mirror
 icon: ./media/icon.png
-tech: [Swift 6, AppKit, Mach, IOKit, Sparkle]
+tech: [Swift 6, AppKit, AppIntents, Mach, IOKit, Sparkle]
 
 tagline:
   zh: 极轻量 macOS 状态监控与高频快捷开关
   en: Ultra-lightweight macOS status monitor & essential quick toggles
 
 summary:
-  zh: "Apple 芯片 Mac 的原生中英双语状态栏工具：支持 CPU、GPU、内存、磁盘、温度与双向网速 6 项指标按需组合，展开面板查看进程、风扇转速、SoC 功耗、充电瓦数、网络与电池详情，集成限时常亮与 4 个高频开关、同步亮度控制及全键盘/VoiceOver 无障碍操作。"
-  en: "A native bilingual (English & Simplified Chinese) menu bar utility for Apple silicon Macs: customize up to six menu bar metrics, inspect processes, fan RPM, SoC power, charging wattage, network and battery details, with timed Keep Awake, four quick toggles, synchronized brightness and full keyboard/VoiceOver accessibility."
+  zh: "Apple 芯片 Mac 的原生中英双语状态栏工具：支持 6 项菜单栏指标按需组合，展开查看进程、风扇、SoC 功耗、充电瓦数与零权限蓝牙外设电量；集成多显示器独立亮度抽屉、限时常亮与 4 个高频开关、原生 AppIntents 快捷指令与 Spotlight，以及低电量/高温自适应节能守护。"
+  en: "A native bilingual (English & Simplified Chinese) menu bar utility for Apple silicon Macs: customize up to six menu bar metrics, inspect processes, fan RPM, SoC power, charging wattage and zero-permission Bluetooth accessory batteries, with a per-display brightness drawer, timed Keep Awake, native AppIntents for Shortcuts & Spotlight, and adaptive low-power/thermal throttling."
 
 platforms:
   - id: mac
@@ -90,10 +90,10 @@ showcase:
         zh: 自动跟随主接口或手动选择，查看双向速率、IPv4、Wi-Fi 连接信息和本次监测累计流量。
         en: Follow the primary interface or choose one, with rates, IPv4, Wi-Fi details and monitored transfer totals.
       image: ./media/network-light.png
-    - title: { zh: 原生电池状态与充电瓦数, en: Native Battery & Charging Wattage }
+    - title: { zh: 原生电池、充电瓦数与零权限外设电量, en: Native Battery, Wattage & Zero-Permission Accessory Power }
       caption:
-        zh: 电量、充电状态、充电器瓦数、瞬时充放电功率、预计时间、最大容量与循环次数；慢速缓存，不支持时明确提示。
-        en: Charge, power state, adapter wattage, live battery power, estimated time, maximum capacity and cycles, with slow cached reads and explicit unavailable states.
+        zh: 电量、充电状态、充电器瓦数、瞬时充放电功率、健康度与循环次数，并基于零权限 IOKit 只读展示蓝牙键鼠、触控板与耳机电量（60 秒按需缓存，无蓝牙隐私弹窗）。
+        en: Charge, power state, adapter wattage, live battery power, health and cycles, plus zero-permission IOKit readings for Bluetooth mice, trackpads, keyboards and headphones (60s on-demand cache, no Bluetooth privacy prompts).
       image: ./media/battery-light.png
 
 features:
@@ -103,31 +103,31 @@ features:
     zh: 使用 macOS 原生系统接口采样，并在弹出面板中提供各指标的历史曲线与细分信息。
     en: Samples through native macOS APIs and presents history charts and detailed readings in the popover.
   items:
-    - kicker: { zh: "4 大快捷开关", en: "4 Instant Toggles" }
-      title: { zh: "解决高频痛点，一触即发", en: "Tackle daily friction with a single click" }
+    - kicker: { zh: "快捷开关 · 分屏亮度 · AppIntents", en: "Quick Toggles · Per-Display Brightness · AppIntents" }
+      title: { zh: "高频控制一触即发，深度融入 macOS 生态", en: "Effortless daily control, deeply integrated with macOS" }
       body:
-        zh: 包含保持屏幕常亮、隐藏桌面图标、显示 Finder 隐藏文件与深色模式切换。
-        en: Keep screen awake, hide desktop icons, toggle hidden dotfiles and switch dark mode with zero friction.
+        zh: 集成 4 大快捷开关、多显示器独立亮度抽屉与原生 AppIntents，支持通过快捷指令与 Spotlight 一键自动化调度。
+        en: Combines four instant toggles, an on-demand per-display brightness drawer and native AppIntents for Shortcuts and Spotlight automation.
       details:
         - { zh: "保持常亮基于原生 IOKit 内核超时电源断言（IOPMAssertion），支持无限期 / 30 分钟 / 1 小时 / 2 小时定时与低电量（≤ 20%）自动释放，零应用内轮询定时器，退出即归还。", en: "Keep Awake uses native IOKit kernel-timed power assertions with Indefinite / 30m / 1h / 2h presets and ≤ 20% low-battery auto-release, zero in-app polling timers, and clean release on exit." }
-        - { zh: "隐藏桌面一键收起杂乱文件，录屏与投屏演示更清爽专业。", en: "Clear cluttered desktop icons instantly for clean screencasts and presentations." }
-        - { zh: "显示隐藏文件一键切换访达点文件，无需终端重复输入 defaults 命令。", en: "Toggle dotfiles in Finder without repetitive terminal defaults commands." }
-    - kicker: { zh: "6 项 Stats 菜单栏指标", en: "6-Metric Stats Menubar" }
+        - { zh: "多显示器独立亮度抽屉按需展开，独立微调内置屏与各外接屏（DDC/原生），并可随时开关「外屏跟随系统自动亮度」，收起后即刻销毁子视图零内存滞留。", en: "On-demand per-display brightness drawer adjusts built-in and external displays (DDC/native) independently with a toggle for system auto-brightness following, releasing drawer views immediately on collapse." }
+        - { zh: "原生 AppIntents 接入快捷指令与 Spotlight：支持一键开启限时常亮、演示模式（隐藏桌面图标 + 屏幕常亮原子联动）及获取结构化系统状态快照。", en: "Native AppIntents power Shortcuts and Spotlight: enable timed Keep Awake, toggle Presentation Mode (atomic hide-desktop + Keep Awake) and fetch a structured system status snapshot." }
+    - kicker: { zh: "6 项 Stats 菜单栏指标与零权限外设电量", en: "6-Metric Stats Menubar & Accessory Batteries" }
       title: { zh: "等宽防抖与精简默认列，契合刘海屏 Mac", en: "Monospaced layout, notch-friendly out of the box" }
       body:
-        zh: 支持 CPU、GPU、内存、磁盘、温度与双向网速 6 项菜单栏指标自由组合与排序，面板内同步提供只读风扇转速监控。
-        en: Supports CPU, GPU, memory, storage, temperature and network rates in customizable columns, plus read-only fan RPM monitoring inside the panel.
+        zh: 支持 CPU、GPU、内存、磁盘、温度与双向网速 6 项菜单栏指标自由组合与排序，面板内同步提供只读风扇转速、SoC 功耗与零权限蓝牙外设电量。
+        en: Supports CPU, GPU, memory, storage, temperature and network rates in customizable columns, plus read-only fan RPM, SoC power and zero-permission Bluetooth accessory battery readings inside the panel.
       details:
         - { zh: "负载指标按 4 档利用率变色，温度指标采用独立量程（25–110°C）与专属热状态色彩映射，浅色与深色菜单栏分别调校色值。", en: "Utilization uses four color tiers while temperature uses a dedicated 25–110°C scale and thermal color mapping, tuned separately for light and dark menu bars." }
         - { zh: "首次启动默认开启高频精简 3 列（CPU、内存与网速）防止 MacBook 刘海屏截断隐藏；可在详情页或菜单栏外观设置中任意开关排序，全部关闭时只保留图标入口。", en: "Defaults to 3 essential columns (CPU, memory and network) on first launch to avoid MacBook notch clipping; toggle or reorder all six metrics anytime, or keep only the icon." }
-        - { zh: "纯原生系统字体与固定宽度防抖排版，杜绝数字跳动与截断省略号问题。", en: "Native system font alignment and stabilized widths prevent numeric jitter and truncation ellipsis." }
-    - kicker: { zh: "智能能耗调度", en: "Adaptive Power Management" }
-      title: { zh: "折叠深度休眠，后台 CPU 占用 ≤ 0.1%", en: "Detail readers sleep; hidden metrics stop sampling, idle CPU ≤ 0.1%" }
+        - { zh: "零权限只读外设电量仅通过原生 IOKit IOPS 与 IORegistry 采集键鼠、触控板与耳机电量，不引入 CoreBluetooth、零蓝牙权限弹窗，60 秒按需缓存仅在电池页采样。", en: "Zero-permission accessory battery monitoring reads mice, trackpads, keyboards and headphones via native IOKit IOPS and IORegistry—no CoreBluetooth, no Bluetooth permission prompt, cached for 60s only on the Battery tab." }
+    - kicker: { zh: "低电量 / 高温自适应节能守护", en: "Adaptive Power & Thermal Guard" }
+      title: { zh: "折叠深度休眠与事件驱动降频，后台 CPU ≤ 0.1%", en: "Event-driven throttling & deep sleep, idle CPU ≤ 0.1%" }
       body:
-        zh: 自适应采样调度在面板收起时彻底停止 GPU、多核 CPU 与未显示的传感器轮询，杜绝不必要的电池消耗。
-        en: Adaptive scheduling puts GPU, multi-core CPU and hidden sensor polling to sleep when collapsed, eliminating background battery drain.
+        zh: 面板收起时彻底停止 GPU、多核 CPU 与未显示传感器轮询；系统进入低电量模式或高温热压力时自动将折叠态采样间隔翻倍，展开后即刻恢复流畅交互。
+        en: Detail readers sleep completely when collapsed; event-driven listeners automatically double the folded sampling interval in Low Power Mode or under serious/critical thermal pressure, restoring 1.0x responsiveness when opened.
       details:
-        - { zh: "本机折叠状态连续监测内核累计 CPU 时间、物理内存和主线程响应，详情面板与菜单栏设置窗口另行逐页验收。", en: "Local collapsed-state checks measure kernel CPU time, physical memory and main-thread response; detail views and settings windows are verified together." }
+        - { zh: "100% 监听系统低电量与热状态通知（零轮询定时器），折叠态自动启用 2.0x 节能降频并在概览系统状态条提供双语提示。", en: "100% notification-driven for Low Power Mode and thermal state transitions (zero polling timers), activating 2.0x folded throttling with a bilingual indicator in the overview strip." }
         - { zh: "纯原生 Swift 6 + 系统框架架构（仅内嵌唯一在线更新组件 Sparkle），折叠态常驻内存约 14 MB，全量详情弹窗物理内存峰值严格 ≤ 50 MB。", en: "Built on pure Swift 6 and native macOS frameworks (with Sparkle as the sole updater component), idling around ~14 MB collapsed with a strict ≤ 50 MB peak physical footprint across all popovers." }
 
 benchmarks:

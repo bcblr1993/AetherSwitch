@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import CoreGraphics
 
 public enum MenuBarStyle: String, CaseIterable, Codable {
     case statsColumns = "statsColumns"     // Stats 顶级监控（CPU / GPU / RAM / SSD / 温度 / 速率）
@@ -157,7 +158,7 @@ public final class AppState: ObservableObject {
     @Published public var isPopoverOpen: Bool = false {
         didSet {
             guard !isInitializing, oldValue != isPopoverOpen else { return }
-            adjustTimerFrequency()
+            refreshPowerSavingState(forceAdjustTimer: true)
             if isPopoverOpen {
                 refreshFull()
             }
@@ -181,9 +182,37 @@ public final class AppState: ObservableObject {
     @Published public private(set) var keepAwakeStatus = KeepAwakeStatus()
     /// 测试或外部可覆盖的常亮配置钩子；为 `nil` 时直接接通 `SwitchManager.setKeepAwake(_:duration:lowBatteryAutoRelease:)`。
     public var onKeepAwakeConfigure: ((_ active: Bool, _ duration: KeepAwakePreset, _ autoReleaseLowBattery: Bool) -> Bool)?
+
+    // MARK: - 分屏幕独立亮度 & 外屏自动亮度跟随状态
+    @Published public var displayBrightnessRows: [DisplayBrightnessItem] = []
+    @Published public var followExternalDisplays: Bool {
+        didSet {
+            guard !isInitializing, oldValue != followExternalDisplays else { return }
+            defaults.set(followExternalDisplays, forKey: BrightnessManager.followExternalDisplaysKey)
+        }
+    }
+    /// 分屏幕独立亮度调节测试钩子；为 `nil` 时直接接通 `BrightnessManager.setDisplayBrightness(_:for:)`。
+    public var onSetDisplayBrightness: ((_ value: Double, _ displayID: CGDirectDisplayID) -> Void)?
+    /// 外屏跟随系统自动亮度开关回调钩子。
+    public var onFollowExternalDisplaysChange: ((_ enabled: Bool) -> Void)?
+
+    // MARK: - 低电量 / 高温自适应降频守护（单一事实来源：`AdaptiveSamplingPolicy` + `AdaptiveSamplingObserver`）
+    /// 折叠态自适应降频采样当前是否生效（采样间隔 2.0x）。
+    @Published public private(set) var isPowerSavingSamplingActive: Bool = false
+    /// 系统是否处于低电量模式或 `.serious` / `.critical` 热状态（供概览紧凑状态条在展开时显示节能降频提示）。
+    @Published public private(set) var isPowerSavingConditionActive: Bool = false
+    private var adaptiveSamplingDecision = AdaptiveSamplingDecision(
+        intervalMultiplier: AdaptiveSamplingPolicy.normalIntervalMultiplier,
+        isPowerSavingActive: false,
+        reason: .none
+    )
+    private let adaptiveConditionsProvider: @Sendable () -> AdaptiveSamplingConditions
+    private var adaptiveSamplingObserver: AdaptiveSamplingObserver?
+
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
     private var needsResample = false
+    private var lastSampledTab: String = "overview"
     var sampleOverride: (@Sendable (Bool, String, Bool, Set<MenuBarMetric>) -> (SystemMetrics, SwitchStates?))?
     private var timer: Timer?
     private var wakeSubscription: AnyCancellable?
@@ -192,6 +221,7 @@ public final class AppState: ObservableObject {
 
     var currentTimerIntervalForTesting: TimeInterval? { timer?.timeInterval }
     var currentTimerToleranceForTesting: TimeInterval? { timer?.tolerance }
+    var currentAdaptiveSamplingDecisionForTesting: AdaptiveSamplingDecision { adaptiveSamplingDecision }
 
     @Published var backgroundInterval: Double {
         didSet {
@@ -202,10 +232,31 @@ public final class AppState: ObservableObject {
         }
     }
 
-    init(defaults: UserDefaults = .standard, startMonitoring: Bool = true, switchManager: SwitchManager = .shared) {
+    init(
+        defaults: UserDefaults = .standard,
+        startMonitoring: Bool = true,
+        switchManager: SwitchManager = .shared,
+        powerStateProvider: (@Sendable () -> Bool)? = nil,
+        thermalStateProvider: (@Sendable () -> ProcessInfo.ThermalState)? = nil,
+        powerNotificationCenter: NotificationCenter = .default
+    ) {
         self.defaults = defaults
         self.monitoringEnabled = startMonitoring
         self.switchMgr = switchManager
+        let conditionsProvider: @Sendable () -> AdaptiveSamplingConditions
+        if powerStateProvider != nil || thermalStateProvider != nil {
+            let readLowPower = powerStateProvider ?? { ProcessInfo.processInfo.isLowPowerModeEnabled }
+            let readThermal = thermalStateProvider ?? { ProcessInfo.processInfo.thermalState }
+            conditionsProvider = {
+                AdaptiveSamplingConditions(
+                    isLowPowerMode: readLowPower(),
+                    thermalState: readThermal()
+                )
+            }
+        } else {
+            conditionsProvider = { .current() }
+        }
+        self.adaptiveConditionsProvider = conditionsProvider
 
         let savedStyle = defaults.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
         let resolvedStyle: MenuBarStyle
@@ -221,7 +272,24 @@ public final class AppState: ObservableObject {
         self.backgroundInterval = [1.0, 2.0, 5.0, 10.0].contains(savedInterval) ? savedInterval : 5.0
         self.keepAwakeDuration = KeepAwakePreset(rawValue: defaults.integer(forKey: KeepAwakePreset.defaultsKey)) ?? .indefinite
         self.keepAwakeAutoReleaseOnLowBattery = defaults.bool(forKey: KeepAwakePreset.autoReleaseDefaultsKey)
+        self.followExternalDisplays = (defaults.object(forKey: BrightnessManager.followExternalDisplaysKey) as? Bool) ?? true
         self.isInitializing = false
+
+        self.adaptiveSamplingObserver = AdaptiveSamplingObserver(
+            notificationCenter: powerNotificationCenter,
+            conditionsProvider: conditionsProvider
+        ) { [weak self] conditions in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.applyAdaptiveSampling(conditions: conditions, forceAdjustTimer: false)
+                }
+            } else {
+                Task { @MainActor [weak self] in
+                    self?.applyAdaptiveSampling(conditions: conditions, forceAdjustTimer: false)
+                }
+            }
+        }
+        refreshPowerSavingState(forceAdjustTimer: false)
 
         if startMonitoring || switchManager !== SwitchManager.shared {
             switchMgr.onKeepAwakeStatusChange = { [weak self] status in
@@ -255,6 +323,69 @@ public final class AppState: ObservableObject {
         adjustTimerFrequency()
     }
 
+    // MARK: - 低电量 / 高温自适应降频监听
+
+    public func refreshPowerSavingState(forceAdjustTimer: Bool = false) {
+        let conditions = adaptiveSamplingObserver?.currentConditions ?? adaptiveConditionsProvider()
+        applyAdaptiveSampling(conditions: conditions, forceAdjustTimer: forceAdjustTimer)
+    }
+
+    private func applyAdaptiveSampling(conditions: AdaptiveSamplingConditions, forceAdjustTimer: Bool) {
+        let decision = AdaptiveSamplingPolicy.evaluate(
+            conditions: conditions,
+            isPopoverOpen: isPopoverOpen
+        )
+        let multiplierChanged = adaptiveSamplingDecision.intervalMultiplier != decision.intervalMultiplier
+        adaptiveSamplingDecision = decision
+        if isPowerSavingSamplingActive != decision.isPowerSavingActive {
+            isPowerSavingSamplingActive = decision.isPowerSavingActive
+        }
+        let constrained = conditions.shouldThrottleWhenFolded
+        if isPowerSavingConditionActive != constrained {
+            isPowerSavingConditionActive = constrained
+        }
+        if forceAdjustTimer || multiplierChanged {
+            adjustTimerFrequency()
+        }
+    }
+
+    // MARK: - 分屏幕亮度 & 外屏跟随控制接口
+
+    public func setDisplayBrightness(
+        _ value: Double,
+        for displayID: CGDirectDisplayID,
+        brightnessManager: BrightnessManager? = nil
+    ) {
+        guard value.isFinite else { return }
+        let clamped = min(1, max(0, value))
+        if let index = displayBrightnessRows.firstIndex(where: { $0.id == displayID }) {
+            let existing = displayBrightnessRows[index]
+            displayBrightnessRows[index] = DisplayBrightnessItem(
+                id: existing.id,
+                name: existing.name,
+                isBuiltIn: existing.isBuiltIn,
+                brightness: clamped,
+                supportsControl: existing.supportsControl
+            )
+        }
+        if let onSetDisplayBrightness {
+            onSetDisplayBrightness(clamped, displayID)
+        } else if let brightnessManager {
+            brightnessManager.setDisplayBrightness(clamped, for: displayID)
+        } else if defaults === UserDefaults.standard {
+            BrightnessManager.shared.setDisplayBrightness(clamped, for: displayID)
+        }
+    }
+
+    public func setFollowExternalDisplays(_ enabled: Bool) {
+        followExternalDisplays = enabled
+        if let onFollowExternalDisplaysChange {
+            onFollowExternalDisplaysChange(enabled)
+        } else if defaults === UserDefaults.standard {
+            BrightnessManager.shared.setFollowExternalDisplays(enabled)
+        }
+    }
+
     // MARK: - 动态频率定时器
 
     private func adjustTimerFrequency() {
@@ -264,7 +395,8 @@ public final class AppState: ObservableObject {
         if isPopoverOpen {
             startTimer(interval: 1.0, tolerance: 0.0)
         } else if !SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty {
-            startTimer(interval: backgroundInterval, tolerance: backgroundInterval * 0.2)
+            let effectiveInterval = adaptiveSamplingDecision.effectiveInterval(base: backgroundInterval)
+            startTimer(interval: effectiveInterval, tolerance: effectiveInterval * 0.2)
         }
     }
 
@@ -298,6 +430,8 @@ public final class AppState: ObservableObject {
         needsResample = false
         let isFull = isPopoverOpen
         let tab = Self.normalizedTab(selectedTab)
+        let didSwitchTab = isFull && tab != lastSampledTab
+        if isFull { lastSampledTab = tab }
         let visible = SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics)
         let revision = switchRevision
         let override = sampleOverride
@@ -313,6 +447,9 @@ public final class AppState: ObservableObject {
                 let s = (isFull && tab == "overview") ? switchManager.getCurrentStates() : nil
                 let k = (isFull && tab == "overview") ? switchManager.getKeepAwakeStatus() : nil
                 return (m, s, k)
+            }
+            if didSwitchTab {
+                malloc_zone_pressure_relief(nil, 0)
             }
             await MainActor.run { [weak self] in
                 guard let self else { return }

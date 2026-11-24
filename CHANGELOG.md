@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-11-24 (Build 2026112401)
+
+### Added
+- **多显示器独立亮度抽屉与外屏跟随开关**：`BrightnessManager` 新增 `DisplayBrightnessItem` 快照与按屏幕独立调节接口 `setDisplayBrightness(_:for:)`，复用按端点隔离的 I2C 锁与 EDID 校验，不覆盖其他屏幕；面板亮度区在检测到多屏或外接屏时提供按需展开的「分屏微调」抽屉与「外屏跟随系统自动亮度」开关，默认收起零子视图开销，收起或关闭弹窗立即销毁子控件并保持弹窗总高度 ≤ 800pt、完整支持键盘与 VoiceOver 无障碍。
+- **原生 `AppIntents` 快捷指令与 Spotlight 集成**：基于 macOS 14+ 系统原生 `AppIntents` 框架（零第三方依赖、零新增权限），新增 `EnableKeepAwakeIntent`（开启限时常亮与低电量自动释放）、`TogglePresentationModeIntent`（一键原子联动隐藏桌面图标与防休眠常亮）与 `GetSystemSnapshotIntent`（输出结构化系统状态摘要），并通过 `AetherSwitchShortcuts` 注册快捷指令与 Spotlight 入口。
+- **零权限只读外设电量监控**：新增 `AccessoryBatteryMonitor`，仅通过原生 IOKit `IOPS` 与只读 `IORegistry` 采集蓝牙鼠标、触控板、键盘与耳机电量并自动分类去重，绝不引入 `CoreBluetooth` 或触发蓝牙隐私弹窗；内置 60 秒节流缓存且仅在电池详情页展开时按需采样（折叠态与非电池页零调用），电池详情页原生中英双语展示并在无外设时自动隐藏。
+- **事件驱动低电量 / 高温自适应节能守护**：新增单一事实来源 `AdaptiveSamplingPolicy` 与 `AdaptiveSamplingObserver`（监听系统低电量模式与热状态通知，零轮询定时器），折叠态在低电量或 `.serious`/`.critical` 热压力下自动将后台采样间隔翻倍（2.0x）以降低能耗，展开交互态恢复 1.0x 流畅采样，概览紧凑系统状态条同步显示双语「节能降频 / Power Save」提示。
+
+### Performance & Memory
+- **物理内存峰值瘦身**：`L10n` 在 `.lproj` 本地化包加载成功时不再构造与常驻内置双语兜底大字典；`DashboardCardView`、`Palette` 与 `NativePanelController` 优化离屏位图与符号缓存回收；`MenuBarSettingsController` 改用轻量显式布局与自绘静态标签，在引入 `AppIntents` 的同时为 ≤ 50 MB 物理内存峰值门禁预留充裕余量。
+
+### Tests
+- 新增 `Stage3CoreAndIntentsTests`、`Stage3UIAndPowerGuardTests` 与 `Stage3IntegrationTests` 自动化测试，覆盖分屏亮度 UI→Core 接线、零权限外设电量解析/去重/60s 缓存与中英双语渲染、低电量/高温折叠态采样间隔翻倍与恢复、`AppIntents` 全流程执行及 `.lproj` 懒加载验证。
+
 ## [1.11.0] - 2026-11-23 (Build 2026112302)
 
 ### Added
