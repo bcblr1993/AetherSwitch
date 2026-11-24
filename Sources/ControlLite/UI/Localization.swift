@@ -118,12 +118,16 @@ public enum L10n {
         if let cached = lprojBundleCacheLock.withLock({ $0[language] }) {
             return cached
         }
+        let lowercased = language.lowercased()
+        let candidates = lowercased == language ? [language] : [language, lowercased]
         var found: [Bundle] = []
         for bundle in candidateBundles() {
-            if let path = bundle.path(forResource: language, ofType: "lproj"),
-               let langBundle = Bundle(path: path),
-               !found.contains(where: { $0 === langBundle }) {
-                found.append(langBundle)
+            for name in candidates {
+                if let path = bundle.path(forResource: name, ofType: "lproj"),
+                   let langBundle = Bundle(path: path),
+                   !found.contains(where: { $0 === langBundle }) {
+                    found.append(langBundle)
+                }
             }
         }
         let resolved = found
