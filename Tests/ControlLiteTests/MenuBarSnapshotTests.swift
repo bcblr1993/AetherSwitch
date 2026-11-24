@@ -112,10 +112,85 @@ final class MenuBarSnapshotTests: XCTestCase {
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: "/tmp/aetherswitch-menubar-\(name).png"))
     }
 
-    func testBrandGlyphTemplateImage() {
+    func testBrandGlyphTemplateImage() throws {
         let image = BrandGlyph.templateImage(size: NSSize(width: 18, height: 16))
         XCTAssertTrue(image.isTemplate)
         XCTAssertEqual(image.size, NSSize(width: 18, height: 16))
+
+        let bitmap = try renderBitmap(pixelsWide: 36, pixelsHigh: 32, flipped: true) { rect in
+            BrandGlyph.draw(in: rect, color: .black)
+        }
+        // 1. Central horizontal gap between top ON switch and bottom telemetry switch must stay empty.
+        let midAlpha = alphaAt(bitmap, x: 18, y: 16)
+        XCTAssertLessThan(midAlpha, 0.05, "Center gap between top and bottom pills must be empty (dual-toggle geometry)")
+
+        // 2. Top pill (visual top in top-left coords: y around 6..8): left track solid, right knob cutout empty.
+        let topY = 7
+        XCTAssertGreaterThan(alphaAt(bitmap, x: 10, y: topY), 0.7, "Top ON switch left track must be filled")
+        XCTAssertLessThan(alphaAt(bitmap, x: 28, y: topY), 0.05, "Top ON switch right knob cutout must be transparent")
+
+        // 3. Bottom pill (visual bottom: y around 24..26): left knob solid.
+        let bottomY = 24
+        XCTAssertGreaterThan(alphaAt(bitmap, x: 8, y: bottomY), 0.7, "Bottom telemetry switch left knob must be filled")
+    }
+
+    func testBrandGlyphDrawsIdenticalTopBottomOrientationInFlippedAndUnflippedContexts() throws {
+        let flippedBitmap = try renderBitmap(pixelsWide: 36, pixelsHigh: 32, flipped: true) { rect in
+            BrandGlyph.draw(in: rect, color: .black)
+        }
+        let unflippedBitmap = try renderBitmap(pixelsWide: 36, pixelsHigh: 32, flipped: false) { rect in
+            BrandGlyph.draw(in: rect, color: .black)
+        }
+
+        // Top half has right-side clear cutout and solid left track in BOTH flipped & unflipped contexts.
+        for bitmap in [flippedBitmap, unflippedBitmap] {
+            XCTAssertGreaterThan(alphaAt(bitmap, x: 10, y: 7), 0.7)
+            XCTAssertLessThan(alphaAt(bitmap, x: 28, y: 7), 0.05)
+            XCTAssertLessThan(alphaAt(bitmap, x: 18, y: 16), 0.05)
+            XCTAssertGreaterThan(alphaAt(bitmap, x: 8, y: 24), 0.7)
+        }
+
+        // Compare normalized pixel alphas across flipped vs unflipped renders.
+        var maxDiff: CGFloat = 0
+        for y in 0..<32 {
+            for x in 0..<36 {
+                let diff = abs(alphaAt(flippedBitmap, x: x, y: y) - alphaAt(unflippedBitmap, x: x, y: y))
+                maxDiff = max(maxDiff, diff)
+            }
+        }
+        XCTAssertLessThan(maxDiff, 0.15, "Flipped and unflipped renders must match visually")
+    }
+
+    private func renderBitmap(pixelsWide: Int, pixelsHigh: Int, flipped: Bool, draw: (NSRect) -> Void) throws -> NSBitmapImageRep {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelsWide,
+            pixelsHigh: pixelsHigh,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        let cg = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: rep))
+        if flipped {
+            let flippedCtx = NSGraphicsContext(cgContext: cg.cgContext, flipped: true)
+            cg.cgContext.translateBy(x: 0, y: CGFloat(pixelsHigh))
+            cg.cgContext.scaleBy(x: 1, y: -1)
+            NSGraphicsContext.current = flippedCtx
+        } else {
+            NSGraphicsContext.current = cg
+        }
+        draw(NSRect(x: 0, y: 0, width: pixelsWide, height: pixelsHigh))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
+    }
+
+    private func alphaAt(_ rep: NSBitmapImageRep, x: Int, y: Int) -> CGFloat {
+        rep.colorAt(x: x, y: y)?.alphaComponent ?? 0
     }
 }
 

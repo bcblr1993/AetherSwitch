@@ -1,40 +1,107 @@
 import AppKit
 
-/// S 形开关：同一套几何用于应用图标、菜单栏和面板标题。
+/// 双开关液态遥测矢量标识：呼应应用图标的「控制 + 监控」双胶囊几何，
+/// 统一用于状态栏图标、折叠占位符与面板头部（自动适配 flipped 与非 flipped 坐标系）。
 enum BrandGlyph {
     static func draw(in rect: NSRect, color: NSColor, secondary: NSColor? = nil, knobColor: NSColor? = nil) {
-        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
-            NSPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
+        guard rect.width > 1, rect.height > 1 else { return }
+        let isFlipped = NSGraphicsContext.current?.isFlipped ?? false
+        let w = rect.width
+        let h = rect.height
+        let insetX = max(0.5, w * 0.04)
+        let pillW = max(1, w - insetX * 2)
+        let pillH = h * 0.42
+        let gap = h * 0.12
+        let topYFromTop = (h - (pillH * 2 + gap)) / 2
+        let bottomYFromTop = topYFromTop + pillH + gap
+
+        func pillRect(yFromTop: CGFloat) -> NSRect {
+            let originY = isFlipped
+                ? rect.minY + yFromTop
+                : rect.maxY - yFromTop - pillH
+            return NSRect(x: rect.minX + insetX, y: originY, width: pillW, height: pillH)
         }
-        let path = NSBezierPath()
-        path.move(to: point(0.80, 0.22))
-        path.line(to: point(0.34, 0.22))
-        path.curve(to: point(0.34, 0.50), controlPoint1: point(0.06, 0.22), controlPoint2: point(0.06, 0.50))
-        path.line(to: point(0.66, 0.50))
-        path.curve(to: point(0.66, 0.78), controlPoint1: point(0.94, 0.50), controlPoint2: point(0.94, 0.78))
-        path.line(to: point(0.20, 0.78))
-        path.lineWidth = min(rect.width, rect.height) * 0.21
-        path.lineCapStyle = .round; path.lineJoinStyle = .round
-        if let secondary, let context = NSGraphicsContext.current?.cgContext {
+
+        func pointIn(_ box: NSRect, nx: CGFloat, nyFromTop: CGFloat) -> NSPoint {
+            let x = box.minX + nx * box.width
+            let y = isFlipped
+                ? box.minY + nyFromTop * box.height
+                : box.maxY - nyFromTop * box.height
+            return NSPoint(x: x, y: y)
+        }
+
+        let topRect = pillRect(yFromTop: topYFromTop)
+        let bottomRect = pillRect(yFromTop: bottomYFromTop)
+        let strokeW = max(1.15, min(w, h) * 0.085)
+
+        let topKnobDiameter = pillH * 0.68
+        let topKnobCenter = NSPoint(x: topRect.maxX - pillH / 2, y: topRect.midY)
+        let topKnob = NSBezierPath(ovalIn: NSRect(
+            x: topKnobCenter.x - topKnobDiameter / 2,
+            y: topKnobCenter.y - topKnobDiameter / 2,
+            width: topKnobDiameter,
+            height: topKnobDiameter
+        ))
+
+        // 1. 上层开启态开关胶囊（实心填充 + 右侧旋钮；无 knobColor 时采用 evenOdd 镂空，避免破坏底层背景）
+        let topPill = NSBezierPath(roundedRect: topRect, xRadius: pillH / 2, yRadius: pillH / 2)
+        if knobColor == nil {
+            topPill.append(topKnob)
+            topPill.windingRule = .evenOdd
+        }
+        if let secondary {
             NSGraphicsContext.saveGraphicsState()
-            context.addPath(path.cgPath)
-            context.setLineWidth(path.lineWidth)
-            context.setLineCap(.round); context.setLineJoin(.round)
-            context.replacePathWithStrokedPath(); context.clip()
-            NSGradient(starting: color, ending: secondary)?.draw(in: rect, angle: 90)
+            topPill.addClip()
+            NSGradient(starting: color, ending: secondary)?.draw(in: topRect, angle: isFlipped ? 90 : 270)
             NSGraphicsContext.restoreGraphicsState()
-        } else { color.setStroke(); path.stroke() }
-        let diameter = min(rect.width, rect.height) * 0.155
-        let center = point(0.80, 0.22)
-        let knob = NSBezierPath(ovalIn: NSRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter))
-        if let knobColor { knobColor.setFill(); knob.fill() }
-        else {
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current?.cgContext.setBlendMode(.clear)
-            knob.fill()
-            NSGraphicsContext.restoreGraphicsState()
+        } else {
+            color.setFill()
+            topPill.fill()
+        }
+        if let knobColor {
+            knobColor.setFill()
+            topKnob.fill()
+        }
+
+        // 2. 下层遥测态开关胶囊（外框描边 + 左侧实心旋钮 + 右侧脉冲波形）
+        let strokedRect = bottomRect.insetBy(dx: strokeW / 2, dy: strokeW / 2)
+        let bottomRadius = max(0.5, strokedRect.height / 2)
+        let bottomPill = NSBezierPath(roundedRect: strokedRect, xRadius: bottomRadius, yRadius: bottomRadius)
+        bottomPill.lineWidth = strokeW
+        color.setStroke()
+        bottomPill.stroke()
+
+        let bottomKnobDiameter = pillH * 0.46
+        let bottomKnobCenter = NSPoint(x: bottomRect.minX + pillH / 2, y: bottomRect.midY)
+        let bottomKnob = NSBezierPath(ovalIn: NSRect(
+            x: bottomKnobCenter.x - bottomKnobDiameter / 2,
+            y: bottomKnobCenter.y - bottomKnobDiameter / 2,
+            width: bottomKnobDiameter,
+            height: bottomKnobDiameter
+        ))
+        color.setFill()
+        bottomKnob.fill()
+
+        let waveStartX = bottomRect.minX + pillH * 0.92
+        let waveEndX = bottomRect.maxX - pillH * 0.38
+        if waveEndX > waveStartX + 2 {
+            let waveBox = NSRect(x: waveStartX, y: bottomRect.minY, width: waveEndX - waveStartX, height: bottomRect.height)
+            let wave = NSBezierPath()
+            wave.move(to: pointIn(waveBox, nx: 0.0, nyFromTop: 0.50))
+            wave.line(to: pointIn(waveBox, nx: 0.18, nyFromTop: 0.50))
+            wave.line(to: pointIn(waveBox, nx: 0.36, nyFromTop: 0.66))
+            wave.line(to: pointIn(waveBox, nx: 0.54, nyFromTop: 0.30))
+            wave.line(to: pointIn(waveBox, nx: 0.72, nyFromTop: 0.70))
+            wave.line(to: pointIn(waveBox, nx: 0.88, nyFromTop: 0.50))
+            wave.line(to: pointIn(waveBox, nx: 1.0, nyFromTop: 0.50))
+            wave.lineWidth = max(0.95, strokeW * 0.74)
+            wave.lineCapStyle = .round
+            wave.lineJoinStyle = .round
+            (secondary ?? color).setStroke()
+            wave.stroke()
         }
     }
+
     static func templateImage(size: NSSize) -> NSImage {
         let image = NSImage(size: size, flipped: true) { rect in
             draw(in: rect.insetBy(dx: 0.5, dy: 0), color: .black)
