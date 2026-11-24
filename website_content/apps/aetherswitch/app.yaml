@@ -42,7 +42,7 @@ hero:
 
 showcase:
   eyebrow: { zh: 界面设计与交互体验, en: Interface and Experience }
-  title: { zh: 抬眼即览系统脉搏，点按随心掌控。, en: System pulse at a glance, controls at your fingertips. }
+  title: { zh: "抬眼即览系统脉搏，点按随心掌控。", en: "System pulse at a glance, controls at your fingertips." }
   lead:
     zh: 告别臃肿后台常驻，将高频快捷开关与全方位硬件监控汇聚于纯净原生下拉面板。
     en: Strip away bloated background daemons. Essential quick toggles and comprehensive hardware telemetry in one native glassmorphism panel.
@@ -90,7 +90,7 @@ showcase:
         zh: 自动跟随主接口或手动选择，查看双向速率、IPv4、Wi-Fi 连接信息和本次监测累计流量。
         en: Follow the primary interface or choose one, with rates, IPv4, Wi-Fi details and monitored transfer totals.
       image: ./media/network-light.png
-    - title: { zh: 原生电池、充电瓦数与零权限外设电量, en: Native Battery, Wattage & Zero-Permission Accessory Power }
+    - title: { zh: "原生电池、充电瓦数与零权限外设电量", en: "Native Battery, Wattage & Zero-Permission Accessory Power" }
       caption:
         zh: 电量、充电状态、充电器瓦数、瞬时充放电功率、健康度与循环次数，并基于零权限 IOKit 只读展示蓝牙键鼠、触控板与耳机电量（60 秒按需缓存，无蓝牙隐私弹窗）。
         en: Charge, power state, adapter wattage, live battery power, health and cycles, plus zero-permission IOKit readings for Bluetooth mice, trackpads, keyboards and headphones (60s on-demand cache, no Bluetooth privacy prompts).
