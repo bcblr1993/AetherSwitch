@@ -3,62 +3,6 @@ import Combine
 import AppKit
 import CoreGraphics
 
-/// 分屏幕独立亮度抽屉行快照模型（与 Core 层 `DisplayBrightnessItem` 字段对齐，便于无缝合并接线）。
-public struct DisplayBrightnessRowItem: Equatable, Sendable, Identifiable {
-    public let id: CGDirectDisplayID
-    public let name: String
-    public let isBuiltIn: Bool
-    public var brightness: Double
-    public let supportsControl: Bool
-    public let issue: String?
-
-    public init(
-        id: CGDirectDisplayID,
-        name: String,
-        isBuiltIn: Bool,
-        brightness: Double,
-        supportsControl: Bool = true,
-        issue: String? = nil
-    ) {
-        self.id = id
-        self.name = name
-        self.isBuiltIn = isBuiltIn
-        self.brightness = brightness.isFinite ? min(1, max(0, brightness)) : 0.5
-        self.supportsControl = supportsControl
-        self.issue = issue
-    }
-
-    init(display: BrightnessDisplay) {
-        self.init(
-            id: display.id,
-            name: display.name,
-            isBuiltIn: display.control == .native,
-            brightness: display.value ?? 0.5,
-            supportsControl: display.isControllable,
-            issue: display.issue
-        )
-    }
-}
-
-private final class PowerNotificationTokenBag: @unchecked Sendable {
-    private let center: NotificationCenter
-    private var tokens: [NSObjectProtocol] = []
-
-    init(center: NotificationCenter) {
-        self.center = center
-    }
-
-    func add(_ token: NSObjectProtocol) {
-        tokens.append(token)
-    }
-
-    deinit {
-        for token in tokens {
-            center.removeObserver(token)
-        }
-    }
-}
-
 public enum MenuBarStyle: String, CaseIterable, Codable {
     case statsColumns = "statsColumns"     // Stats 顶级监控（CPU / GPU / RAM / SSD / 温度 / 速率）
     case compact = "compact"               // 紧凑单行（图标 + 内存 + 实时网速）
@@ -144,19 +88,6 @@ public final class AppState: ObservableObject {
 
     static func samplingPriority(isPopoverOpen: Bool) -> TaskPriority {
         isPopoverOpen ? .userInitiated : .utility
-    }
-
-    /// 评估低电量 / 高温自适应降频倍数与生效状态（集成后可由 Core 层 `AdaptiveSamplingPolicy` 统一提供）。
-    static func evaluateAdaptiveSampling(
-        isLowPowerMode: Bool,
-        thermalState: ProcessInfo.ThermalState,
-        isPopoverOpen: Bool
-    ) -> (intervalMultiplier: Double, isPowerSavingActive: Bool, isConstrained: Bool) {
-        let constrained = isLowPowerMode || thermalState == .serious || thermalState == .critical
-        if constrained && !isPopoverOpen {
-            return (2.0, true, true)
-        }
-        return (1.0, false, constrained)
     }
 
     private let defaults: UserDefaults
@@ -253,30 +184,30 @@ public final class AppState: ObservableObject {
     public var onKeepAwakeConfigure: ((_ active: Bool, _ duration: KeepAwakePreset, _ autoReleaseLowBattery: Bool) -> Bool)?
 
     // MARK: - 分屏幕独立亮度 & 外屏自动亮度跟随状态
-    @Published public var displayBrightnessRows: [DisplayBrightnessRowItem] = []
+    @Published public var displayBrightnessRows: [DisplayBrightnessItem] = []
     @Published public var followExternalDisplays: Bool {
         didSet {
             guard !isInitializing, oldValue != followExternalDisplays else { return }
             defaults.set(followExternalDisplays, forKey: BrightnessManager.followExternalDisplaysKey)
         }
     }
-    /// 分屏幕独立亮度调节钩子（合并 `core-v112` 后默认路径直接接通 `BrightnessManager.setDisplayBrightness(_:for:)`）。
+    /// 分屏幕独立亮度调节测试钩子；为 `nil` 时直接接通 `BrightnessManager.setDisplayBrightness(_:for:)`。
     public var onSetDisplayBrightness: ((_ value: Double, _ displayID: CGDirectDisplayID) -> Void)?
     /// 外屏跟随系统自动亮度开关回调钩子。
     public var onFollowExternalDisplaysChange: ((_ enabled: Bool) -> Void)?
 
-    // MARK: - 电池详情页外设电量（预留给 `metrics.accessoryBatteries` 接线）
-    @Published public var accessoryBatteries: [AccessoryBatteryDisplayItem] = []
-
-    // MARK: - 低电量 / 高温自适应降频守护（0 轮询，纯通知事件驱动）
+    // MARK: - 低电量 / 高温自适应降频守护（单一事实来源：`AdaptiveSamplingPolicy` + `AdaptiveSamplingObserver`）
     /// 折叠态自适应降频采样当前是否生效（采样间隔 2.0x）。
     @Published public private(set) var isPowerSavingSamplingActive: Bool = false
     /// 系统是否处于低电量模式或 `.serious` / `.critical` 热状态（供概览紧凑状态条在展开时显示节能降频提示）。
     @Published public private(set) var isPowerSavingConditionActive: Bool = false
-    private var samplingIntervalMultiplier: Double = 1.0
-    private let powerStateProvider: () -> Bool
-    private let thermalStateProvider: () -> ProcessInfo.ThermalState
-    private let powerNotificationBag: PowerNotificationTokenBag
+    private var adaptiveSamplingDecision = AdaptiveSamplingDecision(
+        intervalMultiplier: AdaptiveSamplingPolicy.normalIntervalMultiplier,
+        isPowerSavingActive: false,
+        reason: .none
+    )
+    private let adaptiveConditionsProvider: @Sendable () -> AdaptiveSamplingConditions
+    private var adaptiveSamplingObserver: AdaptiveSamplingObserver?
 
     private var switchRevision: UInt64 = 0
     private var samplingInFlight = false
@@ -290,6 +221,7 @@ public final class AppState: ObservableObject {
 
     var currentTimerIntervalForTesting: TimeInterval? { timer?.timeInterval }
     var currentTimerToleranceForTesting: TimeInterval? { timer?.tolerance }
+    var currentAdaptiveSamplingDecisionForTesting: AdaptiveSamplingDecision { adaptiveSamplingDecision }
 
     @Published var backgroundInterval: Double {
         didSet {
@@ -304,16 +236,27 @@ public final class AppState: ObservableObject {
         defaults: UserDefaults = .standard,
         startMonitoring: Bool = true,
         switchManager: SwitchManager = .shared,
-        powerStateProvider: (() -> Bool)? = nil,
-        thermalStateProvider: (() -> ProcessInfo.ThermalState)? = nil,
+        powerStateProvider: (@Sendable () -> Bool)? = nil,
+        thermalStateProvider: (@Sendable () -> ProcessInfo.ThermalState)? = nil,
         powerNotificationCenter: NotificationCenter = .default
     ) {
         self.defaults = defaults
         self.monitoringEnabled = startMonitoring
         self.switchMgr = switchManager
-        self.powerStateProvider = powerStateProvider ?? { ProcessInfo.processInfo.isLowPowerModeEnabled }
-        self.thermalStateProvider = thermalStateProvider ?? { ProcessInfo.processInfo.thermalState }
-        self.powerNotificationBag = PowerNotificationTokenBag(center: powerNotificationCenter)
+        let conditionsProvider: @Sendable () -> AdaptiveSamplingConditions
+        if powerStateProvider != nil || thermalStateProvider != nil {
+            let readLowPower = powerStateProvider ?? { ProcessInfo.processInfo.isLowPowerModeEnabled }
+            let readThermal = thermalStateProvider ?? { ProcessInfo.processInfo.thermalState }
+            conditionsProvider = {
+                AdaptiveSamplingConditions(
+                    isLowPowerMode: readLowPower(),
+                    thermalState: readThermal()
+                )
+            }
+        } else {
+            conditionsProvider = { .current() }
+        }
+        self.adaptiveConditionsProvider = conditionsProvider
 
         let savedStyle = defaults.string(forKey: "menuBarStyle") ?? MenuBarStyle.statsColumns.rawValue
         let resolvedStyle: MenuBarStyle
@@ -332,7 +275,20 @@ public final class AppState: ObservableObject {
         self.followExternalDisplays = (defaults.object(forKey: BrightnessManager.followExternalDisplaysKey) as? Bool) ?? true
         self.isInitializing = false
 
-        registerPowerAndThermalObservers(on: powerNotificationCenter)
+        self.adaptiveSamplingObserver = AdaptiveSamplingObserver(
+            notificationCenter: powerNotificationCenter,
+            conditionsProvider: conditionsProvider
+        ) { [weak self] conditions in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.applyAdaptiveSampling(conditions: conditions, forceAdjustTimer: false)
+                }
+            } else {
+                Task { @MainActor [weak self] in
+                    self?.applyAdaptiveSampling(conditions: conditions, forceAdjustTimer: false)
+                }
+            }
+        }
         refreshPowerSavingState(forceAdjustTimer: false)
 
         if startMonitoring || switchManager !== SwitchManager.shared {
@@ -369,40 +325,24 @@ public final class AppState: ObservableObject {
 
     // MARK: - 低电量 / 高温自适应降频监听
 
-    private func registerPowerAndThermalObservers(on center: NotificationCenter) {
-        let names: [Notification.Name] = [
-            ProcessInfo.thermalStateDidChangeNotification,
-            NSNotification.Name.NSProcessInfoPowerStateDidChange
-        ]
-        for name in names {
-            let token = center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
-                if Thread.isMainThread {
-                    MainActor.assumeIsolated {
-                        self?.refreshPowerSavingState()
-                    }
-                } else {
-                    Task { @MainActor [weak self] in
-                        self?.refreshPowerSavingState()
-                    }
-                }
-            }
-            powerNotificationBag.add(token)
-        }
+    public func refreshPowerSavingState(forceAdjustTimer: Bool = false) {
+        let conditions = adaptiveSamplingObserver?.currentConditions ?? adaptiveConditionsProvider()
+        applyAdaptiveSampling(conditions: conditions, forceAdjustTimer: forceAdjustTimer)
     }
 
-    public func refreshPowerSavingState(forceAdjustTimer: Bool = false) {
-        let evaluation = Self.evaluateAdaptiveSampling(
-            isLowPowerMode: powerStateProvider(),
-            thermalState: thermalStateProvider(),
+    private func applyAdaptiveSampling(conditions: AdaptiveSamplingConditions, forceAdjustTimer: Bool) {
+        let decision = AdaptiveSamplingPolicy.evaluate(
+            conditions: conditions,
             isPopoverOpen: isPopoverOpen
         )
-        let multiplierChanged = samplingIntervalMultiplier != evaluation.intervalMultiplier
-        samplingIntervalMultiplier = evaluation.intervalMultiplier
-        if isPowerSavingSamplingActive != evaluation.isPowerSavingActive {
-            isPowerSavingSamplingActive = evaluation.isPowerSavingActive
+        let multiplierChanged = adaptiveSamplingDecision.intervalMultiplier != decision.intervalMultiplier
+        adaptiveSamplingDecision = decision
+        if isPowerSavingSamplingActive != decision.isPowerSavingActive {
+            isPowerSavingSamplingActive = decision.isPowerSavingActive
         }
-        if isPowerSavingConditionActive != evaluation.isConstrained {
-            isPowerSavingConditionActive = evaluation.isConstrained
+        let constrained = conditions.shouldThrottleWhenFolded
+        if isPowerSavingConditionActive != constrained {
+            isPowerSavingConditionActive = constrained
         }
         if forceAdjustTimer || multiplierChanged {
             adjustTimerFrequency()
@@ -411,16 +351,30 @@ public final class AppState: ObservableObject {
 
     // MARK: - 分屏幕亮度 & 外屏跟随控制接口
 
-    public func setDisplayBrightness(_ value: Double, for displayID: CGDirectDisplayID) {
+    public func setDisplayBrightness(
+        _ value: Double,
+        for displayID: CGDirectDisplayID,
+        brightnessManager: BrightnessManager? = nil
+    ) {
         guard value.isFinite else { return }
         let clamped = min(1, max(0, value))
         if let index = displayBrightnessRows.firstIndex(where: { $0.id == displayID }) {
-            displayBrightnessRows[index].brightness = clamped
+            let existing = displayBrightnessRows[index]
+            displayBrightnessRows[index] = DisplayBrightnessItem(
+                id: existing.id,
+                name: existing.name,
+                isBuiltIn: existing.isBuiltIn,
+                brightness: clamped,
+                supportsControl: existing.supportsControl
+            )
         }
         if let onSetDisplayBrightness {
             onSetDisplayBrightness(clamped, displayID)
+        } else if let brightnessManager {
+            brightnessManager.setDisplayBrightness(clamped, for: displayID)
+        } else if defaults === UserDefaults.standard {
+            BrightnessManager.shared.setDisplayBrightness(clamped, for: displayID)
         }
-        // TODO(integrator-v112): wire default path to BrightnessManager.shared.setDisplayBrightness(clamped, for: displayID)
     }
 
     public func setFollowExternalDisplays(_ enabled: Bool) {
@@ -441,7 +395,7 @@ public final class AppState: ObservableObject {
         if isPopoverOpen {
             startTimer(interval: 1.0, tolerance: 0.0)
         } else if !SamplingPlan.visible(style: menuBarStyle, metrics: menuBarMetrics).isEmpty {
-            let effectiveInterval = backgroundInterval * samplingIntervalMultiplier
+            let effectiveInterval = adaptiveSamplingDecision.effectiveInterval(base: backgroundInterval)
             startTimer(interval: effectiveInterval, tolerance: effectiveInterval * 0.2)
         }
     }

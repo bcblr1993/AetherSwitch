@@ -713,7 +713,7 @@ final class BrightnessControlSectionView: NSStackView {
     private let messageLabel = NSTextField(wrappingLabelWithString: L10n.string("brightness.loading"))
 
     private(set) var isDrawerExpanded = false
-    private var displayRows: [DisplayBrightnessRowItem] = []
+    private var displayRows: [DisplayBrightnessItem] = []
     private var followExternalDisplays: Bool
     private var drawerContainer: NSStackView?
     private var drawerRowControls: [DrawerRowControls] = []
@@ -835,7 +835,7 @@ final class BrightnessControlSectionView: NSStackView {
 
     /// 同步各显示器行快照；返回布局是否变化（仅显隐或抽屉拓扑变化时需重算弹窗尺寸）。
     @discardableResult
-    func updateDisplayRows(_ rows: [DisplayBrightnessRowItem]) -> Bool {
+    func updateDisplayRows(_ rows: [DisplayBrightnessItem]) -> Bool {
         displayRows = rows
         let showToggle = shouldShowDrawerToggle
         let visibilityChanged = drawerHeaderRow.isHidden == showToggle

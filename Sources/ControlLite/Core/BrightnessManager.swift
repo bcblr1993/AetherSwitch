@@ -15,12 +15,12 @@ public struct DisplayBrightnessItem: Equatable, Sendable, Identifiable {
         name: String,
         isBuiltIn: Bool,
         brightness: Double,
-        supportsControl: Bool
+        supportsControl: Bool = true
     ) {
         self.id = id
         self.name = name
         self.isBuiltIn = isBuiltIn
-        self.brightness = brightness
+        self.brightness = brightness.isFinite ? min(1, max(0, brightness)) : 0
         self.supportsControl = supportsControl
     }
 }

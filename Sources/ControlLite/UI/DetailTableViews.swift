@@ -1,14 +1,8 @@
 import AppKit
 
-/// 电池详情页外设类别（rawValue 与 Core 层 `AccessoryBatteryCategory` 1:1 对齐，零类型命名冲突）。
-public enum AccessoryBatteryRowCategory: String, CaseIterable, Sendable {
-    case mouse
-    case trackpad
-    case keyboard
-    case headphones
-    case other
-
-    public var symbolName: String {
+/// 为 Core 层 `AccessoryBatteryCategory` 提供 UI 图标与中英双语标签（单一事实来源，零重复类型）。
+public extension AccessoryBatteryCategory {
+    var symbolName: String {
         switch self {
         case .mouse: return "computermouse.fill"
         case .trackpad: return "rectangle.and.hand.point.up.left.filled"
@@ -18,7 +12,7 @@ public enum AccessoryBatteryRowCategory: String, CaseIterable, Sendable {
         }
     }
 
-    public var localizedLabel: String {
+    var localizedLabel: String {
         switch self {
         case .mouse: return L10n.string("accessory.category.mouse")
         case .trackpad: return L10n.string("accessory.category.trackpad")
@@ -29,50 +23,25 @@ public enum AccessoryBatteryRowCategory: String, CaseIterable, Sendable {
     }
 }
 
-/// 电池详情页外设电量行渲染模型（待集成后直接由 `metrics.accessoryBatteries` 映射喂入）。
-public struct AccessoryBatteryDisplayItem: Equatable, Sendable {
-    public let id: String
-    public let name: String
-    public let category: AccessoryBatteryRowCategory
-    public let percent: Int
-    public let isCharging: Bool
-
-    public init(
-        id: String,
-        name: String,
-        category: AccessoryBatteryRowCategory,
-        percent: Int,
-        isCharging: Bool = false
-    ) {
-        self.id = id
-        self.name = name
-        self.category = category
-        self.percent = max(0, min(100, percent))
-        self.isCharging = isCharging
-    }
-}
-
 /// 详情页键值表，内置展示快照差分防重绘（例如 30 秒才更新的电池页不会每秒重建位图）。
 final class DetailRowsView: DashboardCardView {
     override var drawsCard: Bool { false }
     private var cachedEntries: [(String, String)] = []
-    private var cachedAccessories: [AccessoryBatteryDisplayItem] = []
+    private var cachedAccessories: [AccessoryBattery] = []
     private var cachedLanguage: String = L10n.currentLanguage
     var kind: String { didSet { refreshEntriesIfNeeded() } }
     var metrics: SystemMetrics { didSet { refreshEntriesIfNeeded() } }
-    var accessoryBatteries: [AccessoryBatteryDisplayItem] { didSet { refreshEntriesIfNeeded() } }
 
-    init(kind: String, metrics: SystemMetrics, accessoryBatteries: [AccessoryBatteryDisplayItem] = []) {
+    init(kind: String, metrics: SystemMetrics) {
         self.kind = kind
         self.metrics = metrics
-        self.accessoryBatteries = accessoryBatteries
         super.init(frame: .zero)
         refreshEntriesIfNeeded(isInitial: true)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private var activeAccessories: [AccessoryBatteryDisplayItem] {
+    private var activeAccessories: [AccessoryBattery] {
         kind == "battery" ? cachedAccessories : []
     }
 
@@ -94,7 +63,7 @@ final class DetailRowsView: DashboardCardView {
 
     private func refreshEntriesIfNeeded(isInitial: Bool = false) {
         let next = computeEntries()
-        let nextAccessories = kind == "battery" ? accessoryBatteries : []
+        let nextAccessories = kind == "battery" ? metrics.accessoryBatteries : []
         let lang = L10n.currentLanguage
         guard isInitial
             || lang != cachedLanguage
@@ -292,7 +261,7 @@ final class DetailRowsView: DashboardCardView {
         }
     }
 
-    private func drawAccessoryBatteries(_ accessories: [AccessoryBatteryDisplayItem], startY: CGFloat) {
+    private func drawAccessoryBatteries(_ accessories: [AccessoryBattery], startY: CGFloat) {
         text(
             L10n.string("detail.accessory_batteries"),
             in: NSRect(x: 2, y: startY, width: bounds.width - 4, height: 15),

@@ -63,7 +63,6 @@ final class NativePanelController: NSViewController {
     private var displayRowsSubscription: AnyCancellable?
     private var followExternalSubscription: AnyCancellable?
     private var powerSavingSubscription: AnyCancellable?
-    private var accessoryBatterySubscription: AnyCancellable?
 
     private var updateButton: NSButton!
     private var brightnessSection: BrightnessControlSectionView?
@@ -195,7 +194,8 @@ final class NativePanelController: NSViewController {
             initialFollowExternal: state.followExternalDisplays
         )
         brightnessSection.onAdjustDisplayBrightness = { [weak self] value, displayID in
-            self?.state.setDisplayBrightness(value, for: displayID)
+            guard let self else { return }
+            self.state.setDisplayBrightness(value, for: displayID, brightnessManager: self.brightness)
         }
         brightnessSection.onToggleFollowExternalDisplays = { [weak self] enabled in
             guard let self else { return }
@@ -213,10 +213,10 @@ final class NativePanelController: NSViewController {
         brightnessSubscription = brightness.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
             let messageChanged = brightnessSection.apply(snapshot)
-            if !snapshot.displays.isEmpty {
-                let mapped = snapshot.displays.map(DisplayBrightnessRowItem.init(display:))
-                if self.state.displayBrightnessRows != mapped {
-                    self.state.displayBrightnessRows = mapped
+            let items = snapshot.displayItems
+            if !items.isEmpty {
+                if self.state.displayBrightnessRows != items {
+                    self.state.displayBrightnessRows = items
                 }
             } else if snapshot.hasRefreshed && self.brightness !== Self.unitTestDefaultBrightness {
                 if !self.state.displayBrightnessRows.isEmpty {
@@ -385,14 +385,6 @@ final class NativePanelController: NSViewController {
             .sink { [weak self] active, condition in
                 self?.systemStripTile?.isPowerSavingSamplingActive = active || condition
             }
-        accessoryBatterySubscription = state.$accessoryBatteries.sink { [weak self] items in
-            guard let self, let panel = self.detailRows, panel.superview != nil else { return }
-            panel.accessoryBatteries = items
-            if self.detailRowsHeight?.constant != panel.idealHeight {
-                self.detailRowsHeight?.constant = panel.idealHeight
-                self.updatePreferredSize()
-            }
-        }
     }
 
     override func viewWillDisappear() {
@@ -747,10 +739,9 @@ final class NativePanelController: NSViewController {
         if let existing = detailRows {
             existing.kind = kind
             existing.metrics = state.metrics
-            existing.accessoryBatteries = state.accessoryBatteries
             panel = existing
         } else {
-            panel = DetailRowsView(kind: kind, metrics: state.metrics, accessoryBatteries: state.accessoryBatteries)
+            panel = DetailRowsView(kind: kind, metrics: state.metrics)
             detailRows = panel
         }
         let previous = content.arrangedSubviews.last

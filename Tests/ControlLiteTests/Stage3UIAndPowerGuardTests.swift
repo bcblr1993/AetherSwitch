@@ -225,9 +225,9 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
         let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
         state.selectedTab = "overview"
         state.displayBrightnessRows = [
-            DisplayBrightnessRowItem(id: 1, name: "Built-in Display", isBuiltIn: true, brightness: 0.6, supportsControl: true),
-            DisplayBrightnessRowItem(id: 2, name: "LG UltraFine", isBuiltIn: false, brightness: 0.8, supportsControl: true),
-            DisplayBrightnessRowItem(id: 3, name: "Dell 4K", isBuiltIn: false, brightness: 0.5, supportsControl: false)
+            DisplayBrightnessItem(id: 1, name: "Built-in Display", isBuiltIn: true, brightness: 0.6, supportsControl: true),
+            DisplayBrightnessItem(id: 2, name: "LG UltraFine", isBuiltIn: false, brightness: 0.8, supportsControl: true),
+            DisplayBrightnessItem(id: 3, name: "Dell 4K", isBuiltIn: false, brightness: 0.5, supportsControl: false)
         ]
 
         let controller = NativePanelController(state: state, maximumHeight: 800)
@@ -255,14 +255,14 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
         // Single external display (e.g. Mac Studio / clamshell) keeps drawer available;
         // unplugging to 1 built-in display auto-collapses & destroys drawer subviews.
         state.displayBrightnessRows = [
-            DisplayBrightnessRowItem(id: 2, name: "LG UltraFine", isBuiltIn: false, brightness: 0.75, supportsControl: true)
+            DisplayBrightnessItem(id: 2, name: "LG UltraFine", isBuiltIn: false, brightness: 0.75, supportsControl: true)
         ]
         XCTAssertFalse(section.drawerToggleButton.isHidden)
         XCTAssertTrue(section.isDrawerExpanded)
         XCTAssertEqual(section.drawerSliderCountForTesting, 1)
 
         state.displayBrightnessRows = [
-            DisplayBrightnessRowItem(id: 1, name: "Built-in Display", isBuiltIn: true, brightness: 0.6, supportsControl: true)
+            DisplayBrightnessItem(id: 1, name: "Built-in Display", isBuiltIn: true, brightness: 0.6, supportsControl: true)
         ]
         XCTAssertTrue(section.drawerToggleButton.isHidden, "Falling back to single built-in display must hide drawer toggle")
         XCTAssertFalse(section.isDrawerExpanded, "Falling back to single built-in display must collapse drawer")
@@ -418,16 +418,18 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
     // MARK: - 3. Battery Detail Page Accessory Battery Section
 
     func testBatteryDetailRendersAccessoriesInBothLanguagesAndHidesWhenEmpty() throws {
-        let metrics = sampleMetrics()
+        let baseMetrics = sampleMetrics()
         let accessories = [
-            AccessoryBatteryDisplayItem(id: "mouse-1", name: "Magic Mouse", category: .mouse, percent: 76, isCharging: false),
-            AccessoryBatteryDisplayItem(id: "kbd-1", name: "Magic Keyboard", category: .keyboard, percent: 92, isCharging: true),
-            AccessoryBatteryDisplayItem(id: "tp-1", name: "Magic Trackpad", category: .trackpad, percent: 18, isCharging: false),
-            AccessoryBatteryDisplayItem(id: "hp-1", name: "AirPods Pro", category: .headphones, percent: 64, isCharging: false)
+            AccessoryBattery(id: "mouse-1", name: "Magic Mouse", category: .mouse, percent: 76, isCharging: false),
+            AccessoryBattery(id: "kbd-1", name: "Magic Keyboard", category: .keyboard, percent: 92, isCharging: true),
+            AccessoryBattery(id: "tp-1", name: "Magic Trackpad", category: .trackpad, percent: 18, isCharging: false),
+            AccessoryBattery(id: "hp-1", name: "AirPods Pro", category: .headphones, percent: 64, isCharging: false)
         ]
+        var metricsWithAccessories = baseMetrics
+        metricsWithAccessories.accessoryBatteries = accessories
 
         // All category SF Symbols must resolve on macOS
-        for category in AccessoryBatteryRowCategory.allCases {
+        for category in AccessoryBatteryCategory.allCases {
             XCTAssertNotNil(
                 NSImage(systemSymbolName: category.symbolName, accessibilityDescription: nil),
                 "Missing SF Symbol for \(category.rawValue): \(category.symbolName)"
@@ -436,13 +438,13 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
 
         // Empty accessories -> completely hidden, zero extra height
         L10n.overrideLanguageForTesting = "zh-Hans"
-        let emptyRows = DetailRowsView(kind: "battery", metrics: metrics)
+        let emptyRows = DetailRowsView(kind: "battery", metrics: baseMetrics)
         let baseHeight = emptyRows.idealHeight
         let emptyLabel = emptyRows.accessibilityLabel() ?? ""
         XCTAssertFalse(emptyLabel.contains("外设电量"), emptyLabel)
 
-        // Populated accessories in zh-Hans
-        emptyRows.accessoryBatteries = accessories
+        // Populated accessories in zh-Hans via SystemMetrics.accessoryBatteries
+        emptyRows.metrics = metricsWithAccessories
         XCTAssertGreaterThan(emptyRows.idealHeight, baseHeight)
         let zhLabel = emptyRows.accessibilityLabel() ?? ""
         XCTAssertTrue(zhLabel.contains("外设电量"), zhLabel)
@@ -454,7 +456,7 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
 
         // Populated accessories in en
         L10n.overrideLanguageForTesting = "en"
-        let enRows = DetailRowsView(kind: "battery", metrics: metrics, accessoryBatteries: accessories)
+        let enRows = DetailRowsView(kind: "battery", metrics: metricsWithAccessories)
         let enLabel = enRows.accessibilityLabel() ?? ""
         XCTAssertTrue(enLabel.contains("Accessories"), enLabel)
         XCTAssertTrue(enLabel.contains("92% · Charging"), enLabel)
@@ -466,8 +468,7 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
 
         // End-to-end inside NativePanelController stays <= 800pt and respects diff-guard
         let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
-        state.updateForSnapshot(metrics: metrics, switches: SwitchStates())
-        state.accessoryBatteries = accessories
+        state.updateForSnapshot(metrics: metricsWithAccessories, switches: SwitchStates())
         state.selectedTab = "battery"
         let controller = NativePanelController(state: state, maximumHeight: 800)
         _ = controller.view
@@ -488,7 +489,7 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
 
         let batteryView = try XCTUnwrap(descendants(controller.view).compactMap { $0 as? DetailRowsView }.first)
         let drawsAfterFirstRender = batteryView.drawCountForTesting
-        state.accessoryBatteries = accessories
+        state.updateForSnapshot(metrics: metricsWithAccessories, switches: SwitchStates())
         window.layoutIfNeeded()
         window.displayIfNeeded()
         CATransaction.flush()
@@ -569,13 +570,14 @@ final class Stage3UIAndPowerGuardTests: XCTestCase {
         weak var weakView: NSView?
         autoreleasepool {
             let state = AppState(defaults: isolatedDefaults, startMonitoring: false)
-            state.updateForSnapshot(metrics: sampleMetrics(), switches: SwitchStates())
-            state.displayBrightnessRows = [
-                DisplayBrightnessRowItem(id: 1, name: "Built-in", isBuiltIn: true, brightness: 0.7, supportsControl: true),
-                DisplayBrightnessRowItem(id: 2, name: "External", isBuiltIn: false, brightness: 0.5, supportsControl: true)
+            var metricsWithAccessory = sampleMetrics()
+            metricsWithAccessory.accessoryBatteries = [
+                AccessoryBattery(id: "m1", name: "Mouse", category: .mouse, percent: 80, isCharging: false)
             ]
-            state.accessoryBatteries = [
-                AccessoryBatteryDisplayItem(id: "m1", name: "Mouse", category: .mouse, percent: 80, isCharging: false)
+            state.updateForSnapshot(metrics: metricsWithAccessory, switches: SwitchStates())
+            state.displayBrightnessRows = [
+                DisplayBrightnessItem(id: 1, name: "Built-in", isBuiltIn: true, brightness: 0.7, supportsControl: true),
+                DisplayBrightnessItem(id: 2, name: "External", isBuiltIn: false, brightness: 0.5, supportsControl: true)
             ]
             state.selectedTab = "cpu"
             let controller = NativePanelController(state: state, maximumHeight: 800)
