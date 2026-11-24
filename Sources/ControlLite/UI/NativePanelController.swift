@@ -59,8 +59,14 @@ final class NativePanelController: NSViewController {
     private var menuBarSubscription: AnyCancellable?
     private var loginItemSubscription: AnyCancellable?
     private var brightnessSubscription: AnyCancellable?
+    private var brightnessFollowSubscription: AnyCancellable?
+    private var displayRowsSubscription: AnyCancellable?
+    private var followExternalSubscription: AnyCancellable?
+    private var powerSavingSubscription: AnyCancellable?
+    private var accessoryBatterySubscription: AnyCancellable?
 
     private var updateButton: NSButton!
+    private var brightnessSection: BrightnessControlSectionView?
     private var networkSelector: NSPopUpButton?
     private var networkOptions: [String] = []
     private var diskSelector: NSPopUpButton?
@@ -73,6 +79,14 @@ final class NativePanelController: NSViewController {
     private var detailVisualHeight: NSLayoutConstraint?
     private var detailRowsHeight: NSLayoutConstraint?
     private var detailNote: NSTextField?
+
+    var hasRetainedDetailVisualBackingImageForTesting: Bool {
+        detailVisual?.hasBackingImageForTesting ?? false
+    }
+
+    var hasRetainedDetailRowsBackingImageForTesting: Bool {
+        detailRows?.hasBackingImageForTesting ?? false
+    }
 
     private var metricTiles: [DashboardMetricView] = []
     private var networkTile: DashboardNetworkView?
@@ -177,15 +191,48 @@ final class NativePanelController: NSViewController {
             target: self,
             sliderAction: #selector(adjustBrightness(_:)),
             backlightAction: #selector(toggleBacklight(_:)),
-            initialBacklightOff: brightness.backlightOffAtZero
+            initialBacklightOff: brightness.backlightOffAtZero,
+            initialFollowExternal: state.followExternalDisplays
         )
+        brightnessSection.onAdjustDisplayBrightness = { [weak self] value, displayID in
+            self?.state.setDisplayBrightness(value, for: displayID)
+        }
+        brightnessSection.onToggleFollowExternalDisplays = { [weak self] enabled in
+            guard let self else { return }
+            self.state.setFollowExternalDisplays(enabled)
+            if self.brightness.followExternalDisplays != enabled {
+                self.brightness.setFollowExternalDisplays(enabled)
+            }
+        }
+        brightnessSection.onDrawerStateChange = { [weak self] in
+            self?.updatePreferredSize()
+        }
+        self.brightnessSection = brightnessSection
         root.addArrangedSubview(brightnessSection)
         brightnessSection.widthAnchor.constraint(equalTo: header.widthAnchor).isActive = true
         brightnessSubscription = brightness.$snapshot.sink { [weak self] snapshot in
             guard let self else { return }
-            if brightnessSection.apply(snapshot) {
+            let messageChanged = brightnessSection.apply(snapshot)
+            if !snapshot.displays.isEmpty {
+                let mapped = snapshot.displays.map(DisplayBrightnessRowItem.init(display:))
+                if self.state.displayBrightnessRows != mapped {
+                    self.state.displayBrightnessRows = mapped
+                }
+            } else if snapshot.hasRefreshed && self.brightness !== Self.unitTestDefaultBrightness {
+                if !self.state.displayBrightnessRows.isEmpty {
+                    self.state.displayBrightnessRows = []
+                }
+            }
+            if messageChanged {
                 self.updatePreferredSize()
             }
+        }
+        brightnessFollowSubscription = brightness.$followExternalDisplays.dropFirst().sink { [weak self] enabled in
+            guard let self else { return }
+            if self.state.followExternalDisplays != enabled {
+                self.state.followExternalDisplays = enabled
+            }
+            self.brightnessSection?.updateFollowExternalDisplays(enabled)
         }
         brightness.refresh()
 
@@ -283,19 +330,25 @@ final class NativePanelController: NSViewController {
         }
         subscription = state.$metrics.dropFirst().sink { [weak self] m in
             guard let self else { return }
-            self.detailRows?.metrics = m
-            if let height = self.detailRows?.idealHeight, self.detailRowsHeight?.constant != height {
-                self.detailRowsHeight?.constant = height
-                self.updatePreferredSize()
+            if let detailRows = self.detailRows, detailRows.superview != nil {
+                detailRows.metrics = m
+                if self.detailRowsHeight?.constant != detailRows.idealHeight {
+                    self.detailRowsHeight?.constant = detailRows.idealHeight
+                    self.updatePreferredSize()
+                }
             }
             self.updateDiskSelector(m)
             self.updateNetworkSelector(m)
-            self.processRows?.metrics = m
+            if let processRows = self.processRows, processRows.superview != nil {
+                processRows.metrics = m
+            }
             for tile in self.metricTiles { tile.metrics = m }
             self.networkTile?.metrics = m
             self.systemStripTile?.metrics = m
             self.processesTile?.metrics = m
-            self.detailVisual?.metrics = m
+            if let detailVisual = self.detailVisual, detailVisual.superview != nil {
+                detailVisual.metrics = m
+            }
             if self.state.keepAwakeStatus.isActive, self.state.keepAwakeStatus.expiresAt != nil {
                 self.switchTiles.first?.needsDisplay = true
             }
@@ -318,6 +371,46 @@ final class NativePanelController: NSViewController {
         keepAwakeStatusSubscription = state.$keepAwakeStatus.sink { [weak self] status in
             self?.switchTiles.first?.keepAwakeStatus = status
         }
+        displayRowsSubscription = state.$displayBrightnessRows.sink { [weak self] rows in
+            guard let self else { return }
+            if self.brightnessSection?.updateDisplayRows(rows) == true {
+                self.updatePreferredSize()
+            }
+        }
+        followExternalSubscription = state.$followExternalDisplays.sink { [weak self] enabled in
+            self?.brightnessSection?.updateFollowExternalDisplays(enabled)
+        }
+        powerSavingSubscription = state.$isPowerSavingSamplingActive
+            .combineLatest(state.$isPowerSavingConditionActive)
+            .sink { [weak self] active, condition in
+                self?.systemStripTile?.isPowerSavingSamplingActive = active || condition
+            }
+        accessoryBatterySubscription = state.$accessoryBatteries.sink { [weak self] items in
+            guard let self, let panel = self.detailRows, panel.superview != nil else { return }
+            panel.accessoryBatteries = items
+            if self.detailRowsHeight?.constant != panel.idealHeight {
+                self.detailRowsHeight?.constant = panel.idealHeight
+                self.updatePreferredSize()
+            }
+        }
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        prepareForClose()
+    }
+
+    /// 弹窗关闭前立即销毁分屏亮度抽屉并释放各卡片 Retina 位图，最大化回收内存峰值。
+    func prepareForClose() {
+        brightnessSection?.tearDownDrawer(notifyLayout: false)
+        detailVisual?.releaseBackingImage()
+        detailRows?.releaseBackingImage()
+        processRows?.releaseBackingImage()
+        for tile in metricTiles { tile.releaseBackingImage() }
+        networkTile?.releaseBackingImage()
+        systemStripTile?.releaseBackingImage()
+        processesTile?.releaseBackingImage()
+        for tile in switchTiles { tile.releaseBackingImage() }
     }
 
     // MARK: - 键盘快捷键分发（⌘1~7、⌘,、⌘R、⌘Q）
@@ -351,6 +444,12 @@ final class NativePanelController: NSViewController {
     // MARK: - 页面重建与布局
 
     private func rebuild(tab requestedTab: String? = nil, about requestedAbout: Bool? = nil) {
+        let showingAbout = requestedAbout ?? state.showAbout
+        let targetTab = requestedTab ?? state.selectedTab
+        let keepsVisual = !showingAbout && ["cpu", "gpu", "ram", "disk", "network"].contains(targetTab)
+        let keepsProcesses = !showingAbout && ["cpu", "ram", "disk"].contains(targetTab)
+        let keepsDetailRows = !showingAbout && ["cpu", "gpu", "ram", "disk", "network", "battery"].contains(targetTab)
+
         autoreleasepool {
             let oldViews = content.arrangedSubviews
             let oldObjects = oldViews.map { $0 as AnyObject }
@@ -358,7 +457,31 @@ final class NativePanelController: NSViewController {
                 oldObjects.contains { $0 === constraint.firstItem as AnyObject? || $0 === constraint.secondItem as AnyObject? }
             }
             NSLayoutConstraint.deactivate(attached)
-            oldViews.forEach { content.removeArrangedSubview($0); $0.removeFromSuperview() }
+            oldViews.forEach { view in
+                (view as? DashboardCardView)?.releaseBackingImage()
+                content.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            detailVisual?.releaseBackingImage()
+            detailRows?.releaseBackingImage()
+            processRows?.releaseBackingImage()
+            if !keepsVisual {
+                detailVisual = nil
+                detailVisualHeight = nil
+            }
+            if !keepsProcesses {
+                processRows = nil
+                processRowsHeight = nil
+            }
+            if !keepsDetailRows {
+                detailRows = nil
+                detailRowsHeight = nil
+                menuBarRow = nil
+                temperatureMenuBarRow = nil
+                detailNote = nil
+            }
+            diskSelector = nil
+            networkSelector = nil
             metricTiles.removeAll()
             networkTile = nil
             systemStripTile = nil
@@ -370,7 +493,7 @@ final class NativePanelController: NSViewController {
         // the next page; otherwise malloc keeps both pages resident at the peak.
         malloc_zone_pressure_relief(nil, 0)
 
-        if requestedAbout ?? state.showAbout {
+        if showingAbout {
             let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? L10n.string("about.dev_build")
             let aboutView = AboutPanelView(
                 versionString: UpdateManager.shared.currentVersion,
@@ -384,7 +507,7 @@ final class NativePanelController: NSViewController {
             return
         }
 
-        let tab = requestedTab ?? state.selectedTab
+        let tab = targetTab
         switch tab {
         case "cpu":
             visual("cpu")
@@ -443,6 +566,9 @@ final class NativePanelController: NSViewController {
             control.state = active ? .on : .off
         }
         updatePreferredSize()
+        DispatchQueue.main.async {
+            malloc_zone_pressure_relief(nil, 0)
+        }
     }
 
     private func buildOverviewContent() {
@@ -471,7 +597,10 @@ final class NativePanelController: NSViewController {
         network.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         network.heightAnchor.constraint(equalToConstant: 50).isActive = true
 
-        let systemStrip = DashboardSystemStripView(metrics: state.metrics) { [weak self] in
+        let systemStrip = DashboardSystemStripView(
+            metrics: state.metrics,
+            isPowerSavingSamplingActive: state.isPowerSavingSamplingActive || state.isPowerSavingConditionActive
+        ) { [weak self] in
             self?.state.selectedTab = "cpu"
         }
         systemStripTile = systemStrip
@@ -570,14 +699,16 @@ final class NativePanelController: NSViewController {
     }
 
     private static func systemInterfaceNames() -> [String: String] {
-        var names: [String: String] = [:]
-        for interface in (SCNetworkInterfaceCopyAll() as? [SCNetworkInterface]) ?? [] {
-            if let bsd = SCNetworkInterfaceGetBSDName(interface) as String?,
-               let localized = SCNetworkInterfaceGetLocalizedDisplayName(interface) as String? {
-                names[bsd] = localized
+        autoreleasepool {
+            var names: [String: String] = [:]
+            for interface in (SCNetworkInterfaceCopyAll() as? [SCNetworkInterface]) ?? [] {
+                if let bsd = SCNetworkInterfaceGetBSDName(interface) as String?,
+                   let localized = SCNetworkInterfaceGetLocalizedDisplayName(interface) as String? {
+                    names[bsd] = localized
+                }
             }
+            return names
         }
-        return names
     }
 
     private func updateNetworkSelector(_ metrics: SystemMetrics) {
@@ -616,9 +747,10 @@ final class NativePanelController: NSViewController {
         if let existing = detailRows {
             existing.kind = kind
             existing.metrics = state.metrics
+            existing.accessoryBatteries = state.accessoryBatteries
             panel = existing
         } else {
-            panel = DetailRowsView(kind: kind, metrics: state.metrics)
+            panel = DetailRowsView(kind: kind, metrics: state.metrics, accessoryBatteries: state.accessoryBatteries)
             detailRows = panel
         }
         let previous = content.arrangedSubviews.last

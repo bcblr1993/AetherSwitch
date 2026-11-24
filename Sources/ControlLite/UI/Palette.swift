@@ -111,14 +111,21 @@ enum Palette {
     static let value = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
     static let valueLarge = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .semibold)
 
-    // MARK: 图标（按名称与颜色缓存，绘制时不再重复创建，带容量上限防止动态颜色无限增长）
+    // MARK: 图标（按结构化键缓存，避免每次绘制拼接临时 description 字符串，带容量上限与关闭清理）
 
-    static let maxSymbolCacheEntries = 128
-    private static var symbolCache: [String: NSImage] = [:]
+    private struct SymbolKey: Hashable {
+        let name: String
+        let size: CGFloat
+        let weight: CGFloat
+        let tint: NSColor
+    }
+
+    static let maxSymbolCacheEntries = 64
+    private static var symbolCache: [SymbolKey: NSImage] = [:]
     static var symbolCacheCount: Int { symbolCache.count }
 
     static func symbol(_ name: String, size: CGFloat, weight: NSFont.Weight = .semibold, tint: NSColor) -> NSImage? {
-        let key = "\(name)|\(size)|\(weight.rawValue)|\(tint.hashValue)|\(tint.description)"
+        let key = SymbolKey(name: name, size: size, weight: weight.rawValue, tint: tint)
         if let cached = symbolCache[key] { return cached }
         let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
             .applying(.init(paletteColors: [tint]))
@@ -129,5 +136,9 @@ enum Palette {
         }
         symbolCache[key] = image
         return image
+    }
+
+    static func clearSymbolCache() {
+        symbolCache.removeAll(keepingCapacity: false)
     }
 }

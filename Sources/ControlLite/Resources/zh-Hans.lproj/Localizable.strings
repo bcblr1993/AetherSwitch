@@ -112,6 +112,7 @@
 "strip.swap_format" = "交换 %.1fG";
 "strip.swap_zero" = "交换 0G";
 "strip.uptime_format" = "运行 %@";
+"strip.power_saving" = "节能降频";
 
 "network.a11y_label" = "网络速率";
 "network.a11y_value_format" = "下载 %@，上传 %@";
@@ -260,6 +261,13 @@
 "detail.minutes_format" = "%d 分钟";
 "detail.battery_health" = "最大容量";
 "detail.battery_cycles" = "循环次数";
+"detail.accessory_batteries" = "外设电量";
+"accessory.category.mouse" = "鼠标";
+"accessory.category.trackpad" = "触控板";
+"accessory.category.keyboard" = "键盘";
+"accessory.category.headphones" = "耳机";
+"accessory.category.other" = "蓝牙外设";
+"accessory.battery.charging_format" = "%d%% · 充电中";
 "detail.net_interface" = "当前接口";
 "detail.net_ip" = "IP 地址";
 "detail.net_wifi" = "Wi-Fi 名称";
@@ -291,6 +299,15 @@
 "brightness.backlight_tooltip" = "需要显示器支持可靠的关闭与唤醒；不支持时使用软件全黑。";
 "brightness.status_backlight_off" = "背光已关闭";
 "brightness.status_software_blackout" = "软件全黑，背光仍可能亮";
+"brightness.per_display_toggle" = "分屏微调";
+"brightness.per_display_tooltip" = "展开或收起各显示器独立亮度调节";
+"brightness.drawer_expanded" = "已展开";
+"brightness.drawer_collapsed" = "已收起";
+"brightness.display_slider_a11y_format" = "%@ 亮度";
+"brightness.display_builtin_badge" = "内建";
+"brightness.display_external_badge" = "外接";
+"brightness.follow_external" = "外屏跟随系统自动亮度";
+"brightness.follow_external_tooltip" = "关闭后，仅手动拖动总滑条会同步外屏，系统自动亮度微调不再写入外屏。";
 "login_item.title" = "开机自启动";
 "login_item.open_settings" = "打开登录项设置";
 "about.dev_build" = "开发版本";

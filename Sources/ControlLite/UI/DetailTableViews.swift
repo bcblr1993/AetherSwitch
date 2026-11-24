@@ -1,36 +1,120 @@
 import AppKit
 
+/// 电池详情页外设类别（rawValue 与 Core 层 `AccessoryBatteryCategory` 1:1 对齐，零类型命名冲突）。
+public enum AccessoryBatteryRowCategory: String, CaseIterable, Sendable {
+    case mouse
+    case trackpad
+    case keyboard
+    case headphones
+    case other
+
+    public var symbolName: String {
+        switch self {
+        case .mouse: return "computermouse.fill"
+        case .trackpad: return "rectangle.and.hand.point.up.left.filled"
+        case .keyboard: return "keyboard.fill"
+        case .headphones: return "headphones"
+        case .other: return "battery.75percent"
+        }
+    }
+
+    public var localizedLabel: String {
+        switch self {
+        case .mouse: return L10n.string("accessory.category.mouse")
+        case .trackpad: return L10n.string("accessory.category.trackpad")
+        case .keyboard: return L10n.string("accessory.category.keyboard")
+        case .headphones: return L10n.string("accessory.category.headphones")
+        case .other: return L10n.string("accessory.category.other")
+        }
+    }
+}
+
+/// 电池详情页外设电量行渲染模型（待集成后直接由 `metrics.accessoryBatteries` 映射喂入）。
+public struct AccessoryBatteryDisplayItem: Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let category: AccessoryBatteryRowCategory
+    public let percent: Int
+    public let isCharging: Bool
+
+    public init(
+        id: String,
+        name: String,
+        category: AccessoryBatteryRowCategory,
+        percent: Int,
+        isCharging: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.category = category
+        self.percent = max(0, min(100, percent))
+        self.isCharging = isCharging
+    }
+}
+
 /// 详情页键值表，内置展示快照差分防重绘（例如 30 秒才更新的电池页不会每秒重建位图）。
 final class DetailRowsView: DashboardCardView {
     override var drawsCard: Bool { false }
     private var cachedEntries: [(String, String)] = []
+    private var cachedAccessories: [AccessoryBatteryDisplayItem] = []
     private var cachedLanguage: String = L10n.currentLanguage
     var kind: String { didSet { refreshEntriesIfNeeded() } }
     var metrics: SystemMetrics { didSet { refreshEntriesIfNeeded() } }
+    var accessoryBatteries: [AccessoryBatteryDisplayItem] { didSet { refreshEntriesIfNeeded() } }
 
-    init(kind: String, metrics: SystemMetrics) {
+    init(kind: String, metrics: SystemMetrics, accessoryBatteries: [AccessoryBatteryDisplayItem] = []) {
         self.kind = kind
         self.metrics = metrics
+        self.accessoryBatteries = accessoryBatteries
         super.init(frame: .zero)
         refreshEntriesIfNeeded(isInitial: true)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    private var activeAccessories: [AccessoryBatteryDisplayItem] {
+        kind == "battery" ? cachedAccessories : []
+    }
+
     var rowCount: Int { cachedEntries.count }
-    var idealHeight: CGFloat { 24 + CGFloat(rowCount) * 22 }
+    var idealHeight: CGFloat {
+        let base = 24 + CGFloat(rowCount) * 22
+        let accessories = activeAccessories
+        guard !accessories.isEmpty else { return base }
+        return base + 32 + CGFloat(accessories.count) * 22
+    }
+
+    static func formatAccessoryBatteryValue(percent: Int, isCharging: Bool) -> String {
+        let clamped = max(0, min(100, percent))
+        if isCharging {
+            return L10n.format("accessory.battery.charging_format", clamped)
+        }
+        return "\(clamped)%"
+    }
 
     private func refreshEntriesIfNeeded(isInitial: Bool = false) {
         let next = computeEntries()
+        let nextAccessories = kind == "battery" ? accessoryBatteries : []
         let lang = L10n.currentLanguage
         guard isInitial
             || lang != cachedLanguage
+            || nextAccessories != cachedAccessories
             || !next.elementsEqual(cachedEntries, by: { $0.0 == $1.0 && $0.1 == $1.1 })
         else { return }
         cachedLanguage = lang
         cachedEntries = next
+        cachedAccessories = nextAccessories
         setAccessibilityElement(true)
-        setAccessibilityLabel(next.map { "\($0.0) \($0.1)" }.joined(separator: ", "))
+        var summary = next.map { "\($0.0) \($0.1)" }.joined(separator: ", ")
+        if !nextAccessories.isEmpty {
+            let accessorySummary = nextAccessories.map { item in
+                let displayName = item.name.isEmpty ? item.category.localizedLabel : item.name
+                let value = Self.formatAccessoryBatteryValue(percent: item.percent, isCharging: item.isCharging)
+                return "\(displayName) (\(item.category.localizedLabel)) \(value)"
+            }.joined(separator: ", ")
+            summary += ", \(L10n.string("detail.accessory_batteries")): \(accessorySummary)"
+        }
+        setAccessibilityLabel(summary)
         if !isInitial {
             needsDisplay = true
         }
@@ -202,6 +286,44 @@ final class DetailRowsView: DashboardCardView {
                 text(entry.0, in: NSRect(x: 2, y: y, width: 130, height: 17), font: Palette.body, color: .secondaryLabelColor)
                 text(entry.1, in: NSRect(x: 134, y: y, width: bounds.width - 136, height: 17), font: Palette.valueSmall, alignment: .right)
             }
+            let accessories = activeAccessories
+            guard !accessories.isEmpty else { return }
+            drawAccessoryBatteries(accessories, startY: 24 + CGFloat(cachedEntries.count) * 22 + 10)
+        }
+    }
+
+    private func drawAccessoryBatteries(_ accessories: [AccessoryBatteryDisplayItem], startY: CGFloat) {
+        text(
+            L10n.string("detail.accessory_batteries"),
+            in: NSRect(x: 2, y: startY, width: bounds.width - 4, height: 15),
+            font: Palette.captionStrong,
+            color: .secondaryLabelColor
+        )
+        Palette.cardStroke.setStroke()
+        let divider = NSBezierPath()
+        divider.move(to: NSPoint(x: 0, y: startY + 19.5))
+        divider.line(to: NSPoint(x: bounds.width, y: startY + 19.5))
+        divider.stroke()
+
+        for (index, item) in accessories.enumerated() {
+            let y = startY + 25 + CGFloat(index) * 22
+            let iconTint: NSColor = item.isCharging
+                ? Palette.levelLow
+                : item.percent <= 20
+                    ? Palette.levelCritical
+                    : item.percent <= 40
+                        ? Palette.levelModerate
+                        : .secondaryLabelColor
+            symbol(item.category.symbolName, in: NSRect(x: 2, y: y + 1, width: 14, height: 14), size: 10.5, weight: .medium, tint: iconTint)
+            let displayName = item.name.isEmpty ? item.category.localizedLabel : item.name
+            text(displayName, in: NSRect(x: 20, y: y, width: 130, height: 17), font: Palette.body, color: .secondaryLabelColor)
+            let valueText = Self.formatAccessoryBatteryValue(percent: item.percent, isCharging: item.isCharging)
+            let valueColor: NSColor = item.isCharging
+                ? Palette.levelLow
+                : item.percent <= 20
+                    ? Palette.levelCritical
+                    : .labelColor
+            text(valueText, in: NSRect(x: 152, y: y, width: bounds.width - 154, height: 17), font: Palette.valueSmall, color: valueColor, alignment: .right)
         }
     }
 }

@@ -27,11 +27,22 @@ final class PanelRootStackView: NSStackView {
 /// 同步 CPU 位图直赋 `layer.contents` 的基础卡片与绘图原语。
 /// 严禁常驻 `CGContext` 像素缓存，避免 CoreGraphics Copy-On-Write 产生双份 Retina 脏页。
 class DashboardCardView: NSView {
+    private static let fallbackColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     override var isFlipped: Bool { true }
     /// 详细信息列表等不需要卡片底的视图关闭此项。
     var drawsCard: Bool { true }
     private(set) var drawCountForTesting: Int = 0
     private var isFocusedForRing = false
+
+    /// 离屏/切页时主动释放旧 Retina 位图，避免新旧页面位图同时驻留推高物理内存峰值。
+    func releaseBackingImage() {
+        layer?.contents = nil
+        needsDisplay = true
+    }
+
+    var hasBackingImageForTesting: Bool {
+        layer?.contents != nil
+    }
 
     // AppKit 会给较大的图层（详情页图表与列表）自动开启 drawsAsynchronously，
     // 首次绘制时为此建立 IOSurface/Metal 渲染资源，物理内存峰值瞬间多出 ~12MB。
@@ -39,31 +50,34 @@ class DashboardCardView: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        guard let layer else { return }
-        let scale = window?.backingScaleFactor ?? layer.contentsScale
-        let width = Int((bounds.width * scale).rounded(.up))
-        let height = Int((bounds.height * scale).rounded(.up))
-        guard width > 0, height > 0,
-              let space = window?.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(
-                  data: nil,
-                  width: width,
-                  height: height,
-                  bitsPerComponent: 8,
-                  bytesPerRow: 0,
-                  space: space,
-                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-              )
-        else { layer.contents = nil; return }
-        context.scaleBy(x: scale, y: -scale)
-        context.translateBy(x: 0, y: -bounds.height)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-        drawCountForTesting &+= 1
-        Palette.drawingAppearance(for: effectiveAppearance).performAsCurrentDrawingAppearance { draw(bounds) }
-        NSGraphicsContext.restoreGraphicsState()
-        layer.contentsScale = scale
-        layer.contents = context.makeImage()
+        autoreleasepool {
+            guard let layer else { return }
+            let scale = window?.backingScaleFactor ?? layer.contentsScale
+            let width = Int((bounds.width * scale).rounded(.up))
+            let height = Int((bounds.height * scale).rounded(.up))
+            // 先释放旧位图再分配新 CGContext，避免同一视图重绘期间双份 Retina 位图同时在内存中重叠。
+            layer.contents = nil
+            guard width > 0, height > 0,
+                  let context = CGContext(
+                      data: nil,
+                      width: width,
+                      height: height,
+                      bitsPerComponent: 8,
+                      bytesPerRow: 0,
+                      space: window?.colorSpace?.cgColorSpace ?? Self.fallbackColorSpace,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+                  )
+            else { return }
+            context.scaleBy(x: scale, y: -scale)
+            context.translateBy(x: 0, y: -bounds.height)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+            drawCountForTesting &+= 1
+            Palette.drawingAppearance(for: effectiveAppearance).performAsCurrentDrawingAppearance { draw(bounds) }
+            NSGraphicsContext.restoreGraphicsState()
+            layer.contentsScale = scale
+            layer.contents = context.makeImage()
+        }
     }
 
     override func viewDidChangeBackingProperties() {
@@ -112,12 +126,21 @@ class DashboardCardView: NSView {
     }
 
     func text(_ value: String, in rect: NSRect, font: NSFont, color: NSColor = .labelColor, alignment: NSTextAlignment = .left) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        guard let context = NSGraphicsContext.current?.cgContext, rect.width > 0 else { return }
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let original = CTLineCreateWithAttributedString(NSAttributedString(string: value, attributes: attributes))
-        let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attributes))
-        let line = CTLineCreateTruncatedLine(original, Double(rect.width), .end, ellipsis) ?? original
-        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let originalWidth = CGFloat(CTLineGetTypographicBounds(original, nil, nil, nil))
+        let line: CTLine
+        let width: CGFloat
+        if originalWidth <= rect.width {
+            line = original
+            width = originalWidth
+        } else {
+            let ellipsis = CTLineCreateWithAttributedString(NSAttributedString(string: "…", attributes: attributes))
+            let truncated = CTLineCreateTruncatedLine(original, Double(rect.width), .end, ellipsis) ?? original
+            line = truncated
+            width = CGFloat(CTLineGetTypographicBounds(truncated, nil, nil, nil))
+        }
         let offset = alignment == .right ? rect.width - width : alignment == .center ? (rect.width - width) / 2 : 0
         context.saveGState()
         defer { context.restoreGState() }
