@@ -35,6 +35,7 @@ public struct SystemMetrics: Sendable {
     public var netUploadBytesSec: Double = 0.0
     var network = NetworkSnapshot()
     var battery = BatterySnapshot()
+    public var accessoryBatteries: [AccessoryBattery] = []
 
     // CPU 深度指标 (图 1)
     public var cpuSystemUsage: Double = 0.0
@@ -192,6 +193,7 @@ public final class SystemMonitor: @unchecked Sendable {
     private let disks: DiskDetails
     private let networkMonitor: NetworkMonitor
     private let batteryMonitor = BatteryMonitor()
+    private let accessoryBatteryMonitor: AccessoryBatteryMonitor
     static let selectedDiskPathKey = "selectedDiskPath"
     private var selectedDiskPath = "/"
     private let selectionLock = NSLock()
@@ -280,7 +282,8 @@ public final class SystemMonitor: @unchecked Sendable {
 
     init(
         defaults: UserDefaults = .standard,
-        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        accessoryBatteryMonitor: AccessoryBatteryMonitor? = nil
     ) {
         self.defaults = defaults
         self.nowProvider = now
@@ -292,6 +295,7 @@ public final class SystemMonitor: @unchecked Sendable {
         }
         self.disks = DiskDetails(now: now)
         self.networkMonitor = NetworkMonitor(defaults: defaults, now: now)
+        self.accessoryBatteryMonitor = accessoryBatteryMonitor ?? AccessoryBatteryMonitor(now: now)
         if let persistedDisk = defaults.string(forKey: Self.selectedDiskPathKey), !persistedDisk.isEmpty {
             self.selectedDiskPath = persistedDisk
         }
@@ -337,6 +341,7 @@ public final class SystemMonitor: @unchecked Sendable {
         processes.reset()
         hardware.resetAll()
         batteryMonitor.reset()
+        accessoryBatteryMonitor.reset()
     }
 
     // MARK: - 采样分流
@@ -481,6 +486,11 @@ public final class SystemMonitor: @unchecked Sendable {
             m.battery = batteryMonitor.sample(fallbackTemperature: { [hardware] in hardware.sampleBatteryTemperature(chip: chip) })
             m.adapterWatts = m.battery.adapterWatts
             m.batteryPowerWatts = m.battery.batteryPowerWatts
+        }
+        if fullMetrics && activeTab == "battery" {
+            m.accessoryBatteries = accessoryBatteryMonitor.sample()
+        } else {
+            accessoryBatteryMonitor.reset()
         }
         guard fullMetrics else {
             processes.reset()

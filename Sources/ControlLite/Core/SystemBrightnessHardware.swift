@@ -308,37 +308,40 @@ actor SystemBrightnessHardware: BrightnessHardware {
         let endpoints = externalEndpoints()
         let displays = ids.map { id in
             let key = online.contains(id) ? identity(id) : previousTargets[id]!.identity
-            let name = CGDisplayIsBuiltin(id) != 0 ? "内置屏幕" : endpoints.first(where: { $0.identity == key })?.name ?? "外接屏幕 \(id)"
+            let isBuiltIn = CGDisplayIsBuiltin(id) != 0
+            let name = isBuiltIn ? "内置屏幕" : endpoints.first(where: { $0.identity == key })?.name ?? "外接屏幕 \(id)"
             if let value = nativeControl.read(id) {
                 targets[id] = Target(identity: key, endpoint: nil)
-                return BrightnessDisplay(id: id, name: name, control: .native, value: value)
+                return BrightnessDisplay(id: id, name: name, control: .native, value: value, isBuiltIn: isBuiltIn)
             }
             // EDID must uniquely match both a CG display and a DDC endpoint. Never
             // guess by enumeration order (two identical serial-less screens are ambiguous).
             let matching = endpoints.filter { $0.identity == key }
             guard (online.contains(id) ? BrightnessDDC.uniquelyMatches(key, displays: online.map(identity), endpoints: endpoints.map(\.identity)) : matching.count == 1) else {
-                return BrightnessDisplay(id: id, name: name, control: .unavailable, issue: "无法识别亮度接口，请检查 DDC/CI 与连接方式")
+                return BrightnessDisplay(id: id, name: name, control: .unavailable, issue: "无法识别亮度接口，请检查 DDC/CI 与连接方式", isBuiltIn: isBuiltIn)
             }
             let endpoint = matching[0]
             targets[id] = Target(identity: key, endpoint: endpoint)
             guard !recoverPower || power.recoverPreviousSession(id, link: powerLink(endpoint)) else {
-                return BrightnessDisplay(id: id, name: name, control: .ddc, value: 0, issue: "无法恢复外屏背光，请调高亮度重试")
+                return BrightnessDisplay(id: id, name: name, control: .ddc, value: 0, issue: "无法恢复外屏背光，请调高亮度重试", isBuiltIn: isBuiltIn)
             }
             // Some monitors stop replying to brightness reads while in DPMS Off.
             // Keep the owned screen controllable so the slider can wake it up.
             if power.hasRecovery(id), var previous = lastExternal[id] {
                 previous.isBacklightOff = power.isOff(id)
+                previous.isBuiltIn = isBuiltIn
                 return previous
             }
             guard let reading = readBrightness(endpoint) else {
-                return BrightnessDisplay(id: id, name: name, control: .unavailable, issue: "亮度不可读，请开启显示器的 DDC/CI")
+                return BrightnessDisplay(id: id, name: name, control: .unavailable, issue: "亮度不可读，请开启显示器的 DDC/CI", isBuiltIn: isBuiltIn)
             }
             let hardwareValue = Double(reading.current) / Double(reading.maximum)
             let software = blackout.dimmingFactor(id)
             let display = BrightnessDisplay(id: id, name: name, control: .ddc,
                 value: BrightnessScale.combined(hardware: hardwareValue, software: software),
                 isSoftwareBlackout: software == 0, hardwareValue: hardwareValue, softwareDimming: software,
-                supportsBacklightOff: power.canTurnOff(key) && transport.read(endpoint, command: .powerMode, attempts: 1)?.current == 1)
+                supportsBacklightOff: power.canTurnOff(key) && transport.read(endpoint, command: .powerMode, attempts: 1)?.current == 1,
+                isBuiltIn: isBuiltIn)
             lastExternal[id] = display
             let existing = runtimes.withLock { $0[id] }
             if existing == nil || existing!.identity != key || !existing!.isRunning {
